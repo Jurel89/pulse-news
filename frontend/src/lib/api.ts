@@ -29,6 +29,37 @@ export type NewsletterTestSendResult = {
   to_email: string;
 };
 
+export type RecipientSendOutcome = {
+  email: string;
+  status: string;
+  provider_id: string | null;
+  detail: string;
+};
+
+export type NewsletterSendResult = {
+  status: string;
+  mode: string;
+  message: string;
+  run: {
+    id: number;
+    newsletter_id: number;
+    trigger_mode: string;
+    run_status: string;
+    provider_name: string;
+    model_name: string;
+    template_key: string;
+    recipient_count: number;
+    snapshot_subject: string;
+    snapshot_preheader: string | null;
+    snapshot_body_text: string;
+    snapshot_recipient_emails: string;
+    delivery_outcomes: string;
+    created_at: string;
+    updated_at: string;
+  };
+  recipient_outcomes: RecipientSendOutcome[];
+};
+
 export type NewsletterGenerationResult = {
   status: string;
   mode: string;
@@ -97,6 +128,10 @@ export const api = {
     request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/test-send`, {
       method: "POST",
       jsonBody: { to_email: toEmail }
+    }),
+  sendNewsletter: (newsletterId: number) =>
+    request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
+      method: "POST"
     }),
   createNewsletter: (payload: NewsletterInput) =>
     request<Newsletter>("/newsletters", {

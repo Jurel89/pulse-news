@@ -63,6 +63,10 @@ class Newsletter(TimestampMixin, Base):
         back_populates="newsletter",
         cascade="all, delete-orphan",
     )
+    runs: Mapped[list[NewsletterRun]] = relationship(
+        back_populates="newsletter",
+        cascade="all, delete-orphan",
+    )
 
 
 class NewsletterRecipient(TimestampMixin, Base):
@@ -83,6 +87,29 @@ class NewsletterRecipient(TimestampMixin, Base):
         index=True,
     )
     newsletter: Mapped[Newsletter] = relationship(back_populates="recipients")
+
+
+class NewsletterRun(TimestampMixin, Base):
+    __tablename__ = "newsletter_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    newsletter_id: Mapped[int] = mapped_column(
+        ForeignKey("newsletters.id"),
+        nullable=False,
+        index=True,
+    )
+    trigger_mode: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    template_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    recipient_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    snapshot_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    snapshot_preheader: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    snapshot_body_text: Mapped[str] = mapped_column(Text(), nullable=False)
+    snapshot_recipient_emails: Mapped[str] = mapped_column(Text(), nullable=False, default="[]")
+    delivery_outcomes: Mapped[str] = mapped_column(Text(), nullable=False, default="[]")
+    newsletter: Mapped[Newsletter] = relationship(back_populates="runs")
 
 
 class AuditEvent(Base):

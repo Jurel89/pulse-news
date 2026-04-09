@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
-import { api, type NewsletterPreview, type NewsletterTestSendResult } from "../../lib/api";
+import {
+  api,
+  type NewsletterPreview,
+  type NewsletterSendResult,
+  type NewsletterTestSendResult
+} from "../../lib/api";
 import type { Newsletter } from "./newsletter-types";
 
 type NewsletterPreviewPageProps = {
@@ -15,6 +20,7 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
   const [error, setError] = useState<string | null>(null);
   const [testAddress, setTestAddress] = useState("qa@example.com");
   const [testSendResult, setTestSendResult] = useState<NewsletterTestSendResult | null>(null);
+  const [manualSendResult, setManualSendResult] = useState<NewsletterSendResult | null>(null);
 
   useEffect(() => {
     async function loadPreview() {
@@ -33,11 +39,27 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
     setBusy(true);
     setError(null);
     setTestSendResult(null);
+    setManualSendResult(null);
     try {
       const result = await api.testSendNewsletter(newsletter.id, testAddress);
       setTestSendResult(result);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send test email.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleManualSend() {
+    setBusy(true);
+    setError(null);
+    setTestSendResult(null);
+    setManualSendResult(null);
+    try {
+      const result = await api.sendNewsletter(newsletter.id);
+      setManualSendResult(result);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to send newsletter.");
     } finally {
       setBusy(false);
     }
@@ -101,12 +123,32 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
             <button className="primary-button" disabled={busy} onClick={() => void handleTestSend()} type="button">
               {busy ? "Sending..." : "Send Test Email"}
             </button>
+            <button className="secondary-button" disabled={busy} onClick={() => void handleManualSend()} type="button">
+              {busy ? "Working..." : "Send to Active Recipients"}
+            </button>
           </div>
 
           {testSendResult ? (
             <p className="form-notice">
               {testSendResult.message} ({testSendResult.mode})
             </p>
+          ) : null}
+
+          {manualSendResult ? (
+            <div className="status-panel">
+              <p className="form-notice">
+                {manualSendResult.message} ({manualSendResult.mode})
+              </p>
+              <div className="newsletter-list">
+                {manualSendResult.recipient_outcomes.map((outcome) => (
+                  <article className="newsletter-card" key={outcome.email}>
+                    <strong>{outcome.email}</strong>
+                    <p>{outcome.status}</p>
+                    <p className="newsletter-description">{outcome.detail}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
           ) : null}
 
           {activeTab === "html" ? (

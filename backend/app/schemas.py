@@ -124,8 +124,44 @@ class NewsletterTestSendResponse(BaseModel):
     to_email: str
 
 
+class NewsletterRunSummary(BaseModel):
+    id: int
+    newsletter_id: int
+    trigger_mode: str
+    run_status: str
+    provider_name: str
+    model_name: str
+    template_key: str
+    recipient_count: int
+    snapshot_subject: str
+    snapshot_preheader: str | None
+    snapshot_body_text: str
+    snapshot_recipient_emails: str
+    delivery_outcomes: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class NewsletterGenerationResponse(BaseModel):
     status: str
     mode: str
     message: str
     newsletter: NewsletterDetail
+    run: NewsletterRunSummary
+
+
+class RecipientSendOutcomeResponse(BaseModel):
+    email: str
+    status: str
+    provider_id: str | None
+    detail: str
+
+
+class NewsletterSendResponse(BaseModel):
+    status: str
+    mode: str
+    message: str
+    run: NewsletterRunSummary
+    recipient_outcomes: list[RecipientSendOutcomeResponse]

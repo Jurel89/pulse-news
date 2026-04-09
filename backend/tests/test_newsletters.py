@@ -177,3 +177,18 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     assert payload["newsletter"]["id"] == newsletter_id
     assert payload["newsletter"]["draft_subject"]
     assert payload["newsletter"]["draft_body_text"]
+    assert payload["run"]["newsletter_id"] == newsletter_id
+    assert payload["run"]["trigger_mode"] == "manual-generate"
+    assert payload["run"]["provider_name"] == "openai"
+    assert payload["run"]["recipient_count"] == 1
+    assert payload["run"]["snapshot_subject"] == payload["newsletter"]["draft_subject"]
+
+    send_response = client.post(f"/api/newsletters/{newsletter_id}/send")
+    assert send_response.status_code == 200
+
+    send_payload = send_response.json()
+    assert send_payload["status"] in {"sent", "fallback"}
+    assert send_payload["run"]["newsletter_id"] == newsletter_id
+    assert send_payload["run"]["trigger_mode"] == "manual-send"
+    assert send_payload["run"]["recipient_count"] == 1
+    assert send_payload["recipient_outcomes"][0]["email"] == "founder@example.com"

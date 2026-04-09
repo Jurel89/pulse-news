@@ -11,14 +11,16 @@ from app.ai_generation import generate_newsletter_draft
 from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.deps import DbSession
-from app.email_delivery import send_test_email
+from app.email_delivery import send_newsletter_email, send_test_email
 from app.email_templates import render_newsletter
-from app.models import AuditEvent, Newsletter, NewsletterRecipient
+from app.models import AuditEvent, Newsletter, NewsletterRecipient, NewsletterRun
 from app.schemas import (
     NewsletterCreateRequest,
     NewsletterDetail,
     NewsletterGenerationResponse,
     NewsletterPreviewResponse,
+    NewsletterRunSummary,
+    NewsletterSendResponse,
     NewsletterSummary,
     NewsletterTestSendRequest,
     NewsletterTestSendResponse,
@@ -109,6 +111,30 @@ def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
             for recipient in newsletter.recipients
         ],
         recipient_import_text="\n".join(recipient.email for recipient in newsletter.recipients),
+    )
+
+
+def create_newsletter_run(
+    newsletter: Newsletter,
+    *,
+    trigger_mode: str,
+    run_status: str,
+) -> NewsletterRun:
+    return NewsletterRun(
+        newsletter_id=newsletter.id,
+        trigger_mode=trigger_mode,
+        run_status=run_status,
+        provider_name=newsletter.provider_name,
+        model_name=newsletter.model_name,
+        template_key=newsletter.template_key,
+        recipient_count=len(newsletter.recipients),
+        snapshot_subject=newsletter.draft_subject,
+        snapshot_preheader=newsletter.draft_preheader,
+        snapshot_body_text=newsletter.draft_body_text,
+        snapshot_recipient_emails=json.dumps(
+            [recipient.email for recipient in newsletter.recipients]
+        ),
+        delivery_outcomes="[]",
     )
 
 
@@ -224,14 +250,74 @@ def generate_draft(
     newsletter.draft_subject = generated.subject
     newsletter.draft_preheader = generated.preheader
     newsletter.draft_body_text = generated.body_text
+    run = create_newsletter_run(
+        newsletter,
+        trigger_mode="manual-generate",
+        run_status=generated.status,
+    )
     db.add(newsletter)
+    db.add(run)
     db.commit()
     db.refresh(newsletter)
+    db.refresh(run)
     return NewsletterGenerationResponse(
         status=generated.status,
         mode=generated.mode,
         message=generated.message,
         newsletter=serialize_newsletter_detail(newsletter),
+        run=NewsletterRunSummary.model_validate(run),
+    )
+
+
+@newsletters_router.post("/{newsletter_id}/send", response_model=NewsletterSendResponse)
+def send_newsletter(
+    newsletter_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterSendResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    rendered = render_newsletter(newsletter)
+    result = send_newsletter_email(
+        settings=get_settings(),
+        rendered=rendered,
+        recipient_emails=[
+            recipient.email for recipient in newsletter.recipients if recipient.is_active
+        ],
+    )
+    run = create_newsletter_run(
+        newsletter,
+        trigger_mode="manual-send",
+        run_status=result.status,
+    )
+    run.delivery_outcomes = json.dumps(
+        [
+            {
+                "email": outcome.email,
+                "status": outcome.status,
+                "provider_id": outcome.provider_id,
+                "detail": outcome.detail,
+            }
+            for outcome in result.recipient_outcomes
+        ]
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return NewsletterSendResponse(
+        status=result.status,
+        mode=result.mode,
+        message=result.message,
+        run=NewsletterRunSummary.model_validate(run),
+        recipient_outcomes=[
+            {
+                "email": outcome.email,
+                "status": outcome.status,
+                "provider_id": outcome.provider_id,
+                "detail": outcome.detail,
+            }
+            for outcome in result.recipient_outcomes
+        ],
     )
 
 
