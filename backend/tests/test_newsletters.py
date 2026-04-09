@@ -107,6 +107,14 @@ def test_newsletter_crud_flow(client: TestClient):
     assert update_response.json()["recipient_import_text"] == "europe@example.com"
     assert len(update_response.json()["recipients"]) == 1
 
+    preview_response = client.get(f"/api/newsletters/{created_newsletter['id']}/preview")
+    assert preview_response.status_code == 200
+    preview_payload = preview_response.json()
+    assert preview_payload["subject"] == "Daily Brief Europe"
+    assert "Updated copy block" in preview_payload["plain_text"]
+    assert "Daily Brief Europe" in preview_payload["html"]
+    assert preview_payload["template_key"] == "ledger"
+
     pause_response = client.post(f"/api/newsletters/{created_newsletter['id']}/pause")
     assert pause_response.status_code == 200
     assert pause_response.json()["status"] == "paused"

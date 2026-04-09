@@ -13,6 +13,14 @@ export type SessionResponse = {
   user: UserSummary | null;
 };
 
+export type NewsletterPreview = {
+  subject: string;
+  preheader: string;
+  html: string;
+  plain_text: string;
+  template_key: string;
+};
+
 type ApiRequestInit = Omit<RequestInit, "body"> & {
   jsonBody?: unknown;
 };
@@ -64,6 +72,8 @@ export const api = {
       jsonBody: { current_password: currentPassword, new_password: newPassword }
     }),
   listNewsletters: () => request<Newsletter[]>("/newsletters"),
+  previewNewsletter: (newsletterId: number) =>
+    request<NewsletterPreview>(`/newsletters/${newsletterId}/preview`),
   createNewsletter: (payload: NewsletterInput) =>
     request<Newsletter>("/newsletters", {
       method: "POST",

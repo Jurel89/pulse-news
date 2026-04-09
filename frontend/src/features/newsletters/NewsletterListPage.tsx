@@ -4,6 +4,7 @@ type NewsletterListPageProps = {
   items: Newsletter[];
   onCreate: () => void;
   onEdit: (newsletter: Newsletter) => void;
+  onPreview: (newsletter: Newsletter) => void;
   onArchive: (newsletterId: number) => Promise<void>;
   onPause: (newsletterId: number) => Promise<void>;
   onDelete: (newsletterId: number) => Promise<void>;
@@ -13,6 +14,7 @@ export function NewsletterListPage({
   items,
   onCreate,
   onEdit,
+  onPreview,
   onArchive,
   onPause,
   onDelete
@@ -73,6 +75,9 @@ export function NewsletterListPage({
               <p className="newsletter-description">{newsletter.description || "No description yet."}</p>
 
               <div className="card-actions">
+                <button className="secondary-button" onClick={() => onPreview(newsletter)} type="button">
+                  Preview
+                </button>
                 <button className="secondary-button" onClick={() => onEdit(newsletter)} type="button">
                   Edit
                 </button>

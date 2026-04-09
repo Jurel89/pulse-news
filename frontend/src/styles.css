@@ -175,7 +175,8 @@ body {
 }
 
 .editor-shell,
-.newsletters-grid {
+.newsletters-grid,
+.preview-shell {
   display: grid;
   gap: 24px;
 }
@@ -356,6 +357,21 @@ body {
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.82);
   border: 1px solid rgba(16, 36, 54, 0.08);
+}
+
+.preview-frame,
+.plain-preview {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(16, 36, 54, 0.08);
+  border-radius: 28px;
+  padding: 18px;
+  overflow: auto;
+}
+
+.plain-preview pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: "IBM Plex Mono", monospace;
 }
 
 .editor-form label {

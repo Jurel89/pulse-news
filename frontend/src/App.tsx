@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { LoginPage } from "./features/auth/LoginPage";
 import { NewsletterEditorPage } from "./features/newsletters/NewsletterEditorPage";
 import { NewsletterListPage } from "./features/newsletters/NewsletterListPage";
+import { NewsletterPreviewPage } from "./features/newsletters/NewsletterPreviewPage";
 import type { Newsletter, NewsletterInput } from "./features/newsletters/newsletter-types";
 import { AccountPage } from "./features/settings/AccountPage";
 import { api } from "./lib/api";
@@ -33,6 +34,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<ActiveView>("dashboard");
   const [newsletters, setNewsletters] = useState<Newsletter[]>([]);
   const [editingNewsletter, setEditingNewsletter] = useState<Newsletter | null>(null);
+  const [previewingNewsletter, setPreviewingNewsletter] = useState<Newsletter | null>(null);
   const [showEditor, setShowEditor] = useState(false);
 
   useEffect(() => {
@@ -95,6 +97,7 @@ export default function App() {
       const nextSession = await api.getSession();
       setSession(asLoadedSession(nextSession));
       setEditingNewsletter(null);
+      setPreviewingNewsletter(null);
       setShowEditor(false);
       setActiveView("dashboard");
     });
@@ -134,6 +137,7 @@ export default function App() {
       });
       setNotice(`Newsletter ${newsletterId ? "updated" : "created"} successfully.`);
       setEditingNewsletter(null);
+      setPreviewingNewsletter(null);
       setShowEditor(false);
       setActiveView("newsletters");
     });
@@ -228,7 +232,12 @@ export default function App() {
           onLogout={handleLogout}
         />
       ) : activeView === "newsletters" ? (
-        showEditor ? (
+        previewingNewsletter ? (
+          <NewsletterPreviewPage
+            newsletter={previewingNewsletter}
+            onBack={() => setPreviewingNewsletter(null)}
+          />
+        ) : showEditor ? (
           <NewsletterEditorPage
             busy={busy}
             initialNewsletter={editingNewsletter}
@@ -250,6 +259,10 @@ export default function App() {
             onEdit={(newsletter) => {
               setEditingNewsletter(newsletter);
               setShowEditor(true);
+            }}
+            onPreview={(newsletter) => {
+              setPreviewingNewsletter(newsletter);
+              setShowEditor(false);
             }}
             onPause={handlePauseNewsletter}
           />

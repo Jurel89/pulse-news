@@ -9,10 +9,12 @@ from sqlalchemy import select
 
 from app.auth import require_authenticated_user
 from app.deps import DbSession
+from app.email_templates import render_newsletter
 from app.models import AuditEvent, Newsletter, NewsletterRecipient
 from app.schemas import (
     NewsletterCreateRequest,
     NewsletterDetail,
+    NewsletterPreviewResponse,
     NewsletterSummary,
     NewsletterUpdateRequest,
 )
@@ -157,6 +159,24 @@ def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> Newsl
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     return serialize_newsletter_detail(newsletter)
+
+
+@newsletters_router.get("/{newsletter_id}/preview", response_model=NewsletterPreviewResponse)
+def preview_newsletter(
+    newsletter_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterPreviewResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    rendered = render_newsletter(newsletter)
+    return NewsletterPreviewResponse(
+        subject=rendered.subject,
+        preheader=rendered.preheader,
+        html=rendered.html,
+        plain_text=rendered.plain_text,
+        template_key=rendered.template_key,
+    )
 
 
 @newsletters_router.put("/{newsletter_id}", response_model=NewsletterDetail)

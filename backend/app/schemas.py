@@ -102,3 +102,11 @@ class NewsletterUpdateRequest(NewsletterCreateRequest):
 class NewsletterDetail(NewsletterSummary):
     recipients: list[NewsletterRecipientSummary]
     recipient_import_text: str
+
+
+class NewsletterPreviewResponse(BaseModel):
+    subject: str
+    preheader: str
+    html: str
+    plain_text: str
+    template_key: str
