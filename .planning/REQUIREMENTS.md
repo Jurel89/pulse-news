@@ -81,14 +81,14 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUTH-01 | Phase 1 | Pending |
-| AUTH-02 | Phase 1 | Pending |
-| AUTH-03 | Phase 1 | Pending |
-| AUTH-04 | Phase 1 | Pending |
-| NEWS-01 | Phase 1 | Pending |
-| NEWS-02 | Phase 1 | Pending |
-| NEWS-03 | Phase 1 | Pending |
-| NEWS-04 | Phase 1 | Pending |
+| AUTH-01 | Phase 1 | Complete |
+| AUTH-02 | Phase 1 | Complete |
+| AUTH-03 | Phase 1 | Complete |
+| AUTH-04 | Phase 1 | Complete |
+| NEWS-01 | Phase 1 | Complete |
+| NEWS-02 | Phase 1 | Complete |
+| NEWS-03 | Phase 1 | Complete |
+| NEWS-04 | Phase 1 | Complete |
 | AUD-01 | Phase 2 | Pending |
 | AUD-02 | Phase 5 | Pending |
 | AUD-03 | Phase 5 | Pending |
