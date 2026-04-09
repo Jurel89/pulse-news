@@ -51,6 +51,9 @@ class NewsletterSummary(BaseModel):
     slug: str
     description: str | None
     prompt: str
+    draft_subject: str
+    draft_preheader: str | None
+    draft_body_text: str
     provider_name: str
     model_name: str
     template_key: str
@@ -65,10 +68,22 @@ class NewsletterSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class NewsletterRecipientSummary(BaseModel):
+    id: int
+    email: str
+    is_active: bool
+    unsubscribe_token: str
+
+    model_config = {"from_attributes": True}
+
+
 class NewsletterCreateRequest(BaseModel):
     name: str
     description: str | None = None
     prompt: str = ""
+    draft_subject: str = ""
+    draft_preheader: str | None = None
+    draft_body_text: str = ""
     provider_name: str = "openai"
     model_name: str = "gpt-4o-mini"
     template_key: str = "signal"
@@ -77,6 +92,7 @@ class NewsletterCreateRequest(BaseModel):
     schedule_cron: str | None = None
     status: str = "draft"
     notes: str | None = None
+    recipient_import_text: str = ""
 
 
 class NewsletterUpdateRequest(NewsletterCreateRequest):
@@ -84,4 +100,5 @@ class NewsletterUpdateRequest(NewsletterCreateRequest):
 
 
 class NewsletterDetail(NewsletterSummary):
-    pass
+    recipients: list[NewsletterRecipientSummary]
+    recipient_import_text: str

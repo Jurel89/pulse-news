@@ -71,8 +71,35 @@ export function NewsletterEditorPage({
           <span>Prompt</span>
           <textarea
             onChange={(event) => updateField("prompt", event.target.value)}
-            rows={6}
+            rows={4}
             value={form.prompt}
+          />
+        </label>
+
+        <div className="form-grid">
+          <label>
+            <span>Draft subject</span>
+            <input
+              onChange={(event) => updateField("draft_subject", event.target.value)}
+              value={form.draft_subject}
+            />
+          </label>
+
+          <label>
+            <span>Draft preheader</span>
+            <input
+              onChange={(event) => updateField("draft_preheader", event.target.value)}
+              value={form.draft_preheader}
+            />
+          </label>
+        </div>
+
+        <label>
+          <span>Draft body</span>
+          <textarea
+            onChange={(event) => updateField("draft_body_text", event.target.value)}
+            rows={8}
+            value={form.draft_body_text}
           />
         </label>
 
@@ -144,6 +171,16 @@ export function NewsletterEditorPage({
             <input onChange={(event) => updateField("notes", event.target.value)} value={form.notes} />
           </label>
         </div>
+
+        <label>
+          <span>Recipients</span>
+          <textarea
+            onChange={(event) => updateField("recipient_import_text", event.target.value)}
+            placeholder={"ceo@example.com\nops@example.com\nteam@example.com"}
+            rows={5}
+            value={form.recipient_import_text}
+          />
+        </label>
 
         <button className="primary-button" disabled={busy} type="submit">
           {busy ? "Saving..." : initialNewsletter ? "Save Newsletter" : "Create Newsletter"}

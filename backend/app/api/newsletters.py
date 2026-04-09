@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.auth import require_authenticated_user
 from app.deps import DbSession
-from app.models import AuditEvent, Newsletter
+from app.models import AuditEvent, Newsletter, NewsletterRecipient
 from app.schemas import (
     NewsletterCreateRequest,
     NewsletterDetail,
@@ -64,6 +65,45 @@ def ensure_unique_slug(db: DbSession, *, desired_slug: str, current_id: int | No
         slug = f"{desired_slug}-{suffix}"
 
 
+def parse_recipient_import_text(recipient_import_text: str) -> list[str]:
+    entries = re.split(r"[\n,;]+", recipient_import_text)
+    normalized: list[str] = []
+    for entry in entries:
+        email = entry.strip().lower()
+        if email and email not in normalized:
+            normalized.append(email)
+    return normalized
+
+
+def replace_newsletter_recipients(newsletter: Newsletter, recipient_import_text: str) -> None:
+    parsed_emails = parse_recipient_import_text(recipient_import_text)
+    newsletter.recipients.clear()
+    newsletter.recipients.extend(
+        NewsletterRecipient(
+            email=email,
+            is_active=True,
+            unsubscribe_token=secrets.token_urlsafe(16),
+        )
+        for email in parsed_emails
+    )
+
+
+def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
+    return NewsletterDetail(
+        **NewsletterSummary.model_validate(newsletter).model_dump(),
+        recipients=[
+            {
+                "id": recipient.id,
+                "email": recipient.email,
+                "is_active": recipient.is_active,
+                "unsubscribe_token": recipient.unsubscribe_token,
+            }
+            for recipient in newsletter.recipients
+        ],
+        recipient_import_text="\n".join(recipient.email for recipient in newsletter.recipients),
+    )
+
+
 @newsletters_router.get("", response_model=list[NewsletterSummary])
 def list_newsletters(request: Request, db: DbSession) -> list[NewsletterSummary]:
     require_authenticated_user(request, db)
@@ -83,6 +123,9 @@ def create_newsletter(
         slug=ensure_unique_slug(db, desired_slug=slugify(payload.name)),
         description=payload.description,
         prompt=payload.prompt,
+        draft_subject=payload.draft_subject,
+        draft_preheader=payload.draft_preheader,
+        draft_body_text=payload.draft_body_text,
         provider_name=payload.provider_name,
         model_name=payload.model_name,
         template_key=payload.template_key,
@@ -92,6 +135,7 @@ def create_newsletter(
         status=payload.status,
         notes=payload.notes,
     )
+    replace_newsletter_recipients(newsletter, payload.recipient_import_text)
     db.add(newsletter)
     db.flush()
     create_audit_event(
@@ -105,14 +149,14 @@ def create_newsletter(
     )
     db.commit()
     db.refresh(newsletter)
-    return NewsletterDetail.model_validate(newsletter)
+    return serialize_newsletter_detail(newsletter)
 
 
 @newsletters_router.get("/{newsletter_id}", response_model=NewsletterDetail)
 def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> NewsletterDetail:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    return NewsletterDetail.model_validate(newsletter)
+    return serialize_newsletter_detail(newsletter)
 
 
 @newsletters_router.put("/{newsletter_id}", response_model=NewsletterDetail)
@@ -133,6 +177,9 @@ def update_newsletter(
     )
     newsletter.description = payload.description
     newsletter.prompt = payload.prompt
+    newsletter.draft_subject = payload.draft_subject
+    newsletter.draft_preheader = payload.draft_preheader
+    newsletter.draft_body_text = payload.draft_body_text
     newsletter.provider_name = payload.provider_name
     newsletter.model_name = payload.model_name
     newsletter.template_key = payload.template_key
@@ -141,6 +188,7 @@ def update_newsletter(
     newsletter.schedule_cron = payload.schedule_cron
     newsletter.status = payload.status
     newsletter.notes = payload.notes
+    replace_newsletter_recipients(newsletter, payload.recipient_import_text)
 
     db.add(newsletter)
     create_audit_event(
@@ -153,7 +201,7 @@ def update_newsletter(
     )
     db.commit()
     db.refresh(newsletter)
-    return NewsletterDetail.model_validate(newsletter)
+    return serialize_newsletter_detail(newsletter)
 
 
 @newsletters_router.post("/{newsletter_id}/pause", response_model=NewsletterDetail)
@@ -172,7 +220,7 @@ def pause_newsletter(newsletter_id: int, request: Request, db: DbSession) -> New
     )
     db.commit()
     db.refresh(newsletter)
-    return NewsletterDetail.model_validate(newsletter)
+    return serialize_newsletter_detail(newsletter)
 
 
 @newsletters_router.post("/{newsletter_id}/archive", response_model=NewsletterDetail)
@@ -191,7 +239,7 @@ def archive_newsletter(newsletter_id: int, request: Request, db: DbSession) -> N
     )
     db.commit()
     db.refresh(newsletter)
-    return NewsletterDetail.model_validate(newsletter)
+    return serialize_newsletter_detail(newsletter)
 
 
 @newsletters_router.delete("/{newsletter_id}", status_code=status.HTTP_204_NO_CONTENT)
