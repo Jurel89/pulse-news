@@ -115,6 +115,14 @@ def test_newsletter_crud_flow(client: TestClient):
     assert "Daily Brief Europe" in preview_payload["html"]
     assert preview_payload["template_key"] == "ledger"
 
+    test_send_response = client.post(
+        f"/api/newsletters/{created_newsletter['id']}/test-send",
+        json={"to_email": "qa@example.com"},
+    )
+    assert test_send_response.status_code == 200
+    assert test_send_response.json()["mode"] == "local-preview"
+    assert test_send_response.json()["to_email"] == "qa@example.com"
+
     pause_response = client.post(f"/api/newsletters/{created_newsletter['id']}/pause")
     assert pause_response.status_code == 200
     assert pause_response.json()["status"] == "paused"

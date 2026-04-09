@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.auth import require_authenticated_user
+from app.config import get_settings
 from app.deps import DbSession
+from app.email_delivery import send_test_email
 from app.email_templates import render_newsletter
 from app.models import AuditEvent, Newsletter, NewsletterRecipient
 from app.schemas import (
@@ -16,6 +18,8 @@ from app.schemas import (
     NewsletterDetail,
     NewsletterPreviewResponse,
     NewsletterSummary,
+    NewsletterTestSendRequest,
+    NewsletterTestSendResponse,
     NewsletterUpdateRequest,
 )
 
@@ -176,6 +180,30 @@ def preview_newsletter(
         html=rendered.html,
         plain_text=rendered.plain_text,
         template_key=rendered.template_key,
+    )
+
+
+@newsletters_router.post("/{newsletter_id}/test-send", response_model=NewsletterTestSendResponse)
+def test_send_newsletter(
+    newsletter_id: int,
+    payload: NewsletterTestSendRequest,
+    request: Request,
+    db: DbSession,
+) -> NewsletterTestSendResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    rendered = render_newsletter(newsletter)
+    result = send_test_email(
+        settings=get_settings(),
+        rendered=rendered,
+        to_email=payload.to_email,
+    )
+    return NewsletterTestSendResponse(
+        status=result.status,
+        mode=result.mode,
+        message=result.message,
+        provider_id=result.provider_id,
+        to_email=result.to_email,
     )
 
 

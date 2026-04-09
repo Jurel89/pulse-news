@@ -110,3 +110,15 @@ class NewsletterPreviewResponse(BaseModel):
     html: str
     plain_text: str
     template_key: str
+
+
+class NewsletterTestSendRequest(BaseModel):
+    to_email: str
+
+
+class NewsletterTestSendResponse(BaseModel):
+    status: str
+    mode: str
+    message: str
+    provider_id: str | None = None
+    to_email: str

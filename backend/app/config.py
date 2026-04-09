@@ -16,6 +16,9 @@ class Settings(BaseSettings):
         default="change-me-before-production",
         description="Session signing key for the single-user admin app.",
     )
+    resend_api_key: str | None = Field(default=None)
+    resend_from_email: str | None = Field(default=None)
+    resend_api_url: str = Field(default="https://api.resend.com/emails")
     data_dir: Path = Field(default=PROJECT_ROOT / "data")
     frontend_dist_dir: Path = Field(default=PROJECT_ROOT / "frontend" / "dist")
     database_path: Path | None = Field(default=None)

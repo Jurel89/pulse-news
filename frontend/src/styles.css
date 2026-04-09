@@ -374,6 +374,30 @@ body {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.test-send-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.test-send-panel label {
+  display: grid;
+  gap: 8px;
+  flex: 1 1 280px;
+  color: #27445a;
+  font-weight: 600;
+}
+
+.test-send-panel input {
+  width: 100%;
+  padding: 13px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(39, 68, 90, 0.18);
+  background: rgba(255, 255, 255, 0.94);
+  font: inherit;
+}
+
 .editor-form label {
   display: grid;
   gap: 8px;
