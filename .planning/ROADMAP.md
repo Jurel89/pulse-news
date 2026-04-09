@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Foundation and Secure Control Plane** - Build the authenticated app shell and core newsletter management domain.
 - [x] **Phase 2: Draft Workflow and Template System** - Add recipient management, themed templates, previews, and test sends.
 - [x] **Phase 3: AI Generation and Manual Delivery** - Add provider abstraction, draft generation, manual runs, and Resend-backed sending.
-- [ ] **Phase 4: Scheduling and Operations Dashboard** - Add recurring schedules, restart-safe jobs, and run history dashboards.
+- [x] **Phase 4: Scheduling and Operations Dashboard** - Add recurring schedules, restart-safe jobs, and run history dashboards.
 - [ ] **Phase 5: Compliance and Delivery Hardening** - Add unsubscribe/topic enforcement, delivery reconciliation, and operational polish.
 
 ## Phase Details
@@ -110,5 +110,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Foundation and Secure Control Plane | 3/3 | Complete | 2026-04-09 |
 | 2. Draft Workflow and Template System | 3/3 | Complete | 2026-04-09 |
 | 3. AI Generation and Manual Delivery | 4/4 | Complete | 2026-04-09 |
-| 4. Scheduling and Operations Dashboard | 0/3 | Not started | - |
+| 4. Scheduling and Operations Dashboard | 3/3 | Complete | 2026-04-09 |
 | 5. Compliance and Delivery Hardening | 0/2 | Not started | - |

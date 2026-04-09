@@ -92,7 +92,7 @@
 | AUD-01 | Phase 2 | Complete |
 | AUD-02 | Phase 5 | Pending |
 | AUD-03 | Phase 5 | Pending |
-| AUD-04 | Phase 4 | Pending |
+| AUD-04 | Phase 4 | Complete |
 | TPL-01 | Phase 2 | Complete |
 | TPL-02 | Phase 2 | Complete |
 | TPL-03 | Phase 2 | Complete |
@@ -101,12 +101,12 @@
 | GEN-03 | Phase 3 | Complete |
 | GEN-04 | Phase 3 | Complete |
 | SEND-01 | Phase 3 | Complete |
-| SEND-02 | Phase 4 | Pending |
-| SEND-03 | Phase 4 | Pending |
+| SEND-02 | Phase 4 | Complete |
+| SEND-03 | Phase 4 | Complete |
 | SEND-04 | Phase 3 | Complete |
-| DASH-01 | Phase 4 | Pending |
-| DASH-02 | Phase 4 | Pending |
-| DASH-03 | Phase 4 | Pending |
+| DASH-01 | Phase 4 | Complete |
+| DASH-02 | Phase 4 | Complete |
+| DASH-03 | Phase 4 | Complete |
 | DASH-04 | Phase 5 | Pending |
 
 **Coverage:**
