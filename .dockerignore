@@ -1,0 +1,10 @@
+.git
+.omx
+.planning
+backend/.venv
+frontend/node_modules
+frontend/dist
+data
+__pycache__
+.pytest_cache
+.ruff_cache

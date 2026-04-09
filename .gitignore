@@ -1,1 +1,12 @@
 .omx/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+*.sqlite3
+.DS_Store
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+data/
