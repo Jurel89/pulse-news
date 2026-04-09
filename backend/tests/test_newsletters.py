@@ -137,3 +137,43 @@ def test_newsletter_crud_flow(client: TestClient):
     final_list_response = client.get("/api/newsletters")
     assert final_list_response.status_code == 200
     assert final_list_response.json() == []
+
+
+def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
+    bootstrap_operator(client)
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Founder Radar",
+            "description": "Signals for startup operators",
+            "prompt": (
+                "Summarize the top startup infrastructure news "
+                "for founders in a concise tone."
+            ),
+            "draft_subject": "",
+            "draft_preheader": "",
+            "draft_body_text": "",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "founders",
+            "timezone": "UTC",
+            "schedule_cron": None,
+            "status": "draft",
+            "notes": "Used for generation tests",
+            "recipient_import_text": "founder@example.com"
+        },
+    )
+    assert create_response.status_code == 201
+    newsletter_id = create_response.json()["id"]
+
+    generate_response = client.post(f"/api/newsletters/{newsletter_id}/generate-draft")
+    assert generate_response.status_code == 200
+
+    payload = generate_response.json()
+    assert payload["status"] in {"generated", "fallback"}
+    assert payload["message"]
+    assert payload["newsletter"]["id"] == newsletter_id
+    assert payload["newsletter"]["draft_subject"]
+    assert payload["newsletter"]["draft_body_text"]

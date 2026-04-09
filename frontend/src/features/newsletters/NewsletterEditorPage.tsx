@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   emptyNewsletterInput,
@@ -11,6 +11,7 @@ type NewsletterEditorPageProps = {
   busy: boolean;
   initialNewsletter: Newsletter | null;
   onCancel: () => void;
+  onGenerate?: (newsletterId: number) => Promise<void>;
   onSave: (payload: NewsletterInput, newsletterId?: number) => Promise<void>;
 };
 
@@ -18,6 +19,7 @@ export function NewsletterEditorPage({
   busy,
   initialNewsletter,
   onCancel,
+  onGenerate,
   onSave
 }: NewsletterEditorPageProps) {
   const [form, setForm] = useState<NewsletterInput>(
@@ -27,6 +29,10 @@ export function NewsletterEditorPage({
     () => (initialNewsletter ? `Edit ${initialNewsletter.name}` : "Create newsletter"),
     [initialNewsletter],
   );
+
+  useEffect(() => {
+    setForm(initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput);
+  }, [initialNewsletter]);
 
   function updateField<K extends keyof NewsletterInput>(key: K, value: NewsletterInput[K]) {
     setForm((current) => ({
@@ -185,6 +191,16 @@ export function NewsletterEditorPage({
         <button className="primary-button" disabled={busy} type="submit">
           {busy ? "Saving..." : initialNewsletter ? "Save Newsletter" : "Create Newsletter"}
         </button>
+        {initialNewsletter ? (
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={() => void onGenerate?.(initialNewsletter.id)}
+            type="button"
+          >
+            {busy ? "Working..." : "Generate Draft"}
+          </button>
+        ) : null}
       </form>
     </section>
   );

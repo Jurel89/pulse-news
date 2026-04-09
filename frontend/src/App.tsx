@@ -168,6 +168,17 @@ export default function App() {
     });
   }
 
+  async function handleGenerateNewsletter(newsletterId: number) {
+    await runAuthAction(async () => {
+      const result = await api.generateNewsletter(newsletterId);
+      setNewsletters((current) =>
+        current.map((item) => (item.id === result.newsletter.id ? result.newsletter : item)),
+      );
+      setEditingNewsletter(result.newsletter);
+      setNotice(result.message);
+    });
+  }
+
   if (session.loading) {
     return (
       <div className="app-shell">
@@ -245,6 +256,7 @@ export default function App() {
               setEditingNewsletter(null);
               setShowEditor(false);
             }}
+            onGenerate={handleGenerateNewsletter}
             onSave={handleSaveNewsletter}
           />
         ) : (

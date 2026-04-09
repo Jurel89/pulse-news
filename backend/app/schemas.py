@@ -122,3 +122,10 @@ class NewsletterTestSendResponse(BaseModel):
     message: str
     provider_id: str | None = None
     to_email: str
+
+
+class NewsletterGenerationResponse(BaseModel):
+    status: str
+    mode: str
+    message: str
+    newsletter: NewsletterDetail

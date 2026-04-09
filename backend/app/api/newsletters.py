@@ -7,6 +7,7 @@ import secrets
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
+from app.ai_generation import generate_newsletter_draft
 from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.deps import DbSession
@@ -16,6 +17,7 @@ from app.models import AuditEvent, Newsletter, NewsletterRecipient
 from app.schemas import (
     NewsletterCreateRequest,
     NewsletterDetail,
+    NewsletterGenerationResponse,
     NewsletterPreviewResponse,
     NewsletterSummary,
     NewsletterTestSendRequest,
@@ -204,6 +206,32 @@ def test_send_newsletter(
         message=result.message,
         provider_id=result.provider_id,
         to_email=result.to_email,
+    )
+
+
+@newsletters_router.post(
+    "/{newsletter_id}/generate-draft",
+    response_model=NewsletterGenerationResponse,
+)
+def generate_draft(
+    newsletter_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterGenerationResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    generated = generate_newsletter_draft(newsletter)
+    newsletter.draft_subject = generated.subject
+    newsletter.draft_preheader = generated.preheader
+    newsletter.draft_body_text = generated.body_text
+    db.add(newsletter)
+    db.commit()
+    db.refresh(newsletter)
+    return NewsletterGenerationResponse(
+        status=generated.status,
+        mode=generated.mode,
+        message=generated.message,
+        newsletter=serialize_newsletter_detail(newsletter),
     )
 
 

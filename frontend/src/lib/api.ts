@@ -29,6 +29,13 @@ export type NewsletterTestSendResult = {
   to_email: string;
 };
 
+export type NewsletterGenerationResult = {
+  status: string;
+  mode: string;
+  message: string;
+  newsletter: Newsletter;
+};
+
 type ApiRequestInit = Omit<RequestInit, "body"> & {
   jsonBody?: unknown;
 };
@@ -82,6 +89,10 @@ export const api = {
   listNewsletters: () => request<Newsletter[]>("/newsletters"),
   previewNewsletter: (newsletterId: number) =>
     request<NewsletterPreview>(`/newsletters/${newsletterId}/preview`),
+  generateNewsletter: (newsletterId: number) =>
+    request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
+      method: "POST"
+    }),
   testSendNewsletter: (newsletterId: number, toEmail: string) =>
     request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/test-send`, {
       method: "POST",
