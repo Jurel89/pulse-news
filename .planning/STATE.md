@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** One operator can reliably create and send multiple AI-assisted newsletters from a single, self-hosted control panel without juggling separate tools for content generation, scheduling, sending, and auditability.
-**Current focus:** Phase 5: Compliance and Delivery Hardening
+**Current focus:** Milestone complete
 
 ## Current Position
 
 Phase: 5 of 5 (Compliance and Delivery Hardening)
-Plan: 0 of 2 in current phase
-Status: Ready to plan
-Last activity: 2026-04-09 — Phase 4 completed with verified scheduling and run dashboard visibility
+Plan: 2 of 2 in current phase
+Status: Phase complete
+Last activity: 2026-04-09 — Phase 5 completed with verified suppression and reconciliation workflows
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
-- Average duration: 25 min
-- Total execution time: 5.3 hours
+- Total plans completed: 15
+- Average duration: 24 min
+- Total execution time: 6.0 hours
 
 **By Phase:**
 
@@ -31,6 +31,7 @@ Progress: [████████░░] 80%
 | 2 | 3 | 70 min | 23 min |
 | 3 | 4 | 79 min | 20 min |
 | 4 | 3 | 75 min | 25 min |
+| 5 | 2 | 38 min | 19 min |
 
 **Recent Trend:**
 - Last 5 plans: 24 min, 28 min, 18 min, 27 min, 22 min
@@ -54,6 +55,8 @@ Recent decisions affecting current work:
 - Phase 3: Keep manual send on the same render and delivery boundaries as preview and test send
 - Phase 4: Keep scheduled sends on the same execution helper as manual sends
 - Phase 4: Use dedicated run APIs and dashboard views rather than embedding history inside newsletter endpoints
+- Phase 5: Enforce suppression in the shared send path
+- Phase 5: Keep reconciliation additive by appending run events
 
 ### Pending Todos
 
@@ -67,5 +70,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-09 00:00
-Stopped at: Phase 4 verified complete; Phase 5 is ready for context/planning
+Stopped at: Milestone complete
 Resume file: None

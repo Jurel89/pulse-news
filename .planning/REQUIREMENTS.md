@@ -90,8 +90,8 @@
 | NEWS-03 | Phase 1 | Complete |
 | NEWS-04 | Phase 1 | Complete |
 | AUD-01 | Phase 2 | Complete |
-| AUD-02 | Phase 5 | Pending |
-| AUD-03 | Phase 5 | Pending |
+| AUD-02 | Phase 5 | Complete |
+| AUD-03 | Phase 5 | Complete |
 | AUD-04 | Phase 4 | Complete |
 | TPL-01 | Phase 2 | Complete |
 | TPL-02 | Phase 2 | Complete |
@@ -107,7 +107,7 @@
 | DASH-01 | Phase 4 | Complete |
 | DASH-02 | Phase 4 | Complete |
 | DASH-03 | Phase 4 | Complete |
-| DASH-04 | Phase 5 | Pending |
+| DASH-04 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 27 total
