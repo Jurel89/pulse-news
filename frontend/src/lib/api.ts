@@ -1,3 +1,5 @@
+import type { Newsletter, NewsletterInput } from "../features/newsletters/newsletter-types";
+
 export type UserSummary = {
   id: number;
   email: string;
@@ -33,6 +35,10 @@ async function request<T>(path: string, init?: ApiRequestInit): Promise<T> {
     throw new Error(payload.detail ?? "Request failed.");
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
 }
 
@@ -56,5 +62,28 @@ export const api = {
     request<{ message: string }>("/auth/change-password", {
       method: "POST",
       jsonBody: { current_password: currentPassword, new_password: newPassword }
+    }),
+  listNewsletters: () => request<Newsletter[]>("/newsletters"),
+  createNewsletter: (payload: NewsletterInput) =>
+    request<Newsletter>("/newsletters", {
+      method: "POST",
+      jsonBody: payload
+    }),
+  updateNewsletter: (newsletterId: number, payload: NewsletterInput) =>
+    request<Newsletter>(`/newsletters/${newsletterId}`, {
+      method: "PUT",
+      jsonBody: payload
+    }),
+  pauseNewsletter: (newsletterId: number) =>
+    request<Newsletter>(`/newsletters/${newsletterId}/pause`, {
+      method: "POST"
+    }),
+  archiveNewsletter: (newsletterId: number) =>
+    request<Newsletter>(`/newsletters/${newsletterId}/archive`, {
+      method: "POST"
+    }),
+  deleteNewsletter: (newsletterId: number) =>
+    request<void>(`/newsletters/${newsletterId}`, {
+      method: "DELETE"
     })
 };

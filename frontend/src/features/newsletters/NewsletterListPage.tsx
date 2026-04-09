@@ -1,0 +1,95 @@
+import type { Newsletter } from "./newsletter-types";
+
+type NewsletterListPageProps = {
+  items: Newsletter[];
+  onCreate: () => void;
+  onEdit: (newsletter: Newsletter) => void;
+  onArchive: (newsletterId: number) => Promise<void>;
+  onPause: (newsletterId: number) => Promise<void>;
+  onDelete: (newsletterId: number) => Promise<void>;
+};
+
+export function NewsletterListPage({
+  items,
+  onCreate,
+  onEdit,
+  onArchive,
+  onPause,
+  onDelete
+}: NewsletterListPageProps) {
+  return (
+    <section className="newsletters-grid">
+      <header className="section-header">
+        <div>
+          <p className="eyebrow">Newsletters</p>
+          <h2 className="section-title">Control every newsletter definition from one place.</h2>
+        </div>
+        <button className="primary-button" onClick={onCreate} type="button">
+          New Newsletter
+        </button>
+      </header>
+
+      {items.length === 0 ? (
+        <article className="empty-state">
+          <h3>No newsletters yet</h3>
+          <p>
+            Create the first newsletter definition now. Later phases will attach recipients,
+            previews, generation, and delivery flows to it.
+          </p>
+        </article>
+      ) : (
+        <div className="newsletter-list">
+          {items.map((newsletter) => (
+            <article className="newsletter-card" key={newsletter.id}>
+              <div className="newsletter-card-header">
+                <div>
+                  <h3>{newsletter.name}</h3>
+                  <p>{newsletter.slug}</p>
+                </div>
+                <span className={`status-chip status-${newsletter.status}`}>{newsletter.status}</span>
+              </div>
+
+              <dl className="newsletter-meta">
+                <div>
+                  <dt>Provider</dt>
+                  <dd>
+                    {newsletter.provider_name} / {newsletter.model_name}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Template</dt>
+                  <dd>{newsletter.template_key}</dd>
+                </div>
+                <div>
+                  <dt>Audience</dt>
+                  <dd>{newsletter.audience_name}</dd>
+                </div>
+                <div>
+                  <dt>Schedule</dt>
+                  <dd>{newsletter.schedule_cron ?? "Manual only"}</dd>
+                </div>
+              </dl>
+
+              <p className="newsletter-description">{newsletter.description || "No description yet."}</p>
+
+              <div className="card-actions">
+                <button className="secondary-button" onClick={() => onEdit(newsletter)} type="button">
+                  Edit
+                </button>
+                <button className="secondary-button" onClick={() => void onPause(newsletter.id)} type="button">
+                  Pause
+                </button>
+                <button className="secondary-button" onClick={() => void onArchive(newsletter.id)} type="button">
+                  Archive
+                </button>
+                <button className="danger-button" onClick={() => void onDelete(newsletter.id)} type="button">
+                  Delete
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}

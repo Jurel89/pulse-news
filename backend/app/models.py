@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -9,7 +9,7 @@ from app.database import Base
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class TimestampMixin:
@@ -47,6 +47,11 @@ class Newsletter(TimestampMixin, Base):
     provider_name: Mapped[str] = mapped_column(String(255), default="openai", nullable=False)
     model_name: Mapped[str] = mapped_column(String(255), default="gpt-4o-mini", nullable=False)
     template_key: Mapped[str] = mapped_column(String(255), default="signal", nullable=False)
+    audience_name: Mapped[str] = mapped_column(
+        String(255),
+        default="default-audience",
+        nullable=False,
+    )
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
     schedule_cron: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)

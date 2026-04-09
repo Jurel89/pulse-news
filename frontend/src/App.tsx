@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { LoginPage } from "./features/auth/LoginPage";
+import { NewsletterEditorPage } from "./features/newsletters/NewsletterEditorPage";
+import { NewsletterListPage } from "./features/newsletters/NewsletterListPage";
+import type { Newsletter, NewsletterInput } from "./features/newsletters/newsletter-types";
 import { AccountPage } from "./features/settings/AccountPage";
 import { api } from "./lib/api";
 import { asLoadedSession, initialSessionState, type SessionState } from "./lib/session";
@@ -20,7 +23,7 @@ const baselineCards = [
   }
 ];
 
-type ActiveView = "dashboard" | "account";
+type ActiveView = "dashboard" | "newsletters" | "account";
 
 export default function App() {
   const [session, setSession] = useState<SessionState>(initialSessionState);
@@ -28,6 +31,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("dashboard");
+  const [newsletters, setNewsletters] = useState<Newsletter[]>([]);
+  const [editingNewsletter, setEditingNewsletter] = useState<Newsletter | null>(null);
+  const [showEditor, setShowEditor] = useState(false);
 
   useEffect(() => {
     void refreshSession();
@@ -40,6 +46,23 @@ export default function App() {
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to reach the backend.");
       setSession({ ...initialSessionState, loading: false });
+    }
+  }
+
+  useEffect(() => {
+    if (!session.authenticated) {
+      setNewsletters([]);
+      return;
+    }
+    void loadNewsletters();
+  }, [session.authenticated]);
+
+  async function loadNewsletters() {
+    try {
+      const nextNewsletters = await api.listNewsletters();
+      setNewsletters(nextNewsletters);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load newsletters.");
     }
   }
 
@@ -71,6 +94,8 @@ export default function App() {
       await api.logout();
       const nextSession = await api.getSession();
       setSession(asLoadedSession(nextSession));
+      setEditingNewsletter(null);
+      setShowEditor(false);
       setActiveView("dashboard");
     });
   }
@@ -85,10 +110,59 @@ export default function App() {
   const navItems = useMemo(
     () => [
       { id: "dashboard" as const, label: "Dashboard" },
+      { id: "newsletters" as const, label: "Newsletters" },
       { id: "account" as const, label: "Account" }
     ],
     [],
   );
+
+  async function handleSaveNewsletter(payload: NewsletterInput, newsletterId?: number) {
+    await runAuthAction(async () => {
+      const savedNewsletter = newsletterId
+        ? await api.updateNewsletter(newsletterId, payload)
+        : await api.createNewsletter(payload);
+
+      setNewsletters((current) => {
+        const existingIndex = current.findIndex((item) => item.id === savedNewsletter.id);
+        if (existingIndex === -1) {
+          return [savedNewsletter, ...current];
+        }
+
+        const next = [...current];
+        next[existingIndex] = savedNewsletter;
+        return next;
+      });
+      setNotice(`Newsletter ${newsletterId ? "updated" : "created"} successfully.`);
+      setEditingNewsletter(null);
+      setShowEditor(false);
+      setActiveView("newsletters");
+    });
+  }
+
+  async function handlePauseNewsletter(newsletterId: number) {
+    await runAuthAction(async () => {
+      const updatedNewsletter = await api.pauseNewsletter(newsletterId);
+      setNewsletters((current) =>
+        current.map((item) => (item.id === updatedNewsletter.id ? updatedNewsletter : item)),
+      );
+    });
+  }
+
+  async function handleArchiveNewsletter(newsletterId: number) {
+    await runAuthAction(async () => {
+      const updatedNewsletter = await api.archiveNewsletter(newsletterId);
+      setNewsletters((current) =>
+        current.map((item) => (item.id === updatedNewsletter.id ? updatedNewsletter : item)),
+      );
+    });
+  }
+
+  async function handleDeleteNewsletter(newsletterId: number) {
+    await runAuthAction(async () => {
+      await api.deleteNewsletter(newsletterId);
+      setNewsletters((current) => current.filter((item) => item.id !== newsletterId));
+    });
+  }
 
   if (session.loading) {
     return (
@@ -153,6 +227,33 @@ export default function App() {
           onChangePassword={handleChangePassword}
           onLogout={handleLogout}
         />
+      ) : activeView === "newsletters" ? (
+        showEditor ? (
+          <NewsletterEditorPage
+            busy={busy}
+            initialNewsletter={editingNewsletter}
+            onCancel={() => {
+              setEditingNewsletter(null);
+              setShowEditor(false);
+            }}
+            onSave={handleSaveNewsletter}
+          />
+        ) : (
+          <NewsletterListPage
+            items={newsletters}
+            onArchive={handleArchiveNewsletter}
+            onCreate={() => {
+              setEditingNewsletter(null);
+              setShowEditor(true);
+            }}
+            onDelete={handleDeleteNewsletter}
+            onEdit={(newsletter) => {
+              setEditingNewsletter(newsletter);
+              setShowEditor(true);
+            }}
+            onPause={handlePauseNewsletter}
+          />
+        )
       ) : (
         <>
           <main className="hero">
@@ -180,11 +281,11 @@ export default function App() {
                 </div>
                 <div>
                   <span className="status-label">Phase 1</span>
-                  <strong>Plan 02 complete</strong>
+                  <strong>Plan 03 active</strong>
                 </div>
                 <div>
                   <span className="status-label">Next</span>
-                  <strong>Newsletter CRUD</strong>
+                  <strong>{newsletters.length} newsletters tracked</strong>
                 </div>
               </div>
             </section>

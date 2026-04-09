@@ -12,14 +12,14 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PULSE_NEWS_SECRET_KEY", "test-secret")
     monkeypatch.setenv("PULSE_NEWS_ENVIRONMENT", "development")
 
-    import app.config
-    import app.database
-    import app.models
-    import app.schemas
-    import app.auth
     import app.api.auth
     import app.api.router
+    import app.auth
+    import app.config
+    import app.database
     import app.main
+    import app.models
+    import app.schemas
 
     app.config.get_settings.cache_clear()
     app.database.get_engine.cache_clear()
