@@ -20,6 +20,31 @@ class UserSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AuthActionResponse(BaseModel):
+    message: str
+
+
+class BootstrapRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class SessionResponse(BaseModel):
+    initialized: bool
+    authenticated: bool
+    user: UserSummary | None = None
+
+
 class NewsletterSummary(BaseModel):
     id: int
     name: str
