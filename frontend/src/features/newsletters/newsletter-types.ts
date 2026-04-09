@@ -13,6 +13,7 @@ export type Newsletter = {
   audience_name: string;
   timezone: string;
   schedule_cron: string | null;
+  schedule_enabled: boolean;
   status: string;
   notes: string | null;
   recipient_import_text: string;
@@ -39,6 +40,7 @@ export type NewsletterInput = {
   audience_name: string;
   timezone: string;
   schedule_cron: string;
+  schedule_enabled: boolean;
   status: string;
   notes: string;
   recipient_import_text: string;
@@ -57,6 +59,7 @@ export const emptyNewsletterInput: NewsletterInput = {
   audience_name: "default-audience",
   timezone: "UTC",
   schedule_cron: "",
+  schedule_enabled: false,
   status: "draft",
   notes: "",
   recipient_import_text: ""
@@ -76,6 +79,7 @@ export function toNewsletterInput(newsletter: Newsletter): NewsletterInput {
     audience_name: newsletter.audience_name,
     timezone: newsletter.timezone,
     schedule_cron: newsletter.schedule_cron ?? "",
+    schedule_enabled: newsletter.schedule_enabled,
     status: newsletter.status,
     notes: newsletter.notes ?? "",
     recipient_import_text: newsletter.recipient_import_text

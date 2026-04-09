@@ -410,6 +410,18 @@ body {
   gap: 16px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #27445a;
+  font-weight: 600;
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
 .info-card {
   padding: 22px 20px;
   border-radius: 24px;

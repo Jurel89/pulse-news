@@ -119,6 +119,8 @@ def create_newsletter_run(
     *,
     trigger_mode: str,
     run_status: str,
+    result_mode: str | None = None,
+    result_message: str | None = None,
 ) -> NewsletterRun:
     return NewsletterRun(
         newsletter_id=newsletter.id,
@@ -135,6 +137,63 @@ def create_newsletter_run(
             [recipient.email for recipient in newsletter.recipients]
         ),
         delivery_outcomes="[]",
+        result_mode=result_mode,
+        result_message=result_message,
+    )
+
+
+def execute_newsletter_send(
+    db: DbSession,
+    newsletter: Newsletter,
+    *,
+    trigger_mode: str,
+) -> tuple[NewsletterSendResponse, NewsletterRun]:
+    rendered = render_newsletter(newsletter)
+    result = send_newsletter_email(
+        settings=get_settings(),
+        rendered=rendered,
+        recipient_emails=[
+            recipient.email for recipient in newsletter.recipients if recipient.is_active
+        ],
+    )
+    run = create_newsletter_run(
+        newsletter,
+        trigger_mode=trigger_mode,
+        run_status=result.status,
+        result_mode=result.mode,
+        result_message=result.message,
+    )
+    run.delivery_outcomes = json.dumps(
+        [
+            {
+                "email": outcome.email,
+                "status": outcome.status,
+                "provider_id": outcome.provider_id,
+                "detail": outcome.detail,
+            }
+            for outcome in result.recipient_outcomes
+        ]
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return (
+        NewsletterSendResponse(
+            status=result.status,
+            mode=result.mode,
+            message=result.message,
+            run=NewsletterRunSummary.model_validate(run),
+            recipient_outcomes=[
+                {
+                    "email": outcome.email,
+                    "status": outcome.status,
+                    "provider_id": outcome.provider_id,
+                    "detail": outcome.detail,
+                }
+                for outcome in result.recipient_outcomes
+            ],
+        ),
+        run,
     )
 
 
@@ -166,6 +225,7 @@ def create_newsletter(
         audience_name=payload.audience_name,
         timezone=payload.timezone,
         schedule_cron=payload.schedule_cron,
+        schedule_enabled=payload.schedule_enabled,
         status=payload.status,
         notes=payload.notes,
     )
@@ -183,6 +243,9 @@ def create_newsletter(
     )
     db.commit()
     db.refresh(newsletter)
+    from app.scheduler import sync_newsletter_schedule
+
+    sync_newsletter_schedule(newsletter)
     return serialize_newsletter_detail(newsletter)
 
 
@@ -254,6 +317,8 @@ def generate_draft(
         newsletter,
         trigger_mode="manual-generate",
         run_status=generated.status,
+        result_mode=generated.mode,
+        result_message=generated.message,
     )
     db.add(newsletter)
     db.add(run)
@@ -269,6 +334,42 @@ def generate_draft(
     )
 
 
+@newsletters_router.post("/{newsletter_id}/schedule/resume", response_model=NewsletterDetail)
+def resume_newsletter_schedule(
+    newsletter_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterDetail:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    newsletter.schedule_enabled = True
+    db.add(newsletter)
+    db.commit()
+    db.refresh(newsletter)
+    from app.scheduler import sync_newsletter_schedule
+
+    sync_newsletter_schedule(newsletter)
+    return serialize_newsletter_detail(newsletter)
+
+
+@newsletters_router.post("/{newsletter_id}/schedule/pause", response_model=NewsletterDetail)
+def pause_newsletter_schedule(
+    newsletter_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterDetail:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    newsletter.schedule_enabled = False
+    db.add(newsletter)
+    db.commit()
+    db.refresh(newsletter)
+    from app.scheduler import sync_newsletter_schedule
+
+    sync_newsletter_schedule(newsletter)
+    return serialize_newsletter_detail(newsletter)
+
+
 @newsletters_router.post("/{newsletter_id}/send", response_model=NewsletterSendResponse)
 def send_newsletter(
     newsletter_id: int,
@@ -277,48 +378,8 @@ def send_newsletter(
 ) -> NewsletterSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    rendered = render_newsletter(newsletter)
-    result = send_newsletter_email(
-        settings=get_settings(),
-        rendered=rendered,
-        recipient_emails=[
-            recipient.email for recipient in newsletter.recipients if recipient.is_active
-        ],
-    )
-    run = create_newsletter_run(
-        newsletter,
-        trigger_mode="manual-send",
-        run_status=result.status,
-    )
-    run.delivery_outcomes = json.dumps(
-        [
-            {
-                "email": outcome.email,
-                "status": outcome.status,
-                "provider_id": outcome.provider_id,
-                "detail": outcome.detail,
-            }
-            for outcome in result.recipient_outcomes
-        ]
-    )
-    db.add(run)
-    db.commit()
-    db.refresh(run)
-    return NewsletterSendResponse(
-        status=result.status,
-        mode=result.mode,
-        message=result.message,
-        run=NewsletterRunSummary.model_validate(run),
-        recipient_outcomes=[
-            {
-                "email": outcome.email,
-                "status": outcome.status,
-                "provider_id": outcome.provider_id,
-                "detail": outcome.detail,
-            }
-            for outcome in result.recipient_outcomes
-        ],
-    )
+    response, _run = execute_newsletter_send(db, newsletter, trigger_mode="manual-send")
+    return response
 
 
 @newsletters_router.put("/{newsletter_id}", response_model=NewsletterDetail)
@@ -348,6 +409,7 @@ def update_newsletter(
     newsletter.audience_name = payload.audience_name
     newsletter.timezone = payload.timezone
     newsletter.schedule_cron = payload.schedule_cron
+    newsletter.schedule_enabled = payload.schedule_enabled
     newsletter.status = payload.status
     newsletter.notes = payload.notes
     replace_newsletter_recipients(newsletter, payload.recipient_import_text)
@@ -363,6 +425,9 @@ def update_newsletter(
     )
     db.commit()
     db.refresh(newsletter)
+    from app.scheduler import sync_newsletter_schedule
+
+    sync_newsletter_schedule(newsletter)
     return serialize_newsletter_detail(newsletter)
 
 
@@ -371,6 +436,7 @@ def pause_newsletter(newsletter_id: int, request: Request, db: DbSession) -> New
     user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     newsletter.status = "paused"
+    newsletter.schedule_enabled = False
     db.add(newsletter)
     create_audit_event(
         db,
@@ -382,6 +448,9 @@ def pause_newsletter(newsletter_id: int, request: Request, db: DbSession) -> New
     )
     db.commit()
     db.refresh(newsletter)
+    from app.scheduler import sync_newsletter_schedule
+
+    sync_newsletter_schedule(newsletter)
     return serialize_newsletter_detail(newsletter)
 
 
@@ -390,6 +459,7 @@ def archive_newsletter(newsletter_id: int, request: Request, db: DbSession) -> N
     user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     newsletter.status = "archived"
+    newsletter.schedule_enabled = False
     db.add(newsletter)
     create_audit_event(
         db,
@@ -401,6 +471,9 @@ def archive_newsletter(newsletter_id: int, request: Request, db: DbSession) -> N
     )
     db.commit()
     db.refresh(newsletter)
+    from app.scheduler import sync_newsletter_schedule
+
+    sync_newsletter_schedule(newsletter)
     return serialize_newsletter_detail(newsletter)
 
 

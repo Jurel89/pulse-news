@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { RunDashboardPage } from "./features/dashboard/RunDashboardPage";
 import { LoginPage } from "./features/auth/LoginPage";
 import { NewsletterEditorPage } from "./features/newsletters/NewsletterEditorPage";
 import { NewsletterListPage } from "./features/newsletters/NewsletterListPage";
@@ -8,21 +9,6 @@ import type { Newsletter, NewsletterInput } from "./features/newsletters/newslet
 import { AccountPage } from "./features/settings/AccountPage";
 import { api } from "./lib/api";
 import { asLoadedSession, initialSessionState, type SessionState } from "./lib/session";
-
-const baselineCards = [
-  {
-    title: "Secure Operator Access",
-    detail: "Single-user admin workflow with a protected shell, local bootstrap, and account settings."
-  },
-  {
-    title: "Newsletter Control Plane",
-    detail: "Newsletter CRUD lands next, on top of this protected shell."
-  },
-  {
-    title: "Run-first Operations",
-    detail: "Later phases will add generation, sends, schedules, and audit history on the same execution model."
-  }
-];
 
 type ActiveView = "dashboard" | "newsletters" | "account";
 
@@ -168,6 +154,24 @@ export default function App() {
     });
   }
 
+  async function handleScheduleResume(newsletterId: number) {
+    await runAuthAction(async () => {
+      const updatedNewsletter = await api.resumeNewsletterSchedule(newsletterId);
+      setNewsletters((current) =>
+        current.map((item) => (item.id === updatedNewsletter.id ? updatedNewsletter : item)),
+      );
+    });
+  }
+
+  async function handleSchedulePause(newsletterId: number) {
+    await runAuthAction(async () => {
+      const updatedNewsletter = await api.pauseNewsletterSchedule(newsletterId);
+      setNewsletters((current) =>
+        current.map((item) => (item.id === updatedNewsletter.id ? updatedNewsletter : item)),
+      );
+    });
+  }
+
   async function handleGenerateNewsletter(newsletterId: number) {
     await runAuthAction(async () => {
       const result = await api.generateNewsletter(newsletterId);
@@ -277,54 +281,12 @@ export default function App() {
               setShowEditor(false);
             }}
             onPause={handlePauseNewsletter}
+            onSchedulePause={handleSchedulePause}
+            onScheduleResume={handleScheduleResume}
           />
         )
       ) : (
-        <>
-          <main className="hero">
-            <section className="hero-copy">
-              <h2 className="section-title">Authenticated operator shell is active.</h2>
-              <p className="lede">
-                The app now protects the admin surface with a real operator account. The next
-                plan adds the actual newsletter CRUD workspace on top of this shell.
-              </p>
-            </section>
-
-            <section className="status-panel" aria-label="Current status">
-              <div className="status-metric">
-                <span className="status-label">Signed in as</span>
-                <strong>{currentUser.email}</strong>
-              </div>
-              <div className="status-grid">
-                <div>
-                  <span className="status-label">Shell</span>
-                  <strong>Protected</strong>
-                </div>
-                <div>
-                  <span className="status-label">Bootstrap</span>
-                  <strong>{session.initialized ? "Locked" : "Open"}</strong>
-                </div>
-                <div>
-                  <span className="status-label">Phase 1</span>
-                  <strong>Plan 03 active</strong>
-                </div>
-                <div>
-                  <span className="status-label">Next</span>
-                  <strong>{newsletters.length} newsletters tracked</strong>
-                </div>
-              </div>
-            </section>
-          </main>
-
-          <section className="card-grid" aria-label="Roadmap themes">
-            {baselineCards.map((card) => (
-              <article className="info-card" key={card.title}>
-                <h2>{card.title}</h2>
-                <p>{card.detail}</p>
-              </article>
-            ))}
-          </section>
-        </>
+        <RunDashboardPage newsletters={newsletters} />
       )}
     </div>
   );

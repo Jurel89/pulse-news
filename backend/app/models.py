@@ -57,6 +57,7 @@ class Newsletter(TimestampMixin, Base):
     )
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
     schedule_cron: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    schedule_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)
     notes: Mapped[str | None] = mapped_column(Text(), nullable=True)
     recipients: Mapped[list[NewsletterRecipient]] = relationship(
@@ -109,6 +110,8 @@ class NewsletterRun(TimestampMixin, Base):
     snapshot_body_text: Mapped[str] = mapped_column(Text(), nullable=False)
     snapshot_recipient_emails: Mapped[str] = mapped_column(Text(), nullable=False, default="[]")
     delivery_outcomes: Mapped[str] = mapped_column(Text(), nullable=False, default="[]")
+    result_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_message: Mapped[str | None] = mapped_column(Text(), nullable=True)
     newsletter: Mapped[Newsletter] = relationship(back_populates="runs")
 
 

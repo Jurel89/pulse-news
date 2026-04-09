@@ -50,13 +50,26 @@ export type NewsletterSendResult = {
     template_key: string;
     recipient_count: number;
     snapshot_subject: string;
-    snapshot_preheader: string | null;
-    snapshot_body_text: string;
-    snapshot_recipient_emails: string;
-    delivery_outcomes: string;
-    created_at: string;
-    updated_at: string;
+  snapshot_preheader: string | null;
+  snapshot_body_text: string;
+  snapshot_recipient_emails: string;
+  delivery_outcomes: string;
+  result_mode: string | null;
+  result_message: string | null;
+  created_at: string;
+  updated_at: string;
   };
+  recipient_outcomes: RecipientSendOutcome[];
+};
+
+export type RunListResponse = {
+  items: NewsletterSendResult["run"][];
+};
+
+export type RunDetailResponse = {
+  run: NewsletterSendResult["run"];
+  newsletter: Newsletter;
+  recipient_emails: string[];
   recipient_outcomes: RecipientSendOutcome[];
 };
 
@@ -96,6 +109,17 @@ async function request<T>(path: string, init?: ApiRequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function buildQueryString(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  }
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
+}
+
 export const api = {
   getSession: () => request<SessionResponse>("/auth/session"),
   bootstrap: (email: string, password: string) =>
@@ -133,6 +157,10 @@ export const api = {
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
       method: "POST"
     }),
+  listRuns: (params: Record<string, string | undefined>) =>
+    request<RunListResponse>(`/runs${buildQueryString(params)}`),
+  getRunDetail: (runId: number) =>
+    request<RunDetailResponse>(`/runs/${runId}`),
   createNewsletter: (payload: NewsletterInput) =>
     request<Newsletter>("/newsletters", {
       method: "POST",
@@ -145,6 +173,14 @@ export const api = {
     }),
   pauseNewsletter: (newsletterId: number) =>
     request<Newsletter>(`/newsletters/${newsletterId}/pause`, {
+      method: "POST"
+    }),
+  resumeNewsletterSchedule: (newsletterId: number) =>
+    request<Newsletter>(`/newsletters/${newsletterId}/schedule/resume`, {
+      method: "POST"
+    }),
+  pauseNewsletterSchedule: (newsletterId: number) =>
+    request<Newsletter>(`/newsletters/${newsletterId}/schedule/pause`, {
       method: "POST"
     }),
   archiveNewsletter: (newsletterId: number) =>

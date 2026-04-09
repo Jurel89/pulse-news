@@ -60,6 +60,7 @@ class NewsletterSummary(BaseModel):
     audience_name: str
     timezone: str
     schedule_cron: str | None
+    schedule_enabled: bool
     status: str
     notes: str | None
     created_at: datetime
@@ -90,6 +91,7 @@ class NewsletterCreateRequest(BaseModel):
     audience_name: str = "default-audience"
     timezone: str = "UTC"
     schedule_cron: str | None = None
+    schedule_enabled: bool = False
     status: str = "draft"
     notes: str | None = None
     recipient_import_text: str = ""
@@ -138,6 +140,8 @@ class NewsletterRunSummary(BaseModel):
     snapshot_body_text: str
     snapshot_recipient_emails: str
     delivery_outcomes: str
+    result_mode: str | None
+    result_message: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -164,4 +168,15 @@ class NewsletterSendResponse(BaseModel):
     mode: str
     message: str
     run: NewsletterRunSummary
+    recipient_outcomes: list[RecipientSendOutcomeResponse]
+
+
+class RunListResponse(BaseModel):
+    items: list[NewsletterRunSummary]
+
+
+class RunDetailResponse(BaseModel):
+    run: NewsletterRunSummary
+    newsletter: NewsletterSummary
+    recipient_emails: list[str]
     recipient_outcomes: list[RecipientSendOutcomeResponse]

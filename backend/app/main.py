@@ -11,12 +11,15 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api.router import api_router
 from app.config import get_settings
 from app.database import init_database
+from app.scheduler import shutdown_scheduler, start_scheduler
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_database()
+    start_scheduler()
     yield
+    shutdown_scheduler()
 
 
 def create_app() -> FastAPI:

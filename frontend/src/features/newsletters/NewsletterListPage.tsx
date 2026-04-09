@@ -7,6 +7,8 @@ type NewsletterListPageProps = {
   onPreview: (newsletter: Newsletter) => void;
   onArchive: (newsletterId: number) => Promise<void>;
   onPause: (newsletterId: number) => Promise<void>;
+  onSchedulePause: (newsletterId: number) => Promise<void>;
+  onScheduleResume: (newsletterId: number) => Promise<void>;
   onDelete: (newsletterId: number) => Promise<void>;
 };
 
@@ -17,6 +19,8 @@ export function NewsletterListPage({
   onPreview,
   onArchive,
   onPause,
+  onSchedulePause,
+  onScheduleResume,
   onDelete
 }: NewsletterListPageProps) {
   return (
@@ -84,6 +88,25 @@ export function NewsletterListPage({
                 <button className="secondary-button" onClick={() => void onPause(newsletter.id)} type="button">
                   Pause
                 </button>
+                {newsletter.schedule_cron ? (
+                  newsletter.schedule_enabled ? (
+                    <button
+                      className="secondary-button"
+                      onClick={() => void onSchedulePause(newsletter.id)}
+                      type="button"
+                    >
+                      Pause Schedule
+                    </button>
+                  ) : (
+                    <button
+                      className="secondary-button"
+                      onClick={() => void onScheduleResume(newsletter.id)}
+                      type="button"
+                    >
+                      Resume Schedule
+                    </button>
+                  )
+                ) : null}
                 <button className="secondary-button" onClick={() => void onArchive(newsletter.id)} type="button">
                   Archive
                 </button>

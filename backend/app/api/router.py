@@ -4,12 +4,14 @@ from fastapi import APIRouter
 
 from app.api.auth import auth_router
 from app.api.newsletters import newsletters_router
+from app.api.runs import runs_router
 from app.config import get_settings
 from app.schemas import HealthResponse
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(auth_router)
 api_router.include_router(newsletters_router)
+api_router.include_router(runs_router)
 
 
 @api_router.get("/health", response_model=HealthResponse, tags=["system"])

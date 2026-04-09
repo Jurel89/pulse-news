@@ -161,6 +161,15 @@ export function NewsletterEditorPage({
           </label>
         </div>
 
+        <label className="checkbox-row">
+          <input
+            checked={form.schedule_enabled}
+            onChange={(event) => updateField("schedule_enabled", event.target.checked)}
+            type="checkbox"
+          />
+          <span>Enable recurring schedule</span>
+        </label>
+
         <div className="form-grid">
           <label>
             <span>Status</span>
