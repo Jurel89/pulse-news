@@ -89,13 +89,13 @@
 | NEWS-02 | Phase 1 | Complete |
 | NEWS-03 | Phase 1 | Complete |
 | NEWS-04 | Phase 1 | Complete |
-| AUD-01 | Phase 2 | Pending |
+| AUD-01 | Phase 2 | Complete |
 | AUD-02 | Phase 5 | Pending |
 | AUD-03 | Phase 5 | Pending |
 | AUD-04 | Phase 4 | Pending |
-| TPL-01 | Phase 2 | Pending |
-| TPL-02 | Phase 2 | Pending |
-| TPL-03 | Phase 2 | Pending |
+| TPL-01 | Phase 2 | Complete |
+| TPL-02 | Phase 2 | Complete |
+| TPL-03 | Phase 2 | Complete |
 | GEN-01 | Phase 3 | Pending |
 | GEN-02 | Phase 3 | Pending |
 | GEN-03 | Phase 3 | Pending |

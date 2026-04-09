@@ -5,32 +5,33 @@
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** One operator can reliably create and send multiple AI-assisted newsletters from a single, self-hosted control panel without juggling separate tools for content generation, scheduling, sending, and auditability.
-**Current focus:** Phase 2: Draft Workflow and Template System
+**Current focus:** Phase 3: AI Generation and Manual Delivery
 
 ## Current Position
 
-Phase: 2 of 5 (Draft Workflow and Template System)
-Plan: 0 of 3 in current phase
+Phase: 3 of 5 (AI Generation and Manual Delivery)
+Plan: 0 of 4 in current phase
 Status: Ready to plan
-Last activity: 2026-04-09 — Phase 1 completed with verified auth, newsletter CRUD, and single-container packaging
+Last activity: 2026-04-09 — Phase 2 completed with verified recipients, templates, previews, and test-send support
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 34 min
-- Total execution time: 1.7 hours
+- Total plans completed: 6
+- Average duration: 29 min
+- Total execution time: 2.9 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 3 | 102 min | 34 min |
+| 2 | 3 | 70 min | 23 min |
 
 **Recent Trend:**
-- Last 5 plans: 35 min, 32 min, 34 min
+- Last 5 plans: 34 min, 24 min, 28 min, 18 min
 - Trend: Stable
 
 ## Accumulated Context
@@ -43,6 +44,9 @@ Recent decisions affecting current work:
 - Phase 1: Keep FastAPI + React and serve the built frontend from the backend container
 - Phase 1: Use signed session-cookie auth with one-time operator bootstrap
 - Phase 1: Treat newsletter pause, archive, and delete as explicit state transitions/actions with audit events
+- Phase 2: Keep recipients newsletter-scoped for v1 instead of introducing reusable segments
+- Phase 2: Keep preview and test-send on the same backend render path
+- Phase 2: Distinguish real Resend sends from local-preview fallback results explicitly
 
 ### Pending Todos
 
@@ -56,5 +60,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-04-09 00:00
-Stopped at: Phase 1 verified complete; Phase 2 is ready for context/planning
+Stopped at: Phase 2 verified complete; Phase 3 is ready for context/planning
 Resume file: None
