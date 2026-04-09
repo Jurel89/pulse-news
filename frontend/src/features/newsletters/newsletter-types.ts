@@ -11,6 +11,7 @@ export type Newsletter = {
   model_name: string;
   template_key: string;
   audience_name: string;
+  delivery_topic: string;
   timezone: string;
   schedule_cron: string | null;
   schedule_enabled: boolean;
@@ -38,6 +39,7 @@ export type NewsletterInput = {
   model_name: string;
   template_key: string;
   audience_name: string;
+  delivery_topic: string;
   timezone: string;
   schedule_cron: string;
   schedule_enabled: boolean;
@@ -57,6 +59,7 @@ export const emptyNewsletterInput: NewsletterInput = {
   model_name: "gpt-4o-mini",
   template_key: "signal",
   audience_name: "default-audience",
+  delivery_topic: "default-topic",
   timezone: "UTC",
   schedule_cron: "",
   schedule_enabled: false,
@@ -77,6 +80,7 @@ export function toNewsletterInput(newsletter: Newsletter): NewsletterInput {
     model_name: newsletter.model_name,
     template_key: newsletter.template_key,
     audience_name: newsletter.audience_name,
+    delivery_topic: newsletter.delivery_topic,
     timezone: newsletter.timezone,
     schedule_cron: newsletter.schedule_cron ?? "",
     schedule_enabled: newsletter.schedule_enabled,

@@ -14,6 +14,7 @@ def client(tmp_path, monkeypatch):
 
     import app.api.auth
     import app.api.newsletters
+    import app.api.public
     import app.api.router
     import app.auth
     import app.config
@@ -33,6 +34,7 @@ def client(tmp_path, monkeypatch):
     reload(app.auth)
     reload(app.api.auth)
     reload(app.api.newsletters)
+    reload(app.api.public)
     reload(app.api.router)
     reload(app.main)
     app.database.init_database()
@@ -113,3 +115,12 @@ def test_run_dashboard_filters_and_details(client: TestClient):
     assert detail_payload["run"]["id"] == send_run_id
     assert detail_payload["run"]["snapshot_subject"]
     assert detail_payload["recipient_outcomes"]
+
+    reconcile_response = client.post(f"/api/runs/{send_run_id}/reconcile")
+    assert reconcile_response.status_code == 200
+    reconcile_payload = reconcile_response.json()
+    assert reconcile_payload["events"]
+
+    refreshed_detail = client.get(f"/api/runs/{send_run_id}")
+    assert refreshed_detail.status_code == 200
+    assert refreshed_detail.json()["events"]

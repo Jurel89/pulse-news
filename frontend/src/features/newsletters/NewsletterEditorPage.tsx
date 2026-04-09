@@ -145,6 +145,14 @@ export function NewsletterEditorPage({
           </label>
         </div>
 
+        <label>
+          <span>Delivery topic</span>
+          <input
+            onChange={(event) => updateField("delivery_topic", event.target.value)}
+            value={form.delivery_topic}
+          />
+        </label>
+
         <div className="form-grid">
           <label>
             <span>Timezone</span>

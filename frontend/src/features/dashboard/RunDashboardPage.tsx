@@ -33,6 +33,14 @@ type RunDetail = {
     provider_id: string | null;
     detail: string;
   }>;
+  events: Array<{
+    id: number;
+    event_type: string;
+    event_status: string;
+    message: string;
+    provider_id: string | null;
+    created_at: string;
+  }>;
 };
 
 type RunDashboardPageProps = {
@@ -70,6 +78,12 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
   }
 
   async function handleSelectRun(runId: number) {
+    const detail = await api.getRunDetail(runId);
+    setSelectedRun(detail);
+  }
+
+  async function handleReconcile(runId: number) {
+    await api.reconcileRun(runId);
     const detail = await api.getRunDetail(runId);
     setSelectedRun(detail);
   }
@@ -154,12 +168,24 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
           <p>{selectedRun.run.result_message ?? "No result message recorded."}</p>
           <p>{selectedRun.run.snapshot_body_text}</p>
           <p>Recipients: {selectedRun.recipient_emails.join(", ") || "None"}</p>
+          <button className="secondary-button" onClick={() => void handleReconcile(selectedRun.run.id)} type="button">
+            Reconcile Delivery
+          </button>
           <div className="newsletter-list">
             {selectedRun.recipient_outcomes.map((outcome) => (
               <article className="newsletter-card" key={outcome.email}>
                 <strong>{outcome.email}</strong>
                 <p>{outcome.status}</p>
                 <p className="newsletter-description">{outcome.detail}</p>
+              </article>
+            ))}
+          </div>
+          <div className="newsletter-list">
+            {selectedRun.events.map((event) => (
+              <article className="newsletter-card" key={event.id}>
+                <strong>{event.event_type}</strong>
+                <p>{event.event_status}</p>
+                <p className="newsletter-description">{event.message}</p>
               </article>
             ))}
           </div>

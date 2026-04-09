@@ -7,13 +7,17 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.auth import require_authenticated_user
+from app.config import get_settings
 from app.deps import DbSession
-from app.models import NewsletterRun
+from app.email_delivery import retrieve_email_status
+from app.models import NewsletterRun, NewsletterRunEvent
 from app.schemas import (
+    NewsletterRunEventSummary,
     NewsletterRunSummary,
     RecipientSendOutcomeResponse,
     RunDetailResponse,
     RunListResponse,
+    RunReconciliationResponse,
 )
 
 runs_router = APIRouter(prefix="/runs", tags=["runs"])
@@ -65,4 +69,40 @@ def get_run_detail(run_id: int, request: Request, db: DbSession) -> RunDetailRes
             RecipientSendOutcomeResponse(**outcome)
             for outcome in json.loads(run.delivery_outcomes or "[]")
         ],
+        events=[NewsletterRunEventSummary.model_validate(event) for event in run.events],
+    )
+
+
+@runs_router.post("/{run_id}/reconcile", response_model=RunReconciliationResponse)
+def reconcile_run_delivery(
+    run_id: int,
+    request: Request,
+    db: DbSession,
+) -> RunReconciliationResponse:
+    require_authenticated_user(request, db)
+    run = get_run_or_404(db, run_id)
+    stored_outcomes = json.loads(run.delivery_outcomes or "[]")
+    created_events: list[NewsletterRunEvent] = []
+    for outcome in stored_outcomes:
+        reconciliation = retrieve_email_status(
+            settings=get_settings(),
+            provider_id=outcome.get("provider_id"),
+            current_mode=run.result_mode,
+        )
+        event = NewsletterRunEvent(
+            run_id=run.id,
+            event_type="reconciliation",
+            event_status=reconciliation.event_status,
+            message=reconciliation.message,
+            provider_id=reconciliation.provider_id,
+        )
+        db.add(event)
+        created_events.append(event)
+
+    db.commit()
+    for event in created_events:
+        db.refresh(event)
+
+    return RunReconciliationResponse(
+        events=[NewsletterRunEventSummary.model_validate(event) for event in created_events]
     )

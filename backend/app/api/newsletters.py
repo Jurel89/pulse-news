@@ -13,7 +13,13 @@ from app.config import get_settings
 from app.deps import DbSession
 from app.email_delivery import send_newsletter_email, send_test_email
 from app.email_templates import render_newsletter
-from app.models import AuditEvent, Newsletter, NewsletterRecipient, NewsletterRun
+from app.models import (
+    AuditEvent,
+    Newsletter,
+    NewsletterRecipient,
+    NewsletterRun,
+    NewsletterRunEvent,
+)
 from app.schemas import (
     NewsletterCreateRequest,
     NewsletterDetail,
@@ -87,15 +93,22 @@ def parse_recipient_import_text(recipient_import_text: str) -> list[str]:
 
 def replace_newsletter_recipients(newsletter: Newsletter, recipient_import_text: str) -> None:
     parsed_emails = parse_recipient_import_text(recipient_import_text)
-    newsletter.recipients.clear()
-    newsletter.recipients.extend(
-        NewsletterRecipient(
-            email=email,
-            is_active=True,
-            unsubscribe_token=secrets.token_urlsafe(16),
+    existing_by_email = {recipient.email: recipient for recipient in newsletter.recipients}
+    next_recipients: list[NewsletterRecipient] = []
+    for email in parsed_emails:
+        existing = existing_by_email.get(email)
+        if existing is not None:
+            next_recipients.append(existing)
+            continue
+        next_recipients.append(
+            NewsletterRecipient(
+                email=email,
+                is_active=True,
+                unsubscribe_token=secrets.token_urlsafe(16),
+            )
         )
-        for email in parsed_emails
-    )
+
+    newsletter.recipients[:] = next_recipients
 
 
 def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
@@ -107,6 +120,8 @@ def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
                 "email": recipient.email,
                 "is_active": recipient.is_active,
                 "unsubscribe_token": recipient.unsubscribe_token,
+                "unsubscribed_at": recipient.unsubscribed_at,
+                "suppression_reason": recipient.suppression_reason,
             }
             for recipient in newsletter.recipients
         ],
@@ -121,7 +136,13 @@ def create_newsletter_run(
     run_status: str,
     result_mode: str | None = None,
     result_message: str | None = None,
+    recipient_emails: list[str] | None = None,
 ) -> NewsletterRun:
+    snapshot_recipient_emails = recipient_emails or [
+        recipient.email
+        for recipient in newsletter.recipients
+        if recipient.is_active and recipient.unsubscribed_at is None
+    ]
     return NewsletterRun(
         newsletter_id=newsletter.id,
         trigger_mode=trigger_mode,
@@ -129,16 +150,34 @@ def create_newsletter_run(
         provider_name=newsletter.provider_name,
         model_name=newsletter.model_name,
         template_key=newsletter.template_key,
-        recipient_count=len(newsletter.recipients),
+        recipient_count=len(snapshot_recipient_emails),
         snapshot_subject=newsletter.draft_subject,
         snapshot_preheader=newsletter.draft_preheader,
         snapshot_body_text=newsletter.draft_body_text,
-        snapshot_recipient_emails=json.dumps(
-            [recipient.email for recipient in newsletter.recipients]
-        ),
+        snapshot_recipient_emails=json.dumps(snapshot_recipient_emails),
         delivery_outcomes="[]",
         result_mode=result_mode,
         result_message=result_message,
+    )
+
+
+def add_run_event(
+    db: DbSession,
+    run: NewsletterRun,
+    *,
+    event_type: str,
+    event_status: str,
+    message: str,
+    provider_id: str | None = None,
+) -> None:
+    db.add(
+        NewsletterRunEvent(
+            run_id=run.id,
+            event_type=event_type,
+            event_status=event_status,
+            message=message,
+            provider_id=provider_id,
+        )
     )
 
 
@@ -149,12 +188,15 @@ def execute_newsletter_send(
     trigger_mode: str,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
     rendered = render_newsletter(newsletter)
+    active_recipient_emails = [
+        recipient.email
+        for recipient in newsletter.recipients
+        if recipient.is_active and recipient.unsubscribed_at is None
+    ]
     result = send_newsletter_email(
         settings=get_settings(),
         rendered=rendered,
-        recipient_emails=[
-            recipient.email for recipient in newsletter.recipients if recipient.is_active
-        ],
+        recipient_emails=active_recipient_emails,
     )
     run = create_newsletter_run(
         newsletter,
@@ -162,6 +204,7 @@ def execute_newsletter_send(
         run_status=result.status,
         result_mode=result.mode,
         result_message=result.message,
+        recipient_emails=active_recipient_emails,
     )
     run.delivery_outcomes = json.dumps(
         [
@@ -175,6 +218,16 @@ def execute_newsletter_send(
         ]
     )
     db.add(run)
+    db.flush()
+    for outcome in result.recipient_outcomes:
+        add_run_event(
+            db,
+            run,
+            event_type="delivery",
+            event_status=outcome.status,
+            message=outcome.detail,
+            provider_id=outcome.provider_id,
+        )
     db.commit()
     db.refresh(run)
     return (
@@ -223,6 +276,7 @@ def create_newsletter(
         model_name=payload.model_name,
         template_key=payload.template_key,
         audience_name=payload.audience_name,
+        delivery_topic=payload.delivery_topic or slugify(payload.name),
         timezone=payload.timezone,
         schedule_cron=payload.schedule_cron,
         schedule_enabled=payload.schedule_enabled,
@@ -322,6 +376,14 @@ def generate_draft(
     )
     db.add(newsletter)
     db.add(run)
+    db.flush()
+    add_run_event(
+        db,
+        run,
+        event_type="generation",
+        event_status=generated.status,
+        message=generated.message,
+    )
     db.commit()
     db.refresh(newsletter)
     db.refresh(run)
@@ -407,6 +469,7 @@ def update_newsletter(
     newsletter.model_name = payload.model_name
     newsletter.template_key = payload.template_key
     newsletter.audience_name = payload.audience_name
+    newsletter.delivery_topic = payload.delivery_topic or slugify(payload.name)
     newsletter.timezone = payload.timezone
     newsletter.schedule_cron = payload.schedule_cron
     newsletter.schedule_enabled = payload.schedule_enabled

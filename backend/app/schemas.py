@@ -74,6 +74,8 @@ class NewsletterRecipientSummary(BaseModel):
     email: str
     is_active: bool
     unsubscribe_token: str
+    unsubscribed_at: datetime | None = None
+    suppression_reason: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -89,6 +91,7 @@ class NewsletterCreateRequest(BaseModel):
     model_name: str = "gpt-4o-mini"
     template_key: str = "signal"
     audience_name: str = "default-audience"
+    delivery_topic: str = "default-topic"
     timezone: str = "UTC"
     schedule_cron: str | None = None
     schedule_enabled: bool = False
@@ -148,6 +151,17 @@ class NewsletterRunSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class NewsletterRunEventSummary(BaseModel):
+    id: int
+    event_type: str
+    event_status: str
+    message: str
+    provider_id: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class NewsletterGenerationResponse(BaseModel):
     status: str
     mode: str
@@ -180,3 +194,8 @@ class RunDetailResponse(BaseModel):
     newsletter: NewsletterSummary
     recipient_emails: list[str]
     recipient_outcomes: list[RecipientSendOutcomeResponse]
+    events: list[NewsletterRunEventSummary]
+
+
+class RunReconciliationResponse(BaseModel):
+    events: list[NewsletterRunEventSummary]

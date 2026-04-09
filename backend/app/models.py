@@ -55,6 +55,11 @@ class Newsletter(TimestampMixin, Base):
         default="default-audience",
         nullable=False,
     )
+    delivery_topic: Mapped[str] = mapped_column(
+        String(255),
+        default="default-topic",
+        nullable=False,
+    )
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
     schedule_cron: Mapped[str | None] = mapped_column(String(255), nullable=True)
     schedule_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
@@ -87,6 +92,8 @@ class NewsletterRecipient(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suppression_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     newsletter: Mapped[Newsletter] = relationship(back_populates="recipients")
 
 
@@ -113,6 +120,32 @@ class NewsletterRun(TimestampMixin, Base):
     result_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result_message: Mapped[str | None] = mapped_column(Text(), nullable=True)
     newsletter: Mapped[Newsletter] = relationship(back_populates="runs")
+    events: Mapped[list[NewsletterRunEvent]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+    )
+
+
+class NewsletterRunEvent(Base):
+    __tablename__ = "newsletter_run_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("newsletter_runs.id"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    message: Mapped[str] = mapped_column(Text(), nullable=False)
+    provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        default=utc_now,
+    )
+    run: Mapped[NewsletterRun] = relationship(back_populates="events")
 
 
 class AuditEvent(Base):

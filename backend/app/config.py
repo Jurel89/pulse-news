@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     )
     resend_api_key: str | None = Field(default=None)
     resend_from_email: str | None = Field(default=None)
+    resend_api_base_url: str = Field(default="https://api.resend.com")
     resend_api_url: str = Field(default="https://api.resend.com/emails")
     data_dir: Path = Field(default=PROJECT_ROOT / "data")
     frontend_dist_dir: Path = Field(default=PROJECT_ROOT / "frontend" / "dist")

@@ -71,6 +71,14 @@ export type RunDetailResponse = {
   newsletter: Newsletter;
   recipient_emails: string[];
   recipient_outcomes: RecipientSendOutcome[];
+  events: Array<{
+    id: number;
+    event_type: string;
+    event_status: string;
+    message: string;
+    provider_id: string | null;
+    created_at: string;
+  }>;
 };
 
 export type NewsletterGenerationResult = {
@@ -161,6 +169,10 @@ export const api = {
     request<RunListResponse>(`/runs${buildQueryString(params)}`),
   getRunDetail: (runId: number) =>
     request<RunDetailResponse>(`/runs/${runId}`),
+  reconcileRun: (runId: number) =>
+    request<{ events: RunDetailResponse["events"] }>(`/runs/${runId}/reconcile`, {
+      method: "POST"
+    }),
   createNewsletter: (payload: NewsletterInput) =>
     request<Newsletter>("/newsletters", {
       method: "POST",

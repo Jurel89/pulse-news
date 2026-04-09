@@ -33,6 +33,13 @@ class ManualSendResult:
     recipient_outcomes: list[RecipientSendOutcome]
 
 
+@dataclass
+class ReconciliationEvent:
+    event_status: str
+    message: str
+    provider_id: str | None
+
+
 def send_test_email(
     *,
     settings: Settings,
@@ -169,3 +176,38 @@ def send_newsletter_email(
         message="Manual send attempted for all active recipients.",
         recipient_outcomes=outcomes,
     )
+
+
+def retrieve_email_status(
+    *,
+    settings: Settings,
+    provider_id: str | None,
+    current_mode: str | None,
+) -> ReconciliationEvent:
+    if current_mode != "resend" or not provider_id:
+        return ReconciliationEvent(
+            event_status="simulated",
+            message="No live provider status is available for this delivery outcome.",
+            provider_id=provider_id,
+        )
+
+    retrieve_request = request.Request(
+        f"{settings.resend_api_base_url}/emails/{provider_id}",
+        headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+        method="GET",
+    )
+
+    try:  # pragma: no cover - live network path not exercised in tests
+        with request.urlopen(retrieve_request, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return ReconciliationEvent(
+            event_status=payload.get("last_event", "unknown"),
+            message="Delivery status retrieved from Resend.",
+            provider_id=provider_id,
+        )
+    except Exception as exc:  # pragma: no cover - local tests exercise fallback path
+        return ReconciliationEvent(
+            event_status="unknown",
+            message=f"Unable to retrieve live delivery status: {exc}",
+            provider_id=provider_id,
+        )

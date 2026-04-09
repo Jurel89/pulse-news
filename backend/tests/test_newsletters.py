@@ -13,6 +13,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PULSE_NEWS_ENVIRONMENT", "development")
 
     import app.api.auth
+    import app.api.public
     import app.api.router
     import app.auth
     import app.config
@@ -31,6 +32,7 @@ def client(tmp_path, monkeypatch):
     reload(app.schemas)
     reload(app.auth)
     reload(app.api.auth)
+    reload(app.api.public)
     reload(app.api.router)
     reload(app.main)
     app.database.init_database()
@@ -192,3 +194,42 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     assert send_payload["run"]["trigger_mode"] == "manual-send"
     assert send_payload["run"]["recipient_count"] == 1
     assert send_payload["recipient_outcomes"][0]["email"] == "founder@example.com"
+
+
+def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
+    bootstrap_operator(client)
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Compliance Brief",
+            "description": "Compliance workflow test",
+            "prompt": "Generate compliance newsletter content.",
+            "draft_subject": "Compliance Brief",
+            "draft_preheader": "Suppression workflow",
+            "draft_body_text": "Delivery topic test body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "ops",
+            "timezone": "UTC",
+            "schedule_cron": None,
+            "schedule_enabled": False,
+            "status": "active",
+            "notes": "Used for unsubscribe tests",
+            "recipient_import_text": "first@example.com\nsecond@example.com",
+            "delivery_topic": "ops-compliance"
+        },
+    )
+    assert create_response.status_code == 201
+    newsletter = create_response.json()
+
+    token = newsletter["recipients"][0]["unsubscribe_token"]
+    unsubscribe_response = client.post(f"/api/public/unsubscribe/{token}")
+    assert unsubscribe_response.status_code == 200
+
+    send_response = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    assert send_response.status_code == 200
+    send_payload = send_response.json()
+    assert send_payload["run"]["recipient_count"] == 1
+    assert send_payload["recipient_outcomes"][0]["email"] == "second@example.com"
