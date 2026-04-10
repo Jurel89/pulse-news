@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Backend for Pulse News"
 requires-python = ">=3.12"
 dependencies = [
+  "alembic>=1.14.0,<2.0.0",
   "apscheduler>=3.11.2,<4.0.0",
   "fastapi>=0.135.3,<1.0.0",
   "uvicorn[standard]>=0.34.2,<1.0.0",
@@ -19,7 +20,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "alembic>=1.14.0,<2.0.0",
   "httpx>=0.28.1,<1.0.0",
   "pytest>=8.3.5,<9.0.0",
   "ruff>=0.11.8,<1.0.0",
