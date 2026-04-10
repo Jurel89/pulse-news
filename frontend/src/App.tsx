@@ -15,6 +15,7 @@ type ActiveView = "dashboard" | "newsletters" | "account";
 export default function App() {
   const [session, setSession] = useState<SessionState>(initialSessionState);
   const [busy, setBusy] = useState(false);
+  const [newslettersLoading, setNewslettersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("dashboard");
@@ -46,11 +47,14 @@ export default function App() {
   }, [session.authenticated]);
 
   async function loadNewsletters() {
+    setNewslettersLoading(true);
     try {
       const nextNewsletters = await api.listNewsletters();
       setNewsletters(nextNewsletters);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load newsletters.");
+    } finally {
+      setNewslettersLoading(false);
     }
   }
 
@@ -217,7 +221,13 @@ export default function App() {
             <button
               className={item.id === activeView ? "nav-pill active" : "nav-pill"}
               key={item.id}
-              onClick={() => setActiveView(item.id)}
+              onClick={() => {
+                if (item.id !== activeView) {
+                  setError(null);
+                  setNotice(null);
+                }
+                setActiveView(item.id);
+              }}
               type="button"
             >
               {item.label}
@@ -255,6 +265,9 @@ export default function App() {
         ) : (
           <NewsletterListPage
             items={newsletters}
+            loading={newslettersLoading}
+            error={error}
+            onDismissError={() => setError(null)}
             onArchive={handleArchiveNewsletter}
             onCreate={() => {
               setEditingNewsletter(null);

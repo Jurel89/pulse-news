@@ -17,6 +17,8 @@ WORKDIR /app
 RUN groupadd --gid 1000 appuser && useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
 COPY backend ./backend
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
 RUN pip install --no-cache-dir ./backend
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 

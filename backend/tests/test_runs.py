@@ -69,7 +69,7 @@ def create_newsletter(client: TestClient) -> dict:
             "schedule_cron": "0 7 * * 1-5",
             "status": "active",
             "notes": "Used for scheduler tests",
-            "recipient_import_text": "ops@example.com"
+            "recipient_import_text": "ops@example.com",
         },
     )
     assert response.status_code == 201
