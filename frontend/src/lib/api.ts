@@ -1,4 +1,4 @@
-import type { Newsletter, NewsletterInput } from "../features/newsletters/newsletter-types";
+import type { NewsletterSummary, NewsletterDetail, NewsletterInput } from "../features/newsletters/newsletter-types";
 
 export type UserSummary = {
   id: number;
@@ -68,7 +68,7 @@ export type RunListResponse = {
 
 export type RunDetailResponse = {
   run: NewsletterSendResult["run"];
-  newsletter: Newsletter;
+  newsletter_snapshot: NewsletterSummary | null;
   recipient_emails: string[];
   recipient_outcomes: RecipientSendOutcome[];
   events: Array<{
@@ -85,7 +85,7 @@ export type NewsletterGenerationResult = {
   status: string;
   mode: string;
   message: string;
-  newsletter: Newsletter;
+  newsletter: NewsletterDetail;
 };
 
 type ApiRequestInit = Omit<RequestInit, "body"> & {
@@ -130,10 +130,10 @@ function buildQueryString(params: Record<string, string | undefined>): string {
 
 export const api = {
   getSession: () => request<SessionResponse>("/auth/session"),
-  bootstrap: (email: string, password: string) =>
+  bootstrap: (email: string, password: string, bootstrapSecret?: string) =>
     request<SessionResponse>("/auth/bootstrap", {
       method: "POST",
-      jsonBody: { email, password }
+      jsonBody: { email, password, bootstrap_secret: bootstrapSecret }
     }),
   login: (email: string, password: string) =>
     request<SessionResponse>("/auth/login", {
@@ -149,7 +149,9 @@ export const api = {
       method: "POST",
       jsonBody: { current_password: currentPassword, new_password: newPassword }
     }),
-  listNewsletters: () => request<Newsletter[]>("/newsletters"),
+  listNewsletters: () => request<NewsletterSummary[]>("/newsletters"),
+  getNewsletter: (newsletterId: number) =>
+    request<NewsletterDetail>(`/newsletters/${newsletterId}`),
   previewNewsletter: (newsletterId: number) =>
     request<NewsletterPreview>(`/newsletters/${newsletterId}/preview`),
   generateNewsletter: (newsletterId: number) =>
@@ -174,29 +176,29 @@ export const api = {
       method: "POST"
     }),
   createNewsletter: (payload: NewsletterInput) =>
-    request<Newsletter>("/newsletters", {
+    request<NewsletterDetail>("/newsletters", {
       method: "POST",
       jsonBody: payload
     }),
   updateNewsletter: (newsletterId: number, payload: NewsletterInput) =>
-    request<Newsletter>(`/newsletters/${newsletterId}`, {
+    request<NewsletterDetail>(`/newsletters/${newsletterId}`, {
       method: "PUT",
       jsonBody: payload
     }),
   pauseNewsletter: (newsletterId: number) =>
-    request<Newsletter>(`/newsletters/${newsletterId}/pause`, {
+    request<NewsletterDetail>(`/newsletters/${newsletterId}/pause`, {
       method: "POST"
     }),
   resumeNewsletterSchedule: (newsletterId: number) =>
-    request<Newsletter>(`/newsletters/${newsletterId}/schedule/resume`, {
+    request<NewsletterDetail>(`/newsletters/${newsletterId}/schedule/resume`, {
       method: "POST"
     }),
   pauseNewsletterSchedule: (newsletterId: number) =>
-    request<Newsletter>(`/newsletters/${newsletterId}/schedule/pause`, {
+    request<NewsletterDetail>(`/newsletters/${newsletterId}/schedule/pause`, {
       method: "POST"
     }),
   archiveNewsletter: (newsletterId: number) =>
-    request<Newsletter>(`/newsletters/${newsletterId}/archive`, {
+    request<NewsletterDetail>(`/newsletters/${newsletterId}/archive`, {
       method: "POST"
     }),
   deleteNewsletter: (newsletterId: number) =>

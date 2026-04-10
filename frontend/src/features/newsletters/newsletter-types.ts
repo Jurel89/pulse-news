@@ -1,4 +1,4 @@
-export type Newsletter = {
+export type NewsletterSummary = {
   id: number;
   name: string;
   slug: string;
@@ -17,16 +17,23 @@ export type Newsletter = {
   schedule_enabled: boolean;
   status: string;
   notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NewsletterDetail = NewsletterSummary & {
   recipient_import_text: string;
   recipients: Array<{
     id: number;
     email: string;
     is_active: boolean;
     unsubscribe_token: string;
+    unsubscribed_at: string | null;
+    suppression_reason: string | null;
   }>;
-  created_at: string;
-  updated_at: string;
 };
+
+export type Newsletter = NewsletterSummary;
 
 export type NewsletterInput = {
   name: string;
@@ -65,27 +72,27 @@ export const emptyNewsletterInput: NewsletterInput = {
   schedule_enabled: false,
   status: "draft",
   notes: "",
-  recipient_import_text: ""
+  recipient_import_text: "",
 };
 
-export function toNewsletterInput(newsletter: Newsletter): NewsletterInput {
+export function toNewsletterInput(detail: NewsletterDetail): NewsletterInput {
   return {
-    name: newsletter.name,
-    description: newsletter.description ?? "",
-    prompt: newsletter.prompt,
-    draft_subject: newsletter.draft_subject,
-    draft_preheader: newsletter.draft_preheader ?? "",
-    draft_body_text: newsletter.draft_body_text,
-    provider_name: newsletter.provider_name,
-    model_name: newsletter.model_name,
-    template_key: newsletter.template_key,
-    audience_name: newsletter.audience_name,
-    delivery_topic: newsletter.delivery_topic,
-    timezone: newsletter.timezone,
-    schedule_cron: newsletter.schedule_cron ?? "",
-    schedule_enabled: newsletter.schedule_enabled,
-    status: newsletter.status,
-    notes: newsletter.notes ?? "",
-    recipient_import_text: newsletter.recipient_import_text
+    name: detail.name,
+    description: detail.description ?? "",
+    prompt: detail.prompt,
+    draft_subject: detail.draft_subject,
+    draft_preheader: detail.draft_preheader ?? "",
+    draft_body_text: detail.draft_body_text,
+    provider_name: detail.provider_name,
+    model_name: detail.model_name,
+    template_key: detail.template_key,
+    audience_name: detail.audience_name,
+    delivery_topic: detail.delivery_topic,
+    timezone: detail.timezone,
+    schedule_cron: detail.schedule_cron ?? "",
+    schedule_enabled: detail.schedule_enabled,
+    status: detail.status,
+    notes: detail.notes ?? "",
+    recipient_import_text: detail.recipient_import_text,
   };
 }

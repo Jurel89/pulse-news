@@ -4,13 +4,16 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from app.auth import (
     bootstrap_enabled,
+    claim_bootstrap,
     clear_authenticated_session,
     get_authenticated_user,
     get_user_by_email,
+    mark_bootstrap_complete,
     normalize_email,
     require_authenticated_user,
     set_authenticated_session,
 )
+from app.config import get_settings
 from app.deps import DbSession
 from app.models import User
 from app.schemas import (
@@ -42,7 +45,23 @@ def bootstrap_operator(
     request: Request,
     db: DbSession,
 ) -> SessionResponse:
-    if not bootstrap_enabled(db):
+    settings = get_settings()
+    if settings.environment == "production":
+        if not settings.bootstrap_secret:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Bootstrap is disabled. "
+                    "Set PULSE_NEWS_BOOTSTRAP_SECRET to enable initial setup."
+                ),
+            )
+        if payload.bootstrap_secret != settings.bootstrap_secret:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid bootstrap secret.",
+            )
+
+    if not claim_bootstrap(db):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Operator account already exists.",
@@ -51,6 +70,9 @@ def bootstrap_operator(
     email = normalize_email(payload.email)
     user = User(email=email, password_hash=hash_password(payload.password))
     db.add(user)
+    db.flush()
+
+    mark_bootstrap_complete(db, user.id)
     db.commit()
     db.refresh(user)
 

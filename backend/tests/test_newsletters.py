@@ -69,7 +69,7 @@ def test_newsletter_crud_flow(client: TestClient):
             "schedule_cron": "0 7 * * 1-5",
             "status": "active",
             "notes": "Primary weekday newsletter",
-            "recipient_import_text": "ceo@example.com\nops@example.com,founder@example.com"
+            "recipient_import_text": "ceo@example.com\nops@example.com,founder@example.com",
         },
     )
     assert create_response.status_code == 201
@@ -100,7 +100,7 @@ def test_newsletter_crud_flow(client: TestClient):
             "schedule_cron": "15 7 * * 1-5",
             "status": "draft",
             "notes": "Renamed for regional edition",
-            "recipient_import_text": "europe@example.com"
+            "recipient_import_text": "europe@example.com",
         },
     )
     assert update_response.status_code == 200
@@ -150,8 +150,7 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
             "name": "Founder Radar",
             "description": "Signals for startup operators",
             "prompt": (
-                "Summarize the top startup infrastructure news "
-                "for founders in a concise tone."
+                "Summarize the top startup infrastructure news for founders in a concise tone."
             ),
             "draft_subject": "",
             "draft_preheader": "",
@@ -162,9 +161,9 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
             "audience_name": "founders",
             "timezone": "UTC",
             "schedule_cron": None,
-            "status": "draft",
+            "status": "active",
             "notes": "Used for generation tests",
-            "recipient_import_text": "founder@example.com"
+            "recipient_import_text": "founder@example.com",
         },
     )
     assert create_response.status_code == 201
@@ -218,7 +217,7 @@ def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
             "status": "active",
             "notes": "Used for unsubscribe tests",
             "recipient_import_text": "first@example.com\nsecond@example.com",
-            "delivery_topic": "ops-compliance"
+            "delivery_topic": "ops-compliance",
         },
     )
     assert create_response.status_code == 201

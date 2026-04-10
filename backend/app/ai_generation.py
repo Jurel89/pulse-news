@@ -21,10 +21,18 @@ class GeneratedDraft:
     body_text: str
 
 
+SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter"}
+
+
+def _normalized_provider_name(newsletter: Newsletter) -> str:
+    return newsletter.provider_name.strip().lower()
+
+
 def _provider_model_name(newsletter: Newsletter) -> str:
+    provider_name = _normalized_provider_name(newsletter)
     if "/" in newsletter.model_name:
         return newsletter.model_name
-    return f"{newsletter.provider_name}/{newsletter.model_name}"
+    return f"{provider_name}/{newsletter.model_name}"
 
 
 def _has_live_provider_credentials(provider_name: str) -> bool:
@@ -46,15 +54,11 @@ def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
         or newsletter.description
         or "Generated locally because no live provider credentials are configured."
     ).strip()
-    body_text = (
-        newsletter.draft_body_text.strip()
-        or (
-            f"Prompt focus:\n{newsletter.prompt.strip()}\n\n"
-            "Fallback draft outline:\n"
-            "- Lead with the newsletter angle and core update.\n"
-            "- Highlight 3 concise points worth operator attention.\n"
-            "- Close with a short next-step or takeaway."
-        )
+    body_text = newsletter.draft_body_text.strip() or (
+        "Fallback draft outline:\n"
+        "- Lead with the newsletter angle and core update.\n"
+        "- Highlight 3 concise points worth operator attention.\n"
+        "- Close with a short next-step or takeaway."
     )
     return GeneratedDraft(
         status="fallback",
@@ -70,7 +74,22 @@ def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
 
 
 def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
-    if completion is None or not _has_live_provider_credentials(newsletter.provider_name):
+    provider_name = _normalized_provider_name(newsletter)
+    if provider_name not in SUPPORTED_PROVIDERS:
+        supported_providers = ", ".join(sorted(SUPPORTED_PROVIDERS))
+        return GeneratedDraft(
+            status="error",
+            mode="none",
+            message=(
+                f"Unsupported provider: '{newsletter.provider_name}'. "
+                f"Supported: {supported_providers}"
+            ),
+            subject=newsletter.draft_subject or newsletter.name,
+            preheader=newsletter.draft_preheader or "",
+            body_text=newsletter.draft_body_text or "",
+        )
+
+    if completion is None or not _has_live_provider_credentials(provider_name):
         return _fallback_generate(newsletter)
 
     prompt = "\n".join(
@@ -121,7 +140,23 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         elif in_body:
             body_lines.append(line.rstrip())
 
-    body_text = "\n".join(body_lines).strip() or newsletter.prompt
+    body_text = (
+        "\n".join(body_lines).strip() or newsletter.description or newsletter.draft_body_text or ""
+    )
+
+    if not body_lines and not body_text:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message=(
+                "AI output could not be parsed. Expected SUBJECT:/PREHEADER:/BODY: format. "
+                "Raw output was not in the expected structure."
+            ),
+            subject=subject,
+            preheader=preheader,
+            body_text=content[:500] if content else "",
+        )
+
     return GeneratedDraft(
         status="generated",
         mode="litellm",

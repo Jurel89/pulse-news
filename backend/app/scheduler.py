@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,6 +12,7 @@ from app.database import get_session_maker
 from app.models import Newsletter
 
 _scheduler: BackgroundScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 def newsletter_job_id(newsletter_id: int) -> str:
@@ -28,14 +31,27 @@ def get_scheduler() -> BackgroundScheduler:
 
 
 def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
-    from app.api.newsletters import execute_newsletter_send
+    from app.api.newsletters import SEND_ALLOWED_STATUSES, execute_newsletter_send
 
     session = get_session_maker()()
     try:
-        newsletter = session.scalar(select(Newsletter).where(Newsletter.id == newsletter_id))
+        newsletter = session.scalar(
+            select(Newsletter).where(
+                Newsletter.id == newsletter_id,
+                Newsletter.deleted_at.is_(None),
+            )
+        )
         if newsletter is None:
             return
         if not newsletter.schedule_enabled or not newsletter.schedule_cron:
+            return
+        if newsletter.status not in SEND_ALLOWED_STATUSES:
+            logger.warning(
+                "Skipping scheduled send for newsletter %s: status is '%s', not in %s",
+                newsletter.id,
+                newsletter.status,
+                SEND_ALLOWED_STATUSES,
+            )
             return
         execute_newsletter_send(session, newsletter, trigger_mode="scheduled-send")
     finally:
@@ -47,7 +63,7 @@ def sync_newsletter_schedule(newsletter: Newsletter) -> None:
     job_id = newsletter_job_id(newsletter.id)
     existing_job = scheduler.get_job(job_id)
 
-    if newsletter.schedule_enabled and newsletter.schedule_cron:
+    if newsletter.schedule_enabled and newsletter.schedule_cron and newsletter.status == "active":
         trigger = CronTrigger.from_crontab(
             newsletter.schedule_cron,
             timezone=newsletter.timezone or "UTC",
@@ -71,12 +87,27 @@ def reconcile_scheduler_jobs() -> None:
     scheduler = get_scheduler()
     session = get_session_maker()()
     try:
-        newsletters = session.scalars(select(Newsletter)).all()
+        newsletters = session.scalars(
+            select(Newsletter).where(Newsletter.deleted_at.is_(None))
+        ).all()
         desired_job_ids = set()
         for newsletter in newsletters:
-            if newsletter.schedule_enabled and newsletter.schedule_cron:
+            if (
+                newsletter.schedule_enabled
+                and newsletter.schedule_cron
+                and newsletter.status == "active"
+            ):
                 desired_job_ids.add(newsletter_job_id(newsletter.id))
-            sync_newsletter_schedule(newsletter)
+            try:
+                sync_newsletter_schedule(newsletter)
+            except Exception as exc:
+                logger.error(
+                    "Failed to sync schedule for newsletter %s (cron=%r, tz=%r): %s",
+                    newsletter.id,
+                    newsletter.schedule_cron,
+                    newsletter.timezone,
+                    exc,
+                )
 
         for job in scheduler.get_jobs():
             if job.id.startswith("newsletter-send-") and job.id not in desired_job_ids:

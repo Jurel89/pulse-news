@@ -1,10 +1,10 @@
-import type { Newsletter } from "./newsletter-types";
+import type { NewsletterSummary } from "./newsletter-types";
 
 type NewsletterListPageProps = {
-  items: Newsletter[];
+  items: NewsletterSummary[];
   onCreate: () => void;
-  onEdit: (newsletter: Newsletter) => void;
-  onPreview: (newsletter: Newsletter) => void;
+  onEdit: (newsletter: NewsletterSummary) => void;
+  onPreview: (newsletter: NewsletterSummary) => void;
   onArchive: (newsletterId: number) => Promise<void>;
   onPause: (newsletterId: number) => Promise<void>;
   onSchedulePause: (newsletterId: number) => Promise<void>;
@@ -39,8 +39,8 @@ export function NewsletterListPage({
         <article className="empty-state">
           <h3>No newsletters yet</h3>
           <p>
-            Create the first newsletter definition now. Later phases will attach recipients,
-            previews, generation, and delivery flows to it.
+            Create your first newsletter. Define content, configure recipients, set a schedule,
+            and send — all from one place.
           </p>
         </article>
       ) : (
