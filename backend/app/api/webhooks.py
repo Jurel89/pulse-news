@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import get_session_maker
-from app.models import NewsletterRecipient, NewsletterRunEvent, utc_now
+from app.models import NewsletterRecipient, NewsletterRun, NewsletterRunEvent, utc_now
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -108,14 +108,32 @@ async def handle_resend_webhook(request: Request) -> dict[str, str]:
             logger.debug("Email delivered: %s", provider_event_id)
 
         if provider_event_id:
-            dedup_event = NewsletterRunEvent(
-                run_id=0,
-                event_type=f"webhook:{event_type}",
-                event_status="processed",
-                message=json.dumps({"type": event_type, "email": data.get("to")}),
-                provider_id=provider_event_id,
-            )
-            session.add(dedup_event)
+            target_run_id = None
+            runs_with_outcomes = session.scalars(
+                select(NewsletterRun).order_by(NewsletterRun.created_at.desc())
+            ).all()
+            for run in runs_with_outcomes:
+                outcomes = json.loads(run.delivery_outcomes or "[]")
+                for outcome in outcomes:
+                    if outcome.get("provider_id") == provider_event_id:
+                        target_run_id = run.id
+                        break
+                if target_run_id:
+                    break
+
+            if target_run_id is not None:
+                dedup_event = NewsletterRunEvent(
+                    run_id=target_run_id,
+                    event_type=f"webhook:{event_type}",
+                    event_status="processed",
+                    message=json.dumps({"type": event_type, "email": data.get("to")}),
+                    provider_id=provider_event_id,
+                )
+                session.add(dedup_event)
+            else:
+                logger.info(
+                    "No run found for provider event %s, skipping event storage", provider_event_id
+                )
 
         session.commit()
     except Exception:

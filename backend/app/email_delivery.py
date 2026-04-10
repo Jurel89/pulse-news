@@ -182,8 +182,6 @@ def send_newsletter_email(
 
     outcomes: list[RecipientSendOutcome] = []
     base_headers = _resend_headers(settings)
-    if attempt_key:
-        base_headers["Idempotency-Key"] = attempt_key
     for target in recipient_targets:  # pragma: no cover - live network path not exercised in tests
         unsubscribe_url = _build_unsubscribe_url(target.unsubscribe_token)
         html_content, plain_text_content = _append_unsubscribe_footer(
@@ -202,11 +200,14 @@ def send_newsletter_email(
                 "List-Unsubscribe": f"<{unsubscribe_url}>",
                 "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
             }
+        per_recipient_headers = dict(base_headers)
+        if attempt_key:
+            per_recipient_headers["Idempotency-Key"] = f"{attempt_key}-{target.email}"
         payload = json.dumps(payload_dict).encode("utf-8")
         send_request = request.Request(
             settings.resend_api_url,
             data=payload,
-            headers=base_headers,
+            headers=per_recipient_headers,
             method="POST",
         )
         try:
