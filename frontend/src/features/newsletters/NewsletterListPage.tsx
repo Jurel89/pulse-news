@@ -2,6 +2,8 @@ import type { NewsletterSummary } from "./newsletter-types";
 
 type NewsletterListPageProps = {
   items: NewsletterSummary[];
+  loading?: boolean;
+  error?: string | null;
   onCreate: () => void;
   onEdit: (newsletter: NewsletterSummary) => void;
   onPreview: (newsletter: NewsletterSummary) => void;
@@ -14,6 +16,8 @@ type NewsletterListPageProps = {
 
 export function NewsletterListPage({
   items,
+  loading,
+  error,
   onCreate,
   onEdit,
   onPreview,
@@ -35,7 +39,23 @@ export function NewsletterListPage({
         </button>
       </header>
 
-      {items.length === 0 ? (
+      {error ? (
+        <div className="error-banner">
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="newsletter-list">
+          {Array.from({ length: 3 }, (_, index) => (
+            <article className="loading-skeleton" key={index}>
+              <div className="loading-skeleton-bar" />
+              <div className="loading-skeleton-bar" />
+              <div className="loading-skeleton-bar" />
+            </article>
+          ))}
+        </div>
+      ) : items.length === 0 ? (
         <article className="empty-state">
           <h3>No newsletters yet</h3>
           <p>

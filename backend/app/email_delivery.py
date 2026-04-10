@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from html import escape
 from urllib import error, request
@@ -46,6 +47,10 @@ class ReconciliationEvent:
     event_status: str
     message: str
     provider_id: str | None
+
+
+RESEND_BATCH_CHUNK_SIZE = 100
+RESEND_BATCH_MAX_ATTEMPTS = 3
 
 
 def _resend_headers(settings: Settings) -> dict[str, str]:
@@ -93,6 +98,251 @@ def _append_unsubscribe_footer(
         f"Unsubscribe: {unsubscribe_url}"
     )
     return html, plain_text
+
+
+def _unsubscribe_headers(unsubscribe_url: str | None) -> dict[str, str] | None:
+    if not unsubscribe_url:
+        return None
+
+    return {
+        "List-Unsubscribe": f"<{unsubscribe_url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+
+
+def _build_recipient_payload(
+    *,
+    settings: Settings,
+    rendered: RenderedNewsletter,
+    target: RecipientDeliveryTarget,
+) -> dict[str, object]:
+    unsubscribe_url = _build_unsubscribe_url(target.unsubscribe_token)
+    html_content, plain_text_content = _append_unsubscribe_footer(
+        rendered=rendered,
+        unsubscribe_url=unsubscribe_url,
+    )
+    payload_dict: dict[str, object] = {
+        "from": settings.resend_from_email,
+        "to": [target.email],
+        "subject": rendered.subject,
+        "html": html_content,
+        "text": plain_text_content,
+    }
+    unsubscribe_headers = _unsubscribe_headers(unsubscribe_url)
+    if unsubscribe_headers:
+        payload_dict["headers"] = unsubscribe_headers
+    return payload_dict
+
+
+def _decode_http_error_detail(exc: error.HTTPError) -> str:
+    detail = exc.read().decode("utf-8", errors="replace").strip()
+    if detail:
+        return detail
+    if exc.reason:
+        return str(exc.reason)
+    return f"HTTP {exc.code}"
+
+
+def _failed_outcome(*, email: str, detail: str) -> RecipientSendOutcome:
+    return RecipientSendOutcome(
+        email=email,
+        status="failed",
+        provider_id=None,
+        detail=detail,
+    )
+
+
+def _send_single_recipient_via_resend(
+    *,
+    settings: Settings,
+    rendered: RenderedNewsletter,
+    target: RecipientDeliveryTarget,
+    attempt_key: str | None,
+) -> RecipientSendOutcome:
+    payload = json.dumps(
+        _build_recipient_payload(
+            settings=settings,
+            rendered=rendered,
+            target=target,
+        )
+    ).encode("utf-8")
+    headers = _resend_headers(settings)
+    if attempt_key:
+        headers["Idempotency-Key"] = f"{attempt_key}-{target.email}"
+
+    send_request = request.Request(
+        settings.resend_api_url,
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+
+    try:
+        with request.urlopen(send_request, timeout=15) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+        return RecipientSendOutcome(
+            email=target.email,
+            status="sent",
+            provider_id=response_payload.get("id"),
+            detail="Sent through Resend",
+        )
+    except error.HTTPError as exc:
+        return _failed_outcome(
+            email=target.email,
+            detail=f"Resend HTTP error: {_decode_http_error_detail(exc)}",
+        )
+    except error.URLError as exc:
+        return _failed_outcome(
+            email=target.email,
+            detail=f"Resend connection error: {exc.reason}",
+        )
+
+
+def _batch_headers(
+    settings: Settings,
+    *,
+    idempotency_key: str | None,
+) -> dict[str, str]:
+    headers = _resend_headers(settings)
+    headers["x-batch-validation"] = "permissive"
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+    return headers
+
+
+def _map_batch_response_to_outcomes(
+    *,
+    recipient_targets: list[RecipientDeliveryTarget],
+    response_payload: object,
+) -> list[RecipientSendOutcome]:
+    if not isinstance(response_payload, dict):
+        return [
+            _failed_outcome(
+                email=target.email,
+                detail="Resend batch response was not a JSON object.",
+            )
+            for target in recipient_targets
+        ]
+
+    response_data = response_payload.get("data")
+    response_errors = response_payload.get("errors")
+    provider_items = response_data if isinstance(response_data, list) else []
+    error_messages_by_index: dict[int, str] = {}
+    if isinstance(response_errors, list):
+        for item in response_errors:
+            if not isinstance(item, dict):
+                continue
+            index = item.get("index")
+            message = item.get("message")
+            if isinstance(index, int):
+                error_messages_by_index[index] = (
+                    message if isinstance(message, str) and message else "Batch validation failed."
+                )
+
+    outcomes: list[RecipientSendOutcome] = []
+    provider_item_index = 0
+    for recipient_index, target in enumerate(recipient_targets):
+        if recipient_index in error_messages_by_index:
+            outcomes.append(
+                _failed_outcome(
+                    email=target.email,
+                    detail=(
+                        f"Resend batch validation error: {error_messages_by_index[recipient_index]}"
+                    ),
+                )
+            )
+            continue
+
+        provider_item = (
+            provider_items[provider_item_index]
+            if provider_item_index < len(provider_items)
+            else None
+        )
+        provider_item_index += 1
+        provider_id = provider_item.get("id") if isinstance(provider_item, dict) else None
+        if provider_id:
+            outcomes.append(
+                RecipientSendOutcome(
+                    email=target.email,
+                    status="sent",
+                    provider_id=provider_id,
+                    detail="Sent through Resend",
+                )
+            )
+            continue
+
+        outcomes.append(
+            _failed_outcome(
+                email=target.email,
+                detail="Resend batch response was missing an email id.",
+            )
+        )
+
+    return outcomes
+
+
+def _send_recipient_chunk_via_resend_batch(
+    *,
+    settings: Settings,
+    rendered: RenderedNewsletter,
+    recipient_targets: list[RecipientDeliveryTarget],
+    chunk_index: int,
+    attempt_key: str | None,
+) -> list[RecipientSendOutcome]:
+    payload_items = [
+        _build_recipient_payload(
+            settings=settings,
+            rendered=rendered,
+            target=target,
+        )
+        for target in recipient_targets
+    ]
+    payload = json.dumps(payload_items).encode("utf-8")
+    batch_url = f"{settings.resend_api_base_url}/emails/batch"
+    idempotency_key = f"{attempt_key}-chunk-{chunk_index}" if attempt_key else None
+
+    for attempt_number in range(1, RESEND_BATCH_MAX_ATTEMPTS + 1):
+        send_request = request.Request(
+            batch_url,
+            data=payload,
+            headers=_batch_headers(settings, idempotency_key=idempotency_key),
+            method="POST",
+        )
+        try:
+            with request.urlopen(send_request, timeout=15) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+            return _map_batch_response_to_outcomes(
+                recipient_targets=recipient_targets,
+                response_payload=response_payload,
+            )
+        except error.HTTPError as exc:
+            detail = _decode_http_error_detail(exc)
+            if exc.code == 429 and attempt_number < RESEND_BATCH_MAX_ATTEMPTS:
+                time.sleep(attempt_number)
+                continue
+            return [
+                _failed_outcome(
+                    email=target.email,
+                    detail=f"Resend HTTP error: {detail}",
+                )
+                for target in recipient_targets
+            ]
+        except error.URLError as exc:
+            return [
+                _failed_outcome(
+                    email=target.email,
+                    detail=f"Resend connection error: {exc.reason}",
+                )
+                for target in recipient_targets
+            ]
+
+    return [
+        _failed_outcome(
+            email=target.email,
+            detail="Resend batch delivery exhausted all retry attempts.",
+        )
+        for target in recipient_targets
+    ]
 
 
 def send_test_email(
@@ -181,63 +431,25 @@ def send_newsletter_email(
         )
 
     outcomes: list[RecipientSendOutcome] = []
-    base_headers = _resend_headers(settings)
-    for target in recipient_targets:  # pragma: no cover - live network path not exercised in tests
-        unsubscribe_url = _build_unsubscribe_url(target.unsubscribe_token)
-        html_content, plain_text_content = _append_unsubscribe_footer(
-            rendered=rendered,
-            unsubscribe_url=unsubscribe_url,
-        )
-        payload_dict = {
-            "from": settings.resend_from_email,
-            "to": [target.email],
-            "subject": rendered.subject,
-            "html": html_content,
-            "text": plain_text_content,
-        }
-        if unsubscribe_url:
-            payload_dict["headers"] = {
-                "List-Unsubscribe": f"<{unsubscribe_url}>",
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-            }
-        per_recipient_headers = dict(base_headers)
-        if attempt_key:
-            per_recipient_headers["Idempotency-Key"] = f"{attempt_key}-{target.email}"
-        payload = json.dumps(payload_dict).encode("utf-8")
-        send_request = request.Request(
-            settings.resend_api_url,
-            data=payload,
-            headers=per_recipient_headers,
-            method="POST",
-        )
-        try:
-            with request.urlopen(send_request, timeout=15) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
-            outcomes.append(
-                RecipientSendOutcome(
-                    email=target.email,
-                    status="sent",
-                    provider_id=response_payload.get("id"),
-                    detail="Sent through Resend",
-                )
+    if len(recipient_targets) == 1:  # pragma: no cover - live network path not exercised in tests
+        outcomes.append(
+            _send_single_recipient_via_resend(
+                settings=settings,
+                rendered=rendered,
+                target=recipient_targets[0],
+                attempt_key=attempt_key,
             )
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8")
-            outcomes.append(
-                RecipientSendOutcome(
-                    email=target.email,
-                    status="failed",
-                    provider_id=None,
-                    detail=f"Resend HTTP error: {detail}",
-                )
-            )
-        except error.URLError as exc:
-            outcomes.append(
-                RecipientSendOutcome(
-                    email=target.email,
-                    status="failed",
-                    provider_id=None,
-                    detail=f"Resend connection error: {exc.reason}",
+        )
+    else:  # pragma: no cover - live network path not exercised in tests
+        for chunk_start in range(0, len(recipient_targets), RESEND_BATCH_CHUNK_SIZE):
+            chunk_targets = recipient_targets[chunk_start : chunk_start + RESEND_BATCH_CHUNK_SIZE]
+            outcomes.extend(
+                _send_recipient_chunk_via_resend_batch(
+                    settings=settings,
+                    rendered=rendered,
+                    recipient_targets=chunk_targets,
+                    chunk_index=(chunk_start // RESEND_BATCH_CHUNK_SIZE) + 1,
+                    attempt_key=attempt_key,
                 )
             )
 

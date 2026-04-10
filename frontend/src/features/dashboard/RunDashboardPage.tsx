@@ -55,37 +55,55 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
   const [triggerMode, setTriggerMode] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void loadRuns();
   }, [newsletterId, runStatus, triggerMode, dateFrom, dateTo]);
 
   async function loadRuns() {
-    const payload = await api.listRuns({
-      newsletter_id: newsletterId || undefined,
-      run_status: runStatus || undefined,
-      trigger_mode: triggerMode || undefined,
-      date_from: dateFrom || undefined,
-      date_to: dateTo || undefined
-    });
-    setRuns(payload.items);
-    if (payload.items.length > 0) {
-      const detail = await api.getRunDetail(payload.items[0].id);
-      setSelectedRun(detail);
-    } else {
-      setSelectedRun(null);
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = await api.listRuns({
+        newsletter_id: newsletterId || undefined,
+        run_status: runStatus || undefined,
+        trigger_mode: triggerMode || undefined,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined
+      });
+      setRuns(payload.items);
+      if (payload.items.length > 0) {
+        const detail = await api.getRunDetail(payload.items[0].id);
+        setSelectedRun(detail);
+      } else {
+        setSelectedRun(null);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load runs.");
+    } finally {
+      setLoading(false);
     }
   }
 
   async function handleSelectRun(runId: number) {
-    const detail = await api.getRunDetail(runId);
-    setSelectedRun(detail);
+    try {
+      const detail = await api.getRunDetail(runId);
+      setSelectedRun(detail);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load run detail.");
+    }
   }
 
   async function handleReconcile(runId: number) {
-    await api.reconcileRun(runId);
-    const detail = await api.getRunDetail(runId);
-    setSelectedRun(detail);
+    try {
+      await api.reconcileRun(runId);
+      const detail = await api.getRunDetail(runId);
+      setSelectedRun(detail);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to reconcile run.");
+    }
   }
 
   return (
@@ -97,6 +115,27 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         </div>
       </header>
 
+      {error ? (
+        <div className="error-banner">
+          <span>{error}</span>
+          <button className="error-banner-dismiss" onClick={() => setError(null)} type="button">
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="newsletter-list">
+          {Array.from({ length: 3 }, (_, index) => (
+            <article className="loading-skeleton" key={index}>
+              <div className="loading-skeleton-bar" />
+              <div className="loading-skeleton-bar" />
+              <div className="loading-skeleton-bar" />
+            </article>
+          ))}
+        </div>
+      ) : (
+        <>
       <div className="editor-form">
         <div className="form-grid">
           <label>
@@ -191,6 +230,8 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
           </div>
         </article>
       ) : null}
+      </>
+      )}
     </section>
   );
 }

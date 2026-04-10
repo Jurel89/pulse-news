@@ -13,4 +13,14 @@ frontend/dist/
 frontend/*.tsbuildinfo
 data/
 .sisyphus/
+
+# Internal planning and agent docs — not for public repo
+.planning/
+AGENTS.md
+CLAUDE.md
+.claude/
+.agents/
+*-remediation-review.md
+
+# Lock files
 backend/uv.lock

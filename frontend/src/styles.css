@@ -439,6 +439,61 @@ body {
   color: #415666;
 }
 
+.loading-skeleton {
+  padding: 22px 20px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(16, 36, 54, 0.06);
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+.loading-skeleton-bar {
+  height: 14px;
+  border-radius: 8px;
+  background: rgba(16, 36, 54, 0.08);
+  margin-bottom: 12px;
+}
+
+.loading-skeleton-bar:last-child {
+  width: 60%;
+  margin-bottom: 0;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.error-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-radius: 18px;
+  background: rgba(159, 47, 40, 0.1);
+  border: 1px solid rgba(159, 47, 40, 0.18);
+  color: #9f2f28;
+  font-weight: 600;
+}
+
+.error-banner-dismiss {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: rgba(159, 47, 40, 0.14);
+  color: #9f2f28;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 @media (min-width: 900px) {
   .topbar {
     flex-direction: row;
