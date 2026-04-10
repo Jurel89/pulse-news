@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,6 +12,7 @@ from app.database import get_session_maker
 from app.models import Newsletter
 
 _scheduler: BackgroundScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 def newsletter_job_id(newsletter_id: int) -> str:
@@ -32,7 +35,12 @@ def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
 
     session = get_session_maker()()
     try:
-        newsletter = session.scalar(select(Newsletter).where(Newsletter.id == newsletter_id))
+        newsletter = session.scalar(
+            select(Newsletter).where(
+                Newsletter.id == newsletter_id,
+                Newsletter.deleted_at.is_(None),
+            )
+        )
         if newsletter is None:
             return
         if not newsletter.schedule_enabled or not newsletter.schedule_cron:
@@ -71,12 +79,23 @@ def reconcile_scheduler_jobs() -> None:
     scheduler = get_scheduler()
     session = get_session_maker()()
     try:
-        newsletters = session.scalars(select(Newsletter)).all()
+        newsletters = session.scalars(
+            select(Newsletter).where(Newsletter.deleted_at.is_(None))
+        ).all()
         desired_job_ids = set()
         for newsletter in newsletters:
             if newsletter.schedule_enabled and newsletter.schedule_cron:
                 desired_job_ids.add(newsletter_job_id(newsletter.id))
-            sync_newsletter_schedule(newsletter)
+            try:
+                sync_newsletter_schedule(newsletter)
+            except Exception as exc:
+                logger.error(
+                    "Failed to sync schedule for newsletter %s (cron=%r, tz=%r): %s",
+                    newsletter.id,
+                    newsletter.schedule_cron,
+                    newsletter.timezone,
+                    exc,
+                )
 
         for job in scheduler.get_jobs():
             if job.id.startswith("newsletter-send-") and job.id not in desired_job_ids:

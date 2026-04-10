@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import uuid
 
-from fastapi import APIRouter, HTTPException, Request, status
+from apscheduler.triggers.cron import CronTrigger
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.ai_generation import generate_newsletter_draft
 from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.deps import DbSession
-from app.email_delivery import send_newsletter_email, send_test_email
+from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
 from app.email_templates import render_newsletter
 from app.models import (
     AuditEvent,
@@ -19,6 +21,7 @@ from app.models import (
     NewsletterRecipient,
     NewsletterRun,
     NewsletterRunEvent,
+    utc_now,
 )
 from app.schemas import (
     NewsletterCreateRequest,
@@ -34,6 +37,9 @@ from app.schemas import (
 )
 
 newsletters_router = APIRouter(prefix="/newsletters", tags=["newsletters"])
+
+SEND_ALLOWED_STATUSES = {"active", "draft", "paused"}
+SCHEDULE_ALLOWED_STATUSES = {"active"}
 
 
 def slugify(value: str) -> str:
@@ -63,8 +69,27 @@ def create_audit_event(
     )
 
 
+def get_active_recipient_emails(newsletter: Newsletter) -> list[str]:
+    return [recipient.email for recipient in get_active_recipients(newsletter)]
+
+
+def get_active_recipients(newsletter: Newsletter) -> list[NewsletterRecipient]:
+    return [
+        recipient
+        for recipient in newsletter.recipients
+        if recipient.is_active
+        and recipient.unsubscribed_at is None
+        and recipient.status == "subscribed"
+    ]
+
+
 def get_newsletter_or_404(db: DbSession, newsletter_id: int) -> Newsletter:
-    newsletter = db.scalar(select(Newsletter).where(Newsletter.id == newsletter_id))
+    newsletter = db.scalar(
+        select(Newsletter).where(
+            Newsletter.id == newsletter_id,
+            Newsletter.deleted_at.is_(None),
+        )
+    )
     if newsletter is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Newsletter not found.")
     return newsletter
@@ -91,27 +116,41 @@ def parse_recipient_import_text(recipient_import_text: str) -> list[str]:
     return normalized
 
 
-def replace_newsletter_recipients(newsletter: Newsletter, recipient_import_text: str) -> None:
+def upsert_newsletter_recipients(newsletter: Newsletter, recipient_import_text: str) -> None:
     parsed_emails = parse_recipient_import_text(recipient_import_text)
     existing_by_email = {recipient.email: recipient for recipient in newsletter.recipients}
-    next_recipients: list[NewsletterRecipient] = []
+    parsed_email_set = set(parsed_emails)
+
+    for email, recipient in existing_by_email.items():
+        if email not in parsed_email_set and recipient.status == "subscribed":
+            recipient.status = "removed_by_operator"
+            recipient.is_active = False
+
     for email in parsed_emails:
         existing = existing_by_email.get(email)
         if existing is not None:
-            next_recipients.append(existing)
+            if existing.status == "removed_by_operator":
+                existing.status = "subscribed"
+                existing.is_active = True
             continue
-        next_recipients.append(
+        newsletter.recipients.append(
             NewsletterRecipient(
                 email=email,
                 is_active=True,
+                status="subscribed",
                 unsubscribe_token=secrets.token_urlsafe(16),
             )
         )
 
-    newsletter.recipients[:] = next_recipients
-
 
 def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
+    current_recipients = [
+        recipient
+        for recipient in newsletter.recipients
+        if recipient.is_active
+        and recipient.unsubscribed_at is None
+        and recipient.status == "subscribed"
+    ]
     return NewsletterDetail(
         **NewsletterSummary.model_validate(newsletter).model_dump(),
         recipients=[
@@ -123,10 +162,38 @@ def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
                 "unsubscribed_at": recipient.unsubscribed_at,
                 "suppression_reason": recipient.suppression_reason,
             }
-            for recipient in newsletter.recipients
+            for recipient in current_recipients
         ],
-        recipient_import_text="\n".join(recipient.email for recipient in newsletter.recipients),
+        recipient_import_text="\n".join(recipient.email for recipient in current_recipients),
     )
+
+
+def validate_send_allowed(newsletter: Newsletter) -> None:
+    if newsletter.status not in SEND_ALLOWED_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Cannot send newsletter while status is '{newsletter.status}'.",
+        )
+
+
+def validate_schedule_allowed(newsletter: Newsletter) -> None:
+    if newsletter.status not in SCHEDULE_ALLOWED_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Cannot schedule newsletter in '{newsletter.status}' status.",
+        )
+
+
+def validate_schedule_configuration(newsletter: Newsletter) -> None:
+    schedule_cron = " ".join((newsletter.schedule_cron or "").split())
+    timezone = (newsletter.timezone or "UTC").strip() or "UTC"
+
+    if newsletter.schedule_enabled and not schedule_cron:
+        raise ValueError("schedule_cron is required when scheduling is enabled.")
+    if not schedule_cron:
+        return
+
+    CronTrigger.from_crontab(schedule_cron, timezone=timezone)
 
 
 def create_newsletter_run(
@@ -138,11 +205,7 @@ def create_newsletter_run(
     result_message: str | None = None,
     recipient_emails: list[str] | None = None,
 ) -> NewsletterRun:
-    snapshot_recipient_emails = recipient_emails or [
-        recipient.email
-        for recipient in newsletter.recipients
-        if recipient.is_active and recipient.unsubscribed_at is None
-    ]
+    snapshot_recipient_emails = recipient_emails or get_active_recipient_emails(newsletter)
     return NewsletterRun(
         newsletter_id=newsletter.id,
         trigger_mode=trigger_mode,
@@ -158,6 +221,11 @@ def create_newsletter_run(
         delivery_outcomes="[]",
         result_mode=result_mode,
         result_message=result_message,
+        snapshot_prompt=newsletter.prompt,
+        snapshot_newsletter_name=newsletter.name,
+        snapshot_newsletter_slug=newsletter.slug,
+        snapshot_delivery_topic=newsletter.delivery_topic,
+        snapshot_status_at_run=newsletter.status,
     )
 
 
@@ -187,38 +255,94 @@ def execute_newsletter_send(
     *,
     trigger_mode: str,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
-    rendered = render_newsletter(newsletter)
-    active_recipient_emails = [
-        recipient.email
-        for recipient in newsletter.recipients
-        if recipient.is_active and recipient.unsubscribed_at is None
-    ]
-    result = send_newsletter_email(
-        settings=get_settings(),
-        rendered=rendered,
-        recipient_emails=active_recipient_emails,
-    )
-    run = create_newsletter_run(
-        newsletter,
+    validate_send_allowed(newsletter)
+
+    active_recipients = get_active_recipients(newsletter)
+    active_recipient_emails = [recipient.email for recipient in active_recipients]
+    if not active_recipient_emails:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot send: no active recipients.",
+        )
+
+    run = NewsletterRun(
+        newsletter_id=newsletter.id,
         trigger_mode=trigger_mode,
-        run_status=result.status,
-        result_mode=result.mode,
-        result_message=result.message,
-        recipient_emails=active_recipient_emails,
-    )
-    run.delivery_outcomes = json.dumps(
-        [
-            {
-                "email": outcome.email,
-                "status": outcome.status,
-                "provider_id": outcome.provider_id,
-                "detail": outcome.detail,
-            }
-            for outcome in result.recipient_outcomes
-        ]
+        run_status="pending",
+        provider_name=newsletter.provider_name,
+        model_name=newsletter.model_name,
+        template_key=newsletter.template_key,
+        recipient_count=len(active_recipient_emails),
+        snapshot_subject=newsletter.draft_subject,
+        snapshot_preheader=newsletter.draft_preheader,
+        snapshot_body_text=newsletter.draft_body_text,
+        snapshot_recipient_emails=json.dumps(active_recipient_emails),
+        snapshot_prompt=newsletter.prompt,
+        snapshot_newsletter_name=newsletter.name,
+        snapshot_newsletter_slug=newsletter.slug,
+        snapshot_delivery_topic=newsletter.delivery_topic,
+        snapshot_status_at_run=newsletter.status,
+        delivery_outcomes="[]",
+        attempt_key=str(uuid.uuid4()),
     )
     db.add(run)
     db.flush()
+
+    try:
+        rendered = render_newsletter(newsletter)
+        run.rendered_subject = rendered.subject
+        run.rendered_preheader = rendered.preheader
+        run.rendered_html = rendered.html
+        run.rendered_plain_text = rendered.plain_text
+        run.started_at = utc_now()
+        run.run_status = "sending"
+        db.flush()
+    except Exception as exc:
+        run.run_status = "failed"
+        run.failure_reason = str(exc)
+        run.result_message = f"Failed to render newsletter: {exc}"
+        run.completed_at = utc_now()
+        db.flush()
+        db.commit()
+        raise
+
+    try:
+        result = send_newsletter_email(
+            settings=get_settings(),
+            rendered=rendered,
+            recipient_targets=[
+                RecipientDeliveryTarget(
+                    email=recipient.email,
+                    unsubscribe_token=recipient.unsubscribe_token,
+                )
+                for recipient in active_recipients
+            ],
+        )
+    except Exception as exc:
+        run.run_status = "failed"
+        run.failure_reason = str(exc)
+        run.result_message = f"Failed to send newsletter: {exc}"
+        run.completed_at = utc_now()
+        db.flush()
+        db.commit()
+        raise
+
+    recipient_outcomes = [
+        {
+            "email": outcome.email,
+            "status": outcome.status,
+            "provider_id": outcome.provider_id,
+            "detail": outcome.detail,
+        }
+        for outcome in result.recipient_outcomes
+    ]
+    run.run_status = result.status
+    run.result_mode = result.mode
+    run.result_message = result.message
+    run.delivery_outcomes = json.dumps(recipient_outcomes)
+    run.completed_at = utc_now()
+    db.flush()
+
     for outcome in result.recipient_outcomes:
         add_run_event(
             db,
@@ -236,15 +360,7 @@ def execute_newsletter_send(
             mode=result.mode,
             message=result.message,
             run=NewsletterRunSummary.model_validate(run),
-            recipient_outcomes=[
-                {
-                    "email": outcome.email,
-                    "status": outcome.status,
-                    "provider_id": outcome.provider_id,
-                    "detail": outcome.detail,
-                }
-                for outcome in result.recipient_outcomes
-            ],
+            recipient_outcomes=recipient_outcomes,
         ),
         run,
     )
@@ -253,7 +369,11 @@ def execute_newsletter_send(
 @newsletters_router.get("", response_model=list[NewsletterSummary])
 def list_newsletters(request: Request, db: DbSession) -> list[NewsletterSummary]:
     require_authenticated_user(request, db)
-    newsletters = db.scalars(select(Newsletter).order_by(Newsletter.updated_at.desc())).all()
+    newsletters = db.scalars(
+        select(Newsletter)
+        .where(Newsletter.deleted_at.is_(None))
+        .order_by(Newsletter.updated_at.desc())
+    ).all()
     return [NewsletterSummary.model_validate(newsletter) for newsletter in newsletters]
 
 
@@ -283,7 +403,17 @@ def create_newsletter(
         status=payload.status,
         notes=payload.notes,
     )
-    replace_newsletter_recipients(newsletter, payload.recipient_import_text)
+    upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
+
+    try:
+        validate_schedule_configuration(newsletter)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid schedule configuration: {exc}",
+        ) from exc
+
     db.add(newsletter)
     db.flush()
     create_audit_event(
@@ -404,7 +534,27 @@ def resume_newsletter_schedule(
 ) -> NewsletterDetail:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
+
+    if not (newsletter.schedule_cron or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot resume schedule without a cron expression.",
+        )
+
+    validate_schedule_allowed(newsletter)
+
+    newsletter.schedule_cron = " ".join(newsletter.schedule_cron.split())
     newsletter.schedule_enabled = True
+
+    try:
+        validate_schedule_configuration(newsletter)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid schedule configuration: {exc}",
+        ) from exc
+
     db.add(newsletter)
     db.commit()
     db.refresh(newsletter)
@@ -475,7 +625,16 @@ def update_newsletter(
     newsletter.schedule_enabled = payload.schedule_enabled
     newsletter.status = payload.status
     newsletter.notes = payload.notes
-    replace_newsletter_recipients(newsletter, payload.recipient_import_text)
+    upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
+
+    try:
+        validate_schedule_configuration(newsletter)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid schedule configuration: {exc}",
+        ) from exc
 
     db.add(newsletter)
     create_audit_event(
@@ -540,8 +699,12 @@ def archive_newsletter(newsletter_id: int, request: Request, db: DbSession) -> N
     return serialize_newsletter_detail(newsletter)
 
 
-@newsletters_router.delete("/{newsletter_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_newsletter(newsletter_id: int, request: Request, db: DbSession) -> None:
+@newsletters_router.delete(
+    "/{newsletter_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+def delete_newsletter(newsletter_id: int, request: Request, db: DbSession) -> Response:
     user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     create_audit_event(
@@ -553,5 +716,11 @@ def delete_newsletter(newsletter_id: int, request: Request, db: DbSession) -> No
         summary=f"Deleted newsletter {newsletter.name}",
         payload={"slug": newsletter.slug},
     )
-    db.delete(newsletter)
+    newsletter.deleted_at = utc_now()
+    newsletter.schedule_enabled = False
+    db.add(newsletter)
     db.commit()
+    from app.scheduler import sync_newsletter_schedule
+
+    sync_newsletter_schedule(newsletter)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

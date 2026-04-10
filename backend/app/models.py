@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -36,6 +36,18 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
 
 
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    initialized: Mapped[bool] = mapped_column(default=False, nullable=False)
+    operator_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bootstrap_disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
 class Newsletter(TimestampMixin, Base):
     __tablename__ = "newsletters"
 
@@ -65,18 +77,22 @@ class Newsletter(TimestampMixin, Base):
     schedule_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)
     notes: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     recipients: Mapped[list[NewsletterRecipient]] = relationship(
         back_populates="newsletter",
         cascade="all, delete-orphan",
     )
     runs: Mapped[list[NewsletterRun]] = relationship(
         back_populates="newsletter",
-        cascade="all, delete-orphan",
+        cascade="all",
     )
 
 
 class NewsletterRecipient(TimestampMixin, Base):
     __tablename__ = "newsletter_recipients"
+    __table_args__ = (
+        UniqueConstraint("newsletter_id", "email", name="uq_newsletter_recipient_email"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     newsletter_id: Mapped[int] = mapped_column(
@@ -86,6 +102,7 @@ class NewsletterRecipient(TimestampMixin, Base):
     )
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="subscribed", nullable=False)
     unsubscribe_token: Mapped[str] = mapped_column(
         String(255),
         unique=True,
@@ -119,6 +136,24 @@ class NewsletterRun(TimestampMixin, Base):
     delivery_outcomes: Mapped[str] = mapped_column(Text(), nullable=False, default="[]")
     result_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
     result_message: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    attempt_key: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    rendered_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rendered_preheader: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rendered_html: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    rendered_plain_text: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    snapshot_prompt: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    snapshot_newsletter_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    snapshot_newsletter_slug: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    snapshot_delivery_topic: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    snapshot_status_at_run: Mapped[str | None] = mapped_column(String(32), nullable=True)
     newsletter: Mapped[Newsletter] = relationship(back_populates="runs")
     events: Mapped[list[NewsletterRunEvent]] = relationship(
         back_populates="run",

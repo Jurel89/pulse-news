@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
+from html import escape
 from urllib import error, request
 
 from app.config import Settings
 from app.email_templates import RenderedNewsletter
+
+
+@dataclass(frozen=True)
+class RecipientDeliveryTarget:
+    email: str
+    unsubscribe_token: str | None = None
 
 
 @dataclass
@@ -40,6 +48,53 @@ class ReconciliationEvent:
     provider_id: str | None
 
 
+def _resend_headers(settings: Settings) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {settings.resend_api_key}",
+        "Content-Type": "application/json",
+    }
+
+
+def _build_unsubscribe_url(unsubscribe_token: str | None) -> str | None:
+    app_base_url = os.environ.get("PULSE_NEWS_BASE_URL", "").rstrip("/")
+    if not app_base_url or not unsubscribe_token:
+        return None
+    return f"{app_base_url}/api/public/unsubscribe/{unsubscribe_token}"
+
+
+def _append_unsubscribe_footer(
+    *,
+    rendered: RenderedNewsletter,
+    unsubscribe_url: str | None,
+) -> tuple[str, str]:
+    if not unsubscribe_url:
+        return rendered.html, rendered.plain_text
+
+    unsubscribe_href = escape(unsubscribe_url, quote=True)
+    footer_html = "".join(
+        [
+            '<div style="max-width:640px;margin:18px auto 0;padding:0 18px 24px;">',
+            '<p style="margin:0;font-size:13px;line-height:1.6;color:#5c6b78;">',
+            "You are receiving this email because you subscribed to this newsletter. ",
+            f'<a href="{unsubscribe_href}" '
+            'style="color:#18324a;text-decoration:underline;">Unsubscribe</a>.',
+            "</p>",
+            "</div>",
+        ]
+    )
+    if "</body>" in rendered.html:
+        html = rendered.html.replace("</body>", f"{footer_html}\n  </body>")
+    else:
+        html = f"{rendered.html}\n{footer_html}"
+
+    plain_text = (
+        f"{rendered.plain_text}\n\n---\n"
+        "You are receiving this email because you subscribed to this newsletter.\n"
+        f"Unsubscribe: {unsubscribe_url}"
+    )
+    return html, plain_text
+
+
 def send_test_email(
     *,
     settings: Settings,
@@ -64,14 +119,12 @@ def send_test_email(
             "text": rendered.plain_text,
         }
     ).encode("utf-8")
+    headers = _resend_headers(settings)
 
     send_request = request.Request(
         settings.resend_api_url,
         data=payload,
-        headers={
-            "Authorization": f"Bearer {settings.resend_api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         method="POST",
     )
 
@@ -97,45 +150,60 @@ def send_newsletter_email(
     *,
     settings: Settings,
     rendered: RenderedNewsletter,
-    recipient_emails: list[str],
+    recipient_targets: list[RecipientDeliveryTarget],
 ) -> ManualSendResult:
+    if settings.environment == "production" and (
+        not settings.resend_api_key or not settings.resend_from_email
+    ):
+        raise RuntimeError(
+            "Cannot send emails in production without Resend configuration. "
+            "Set PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
+        )
+
     if not settings.resend_api_key or not settings.resend_from_email:
         return ManualSendResult(
             status="fallback",
             mode="local-preview",
             message=(
-                "Resend is not configured; returning local preview delivery "
-                "results for all recipients."
+                "Resend is not configured; returning local preview delivery results "
+                "for all recipients."
             ),
             recipient_outcomes=[
                 RecipientSendOutcome(
-                    email=email,
+                    email=target.email,
                     status="simulated",
                     provider_id=None,
                     detail="Local preview fallback",
                 )
-                for email in recipient_emails
+                for target in recipient_targets
             ],
         )
 
     outcomes: list[RecipientSendOutcome] = []
-    for email in recipient_emails:  # pragma: no cover - live network path not exercised in tests
-        payload = json.dumps(
-            {
-                "from": settings.resend_from_email,
-                "to": [email],
-                "subject": rendered.subject,
-                "html": rendered.html,
-                "text": rendered.plain_text,
+    headers = _resend_headers(settings)
+    for target in recipient_targets:  # pragma: no cover - live network path not exercised in tests
+        unsubscribe_url = _build_unsubscribe_url(target.unsubscribe_token)
+        html_content, plain_text_content = _append_unsubscribe_footer(
+            rendered=rendered,
+            unsubscribe_url=unsubscribe_url,
+        )
+        payload_dict = {
+            "from": settings.resend_from_email,
+            "to": [target.email],
+            "subject": rendered.subject,
+            "html": html_content,
+            "text": plain_text_content,
+        }
+        if unsubscribe_url:
+            payload_dict["headers"] = {
+                "List-Unsubscribe": f"<{unsubscribe_url}>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
             }
-        ).encode("utf-8")
+        payload = json.dumps(payload_dict).encode("utf-8")
         send_request = request.Request(
             settings.resend_api_url,
             data=payload,
-            headers={
-                "Authorization": f"Bearer {settings.resend_api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
         try:
@@ -143,7 +211,7 @@ def send_newsletter_email(
                 response_payload = json.loads(response.read().decode("utf-8"))
             outcomes.append(
                 RecipientSendOutcome(
-                    email=email,
+                    email=target.email,
                     status="sent",
                     provider_id=response_payload.get("id"),
                     detail="Sent through Resend",
@@ -153,7 +221,7 @@ def send_newsletter_email(
             detail = exc.read().decode("utf-8")
             outcomes.append(
                 RecipientSendOutcome(
-                    email=email,
+                    email=target.email,
                     status="failed",
                     provider_id=None,
                     detail=f"Resend HTTP error: {detail}",
@@ -162,18 +230,30 @@ def send_newsletter_email(
         except error.URLError as exc:
             outcomes.append(
                 RecipientSendOutcome(
-                    email=email,
+                    email=target.email,
                     status="failed",
                     provider_id=None,
                     detail=f"Resend connection error: {exc.reason}",
                 )
             )
 
-    overall_status = "sent" if all(item.status == "sent" for item in outcomes) else "partial"
+    if not outcomes:
+        overall_status = "no_recipients"
+        message = "No recipient emails were available for delivery."
+    elif all(item.status == "sent" for item in outcomes):
+        overall_status = "sent"
+        message = "Delivered to all active recipients through Resend."
+    elif any(item.status == "sent" for item in outcomes):
+        overall_status = "partial"
+        message = "Delivered to some active recipients, but one or more deliveries failed."
+    else:
+        overall_status = "failed"
+        message = "Delivery failed for every active recipient."
+
     return ManualSendResult(
         status=overall_status,
         mode="resend",
-        message="Manual send attempted for all active recipients.",
+        message=message,
         recipient_outcomes=outcomes,
     )
 

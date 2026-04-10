@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.orm import Session
 
-from app.models import User
+from app.models import SystemSettings, User, utc_now
 
 
 def normalize_email(email: str) -> str:
@@ -16,7 +16,42 @@ def get_operator_count(session: Session) -> int:
 
 
 def bootstrap_enabled(session: Session) -> bool:
+    settings = session.scalar(select(SystemSettings).where(SystemSettings.id == 1))
+    if settings is not None and settings.initialized:
+        return False
     return get_operator_count(session) == 0
+
+
+def claim_bootstrap(session: Session) -> bool:
+    """Atomically claim bootstrap. Returns True if this call won the race."""
+    settings = session.scalar(select(SystemSettings).where(SystemSettings.id == 1))
+    if settings is not None and settings.initialized:
+        return False
+    if get_operator_count(session) > 0:
+        return False
+
+    inserted = session.execute(
+        insert(SystemSettings).values(id=1, initialized=True).prefix_with("OR IGNORE")
+    )
+    if (inserted.rowcount or 0) == 1:
+        return True
+
+    claimed = session.execute(
+        update(SystemSettings)
+        .where(SystemSettings.id == 1, SystemSettings.initialized.is_(False))
+        .values(initialized=True)
+    )
+    return (claimed.rowcount or 0) == 1
+
+
+def mark_bootstrap_complete(session: Session, user_id: int) -> None:
+    settings = session.scalar(select(SystemSettings).where(SystemSettings.id == 1))
+    if settings is None:
+        settings = SystemSettings(id=1)
+    settings.initialized = True
+    settings.operator_user_id = user_id
+    settings.bootstrap_disabled_at = utc_now()
+    session.add(settings)
 
 
 def get_user_by_email(session: Session, email: str) -> User | None:

@@ -5,7 +5,7 @@ import { LoginPage } from "./features/auth/LoginPage";
 import { NewsletterEditorPage } from "./features/newsletters/NewsletterEditorPage";
 import { NewsletterListPage } from "./features/newsletters/NewsletterListPage";
 import { NewsletterPreviewPage } from "./features/newsletters/NewsletterPreviewPage";
-import type { Newsletter, NewsletterInput } from "./features/newsletters/newsletter-types";
+import type { NewsletterSummary, NewsletterDetail, NewsletterInput } from "./features/newsletters/newsletter-types";
 import { AccountPage } from "./features/settings/AccountPage";
 import { api } from "./lib/api";
 import { asLoadedSession, initialSessionState, type SessionState } from "./lib/session";
@@ -18,9 +18,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("dashboard");
-  const [newsletters, setNewsletters] = useState<Newsletter[]>([]);
-  const [editingNewsletter, setEditingNewsletter] = useState<Newsletter | null>(null);
-  const [previewingNewsletter, setPreviewingNewsletter] = useState<Newsletter | null>(null);
+  const [newsletters, setNewsletters] = useState<NewsletterSummary[]>([]);
+  const [editingNewsletter, setEditingNewsletter] = useState<NewsletterDetail | null>(null);
+  const [previewingNewsletter, setPreviewingNewsletter] = useState<NewsletterSummary | null>(null);
   const [showEditor, setShowEditor] = useState(false);
 
   useEffect(() => {
@@ -110,17 +110,8 @@ export default function App() {
       const savedNewsletter = newsletterId
         ? await api.updateNewsletter(newsletterId, payload)
         : await api.createNewsletter(payload);
-
-      setNewsletters((current) => {
-        const existingIndex = current.findIndex((item) => item.id === savedNewsletter.id);
-        if (existingIndex === -1) {
-          return [savedNewsletter, ...current];
-        }
-
-        const next = [...current];
-        next[existingIndex] = savedNewsletter;
-        return next;
-      });
+      void savedNewsletter;
+      await loadNewsletters();
       setNotice(`Newsletter ${newsletterId ? "updated" : "created"} successfully.`);
       setEditingNewsletter(null);
       setPreviewingNewsletter(null);
@@ -175,9 +166,7 @@ export default function App() {
   async function handleGenerateNewsletter(newsletterId: number) {
     await runAuthAction(async () => {
       const result = await api.generateNewsletter(newsletterId);
-      setNewsletters((current) =>
-        current.map((item) => (item.id === result.newsletter.id ? result.newsletter : item)),
-      );
+      await loadNewsletters();
       setEditingNewsletter(result.newsletter);
       setNotice(result.message);
     });
@@ -220,7 +209,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Pulse News</p>
-          <h1 className="app-title">Foundation and Secure Control Plane</h1>
+          <h1 className="app-title">Newsletter Operations</h1>
         </div>
 
         <nav className="nav-pills" aria-label="Primary">
@@ -260,7 +249,7 @@ export default function App() {
               setEditingNewsletter(null);
               setShowEditor(false);
             }}
-            onGenerate={handleGenerateNewsletter}
+            onGenerate={editingNewsletter ? () => handleGenerateNewsletter(editingNewsletter.id) : undefined}
             onSave={handleSaveNewsletter}
           />
         ) : (
@@ -272,9 +261,14 @@ export default function App() {
               setShowEditor(true);
             }}
             onDelete={handleDeleteNewsletter}
-            onEdit={(newsletter) => {
-              setEditingNewsletter(newsletter);
-              setShowEditor(true);
+            onEdit={async (newsletter) => {
+              try {
+                const detail = await api.getNewsletter(newsletter.id);
+                setEditingNewsletter(detail);
+                setShowEditor(true);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Failed to load newsletter details.");
+              }
             }}
             onPreview={(newsletter) => {
               setPreviewingNewsletter(newsletter);

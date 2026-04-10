@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
-import type { Newsletter } from "../newsletters/newsletter-types";
+import type { NewsletterSummary } from "../newsletters/newsletter-types";
 
 type RunSummary = {
   id: number;
@@ -25,7 +25,7 @@ type RunSummary = {
 
 type RunDetail = {
   run: RunSummary;
-  newsletter: Newsletter;
+  newsletter: NewsletterSummary | null;
   recipient_emails: string[];
   recipient_outcomes: Array<{
     email: string;
@@ -44,7 +44,7 @@ type RunDetail = {
 };
 
 type RunDashboardPageProps = {
-  newsletters: Newsletter[];
+  newsletters: NewsletterSummary[];
 };
 
 export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {

@@ -2,14 +2,14 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   emptyNewsletterInput,
-  type Newsletter,
+  type NewsletterDetail,
   type NewsletterInput,
   toNewsletterInput
 } from "./newsletter-types";
 
 type NewsletterEditorPageProps = {
   busy: boolean;
-  initialNewsletter: Newsletter | null;
+  initialNewsletter: NewsletterDetail | null;
   onCancel: () => void;
   onGenerate?: (newsletterId: number) => Promise<void>;
   onSave: (payload: NewsletterInput, newsletterId?: number) => Promise<void>;

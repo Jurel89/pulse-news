@@ -23,6 +23,7 @@ def unsubscribe_recipient(token: str) -> dict[str, str]:
             )
 
         recipient.is_active = False
+        recipient.status = "unsubscribed"
         recipient.unsubscribed_at = utc_now()
         recipient.suppression_reason = "user_unsubscribed"
         session.add(recipient)
