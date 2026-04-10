@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Jurel89/pulse-news/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Jurel89/pulse-news/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI" /></a>
+  <a href="https://github.com/Jurel89/pulse-news/actions/workflows/ci.yml"><img src="https://github.com/Jurel89/pulse-news/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
