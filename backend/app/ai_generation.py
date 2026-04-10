@@ -55,7 +55,6 @@ def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
         or "Generated locally because no live provider credentials are configured."
     ).strip()
     body_text = newsletter.draft_body_text.strip() or (
-        f"Prompt focus:\n{newsletter.prompt.strip()}\n\n"
         "Fallback draft outline:\n"
         "- Lead with the newsletter angle and core update.\n"
         "- Highlight 3 concise points worth operator attention.\n"
@@ -141,7 +140,9 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         elif in_body:
             body_lines.append(line.rstrip())
 
-    body_text = "\n".join(body_lines).strip() or newsletter.prompt
+    body_text = (
+        "\n".join(body_lines).strip() or newsletter.description or newsletter.draft_body_text or ""
+    )
     return GeneratedDraft(
         status="generated",
         mode="litellm",

@@ -38,7 +38,7 @@ from app.schemas import (
 
 newsletters_router = APIRouter(prefix="/newsletters", tags=["newsletters"])
 
-SEND_ALLOWED_STATUSES = {"active", "draft", "paused"}
+SEND_ALLOWED_STATUSES = {"active"}
 SCHEDULE_ALLOWED_STATUSES = {"active"}
 
 
@@ -317,6 +317,7 @@ def execute_newsletter_send(
                 )
                 for recipient in active_recipients
             ],
+            attempt_key=run.attempt_key,
         )
     except Exception as exc:
         run.run_status = "failed"

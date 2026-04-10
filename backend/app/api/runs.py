@@ -72,9 +72,9 @@ def get_run_detail(run_id: int, request: Request, db: DbSession) -> RunDetailRes
         slug=run.snapshot_newsletter_slug or "",
         description=None,
         prompt=run.snapshot_prompt or "",
-        draft_subject=run.snapshot_subject,
-        draft_preheader=run.snapshot_preheader,
-        draft_body_text=run.snapshot_body_text,
+        draft_subject=run.rendered_subject or run.snapshot_subject,
+        draft_preheader=run.rendered_preheader or run.snapshot_preheader,
+        draft_body_text=run.rendered_plain_text or run.snapshot_body_text,
         provider_name=run.provider_name,
         model_name=run.model_name,
         template_key=run.template_key,
@@ -90,7 +90,6 @@ def get_run_detail(run_id: int, request: Request, db: DbSession) -> RunDetailRes
     )
     return RunDetailResponse(
         run=NewsletterRunSummary.model_validate(run),
-        newsletter=newsletter_snapshot,
         newsletter_snapshot=newsletter_snapshot,
         recipient_emails=json.loads(run.snapshot_recipient_emails or "[]"),
         recipient_outcomes=[

@@ -25,7 +25,7 @@ type RunSummary = {
 
 type RunDetail = {
   run: RunSummary;
-  newsletter: NewsletterSummary | null;
+  newsletter_snapshot: NewsletterSummary | null;
   recipient_emails: string[];
   recipient_outcomes: Array<{
     email: string;

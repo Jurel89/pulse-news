@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import get_session_maker
-from app.models import NewsletterRecipient, utc_now
+from app.models import NewsletterRecipient, NewsletterRunEvent, utc_now
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -70,9 +70,21 @@ async def handle_resend_webhook(request: Request) -> dict[str, str]:
 
     event_type = event.get("type", "")
     data = event.get("data", {})
+    provider_event_id = data.get("email_id") or data.get("id") or ""
 
     session = get_session_maker()()
     try:
+        if provider_event_id:
+            existing = session.scalar(
+                select(NewsletterRunEvent).where(
+                    NewsletterRunEvent.provider_id == provider_event_id,
+                    NewsletterRunEvent.event_type == f"webhook:{event_type}",
+                )
+            )
+            if existing is not None:
+                logger.debug("Deduplicating already-processed event %s", provider_event_id)
+                return {"status": "deduplicated"}
+
         if event_type in {"email.bounced", "email.complained"}:
             email_address = _extract_email_address(data.get("to"))
             if email_address:
@@ -81,17 +93,29 @@ async def handle_resend_webhook(request: Request) -> dict[str, str]:
                 ).all()
                 reason = "bounce" if event_type == "email.bounced" else "complaint"
                 for recipient in recipients:
-                    recipient.is_active = False
-                    recipient.suppression_reason = reason
-                    recipient.unsubscribed_at = utc_now()
-                    session.add(recipient)
+                    if recipient.status in ("subscribed",):
+                        recipient.is_active = False
+                        recipient.status = f"suppressed_{reason}"
+                        recipient.suppression_reason = reason
+                        recipient.unsubscribed_at = utc_now()
+                        session.add(recipient)
 
                 if recipients:
                     logger.info("Suppressed %s recipient(s) for %s", len(recipients), email_address)
                 else:
                     logger.info("Received %s for unknown recipient %s", reason, email_address)
         elif event_type == "email.delivered":
-            logger.debug("Email delivered: %s", data.get("email_id"))
+            logger.debug("Email delivered: %s", provider_event_id)
+
+        if provider_event_id:
+            dedup_event = NewsletterRunEvent(
+                run_id=0,
+                event_type=f"webhook:{event_type}",
+                event_status="processed",
+                message=json.dumps({"type": event_type, "email": data.get("to")}),
+                provider_id=provider_event_id,
+            )
+            session.add(dedup_event)
 
         session.commit()
     except Exception:

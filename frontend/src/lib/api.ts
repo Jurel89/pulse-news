@@ -68,7 +68,7 @@ export type RunListResponse = {
 
 export type RunDetailResponse = {
   run: NewsletterSendResult["run"];
-  newsletter: NewsletterSummary | null;
+  newsletter_snapshot: NewsletterSummary | null;
   recipient_emails: string[];
   recipient_outcomes: RecipientSendOutcome[];
   events: Array<{
