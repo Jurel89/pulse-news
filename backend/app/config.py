@@ -16,6 +16,10 @@ class Settings(BaseSettings):
         default="change-me-before-production",
         description="Session signing key for the single-user admin app.",
     )
+    bootstrap_secret: str | None = Field(
+        default=None,
+        description="One-time secret required to create the operator account in production.",
+    )
     resend_api_key: str | None = Field(default=None)
     resend_from_email: str | None = Field(default=None)
     resend_webhook_secret: str | None = Field(default=None)

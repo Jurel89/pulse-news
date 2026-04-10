@@ -106,13 +106,27 @@ def ensure_unique_slug(db: DbSession, *, desired_slug: str, current_id: int | No
         slug = f"{desired_slug}-{suffix}"
 
 
+EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
 def parse_recipient_import_text(recipient_import_text: str) -> list[str]:
     entries = re.split(r"[\n,;]+", recipient_import_text)
     normalized: list[str] = []
+    invalid: list[str] = []
     for entry in entries:
         email = entry.strip().lower()
-        if email and email not in normalized:
+        if not email:
+            continue
+        if not EMAIL_RE.match(email):
+            invalid.append(email)
+            continue
+        if email not in normalized:
             normalized.append(email)
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid email format: {', '.join(invalid[:5])}",
+        )
     return normalized
 
 
@@ -290,6 +304,11 @@ def execute_newsletter_send(
 
     try:
         rendered = render_newsletter(newsletter)
+        if not rendered.plain_text.strip() and not rendered.html.strip():
+            raise ValueError(
+                "Newsletter has no content to send. "
+                "Add body text or generate a draft before sending."
+            )
         run.rendered_subject = rendered.subject
         run.rendered_preheader = rendered.preheader
         run.rendered_html = rendered.html

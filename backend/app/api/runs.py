@@ -110,12 +110,23 @@ def reconcile_run_delivery(
     run = get_run_or_404(db, run_id)
     stored_outcomes = json.loads(run.delivery_outcomes or "[]")
     created_events: list[NewsletterRunEvent] = []
+
+    existing_events = {
+        (e.provider_id, e.event_status)
+        for e in run.events
+        if e.event_type == "reconciliation" and e.provider_id
+    }
+
     for outcome in stored_outcomes:
         reconciliation = retrieve_email_status(
             settings=get_settings(),
             provider_id=outcome.get("provider_id"),
             current_mode=run.result_mode,
         )
+        event_key = (reconciliation.provider_id, reconciliation.event_status)
+        if reconciliation.provider_id and event_key in existing_events:
+            continue
+
         event = NewsletterRunEvent(
             run_id=run.id,
             event_type="reconciliation",

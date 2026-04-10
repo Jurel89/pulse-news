@@ -13,6 +13,7 @@ from app.auth import (
     require_authenticated_user,
     set_authenticated_session,
 )
+from app.config import get_settings
 from app.deps import DbSession
 from app.models import User
 from app.schemas import (
@@ -44,6 +45,22 @@ def bootstrap_operator(
     request: Request,
     db: DbSession,
 ) -> SessionResponse:
+    settings = get_settings()
+    if settings.environment == "production":
+        if not settings.bootstrap_secret:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Bootstrap is disabled. "
+                    "Set PULSE_NEWS_BOOTSTRAP_SECRET to enable initial setup."
+                ),
+            )
+        if payload.bootstrap_secret != settings.bootstrap_secret:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid bootstrap secret.",
+            )
+
     if not claim_bootstrap(db):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
