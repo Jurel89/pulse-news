@@ -130,10 +130,10 @@ function buildQueryString(params: Record<string, string | undefined>): string {
 
 export const api = {
   getSession: () => request<SessionResponse>("/auth/session"),
-  bootstrap: (email: string, password: string) =>
+  bootstrap: (email: string, password: string, bootstrapSecret?: string) =>
     request<SessionResponse>("/auth/bootstrap", {
       method: "POST",
-      jsonBody: { email, password }
+      jsonBody: { email, password, bootstrap_secret: bootstrapSecret }
     }),
   login: (email: string, password: string) =>
     request<SessionResponse>("/auth/login", {

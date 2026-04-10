@@ -89,11 +89,12 @@ def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
     )
 
     template_key = newsletter.template_key or "signal"
-    if template_key == "ledger":
+    if template_key == "signal":
+        html = render_signal_template(subject, preheader, body_html)
+    elif template_key == "ledger":
         html = render_ledger_template(subject, preheader, body_html)
     else:
-        html = render_signal_template(subject, preheader, body_html)
-        template_key = "signal"
+        raise ValueError(f"Unknown template_key '{template_key}'. Supported: signal, ledger")
 
     return RenderedNewsletter(
         subject=subject,

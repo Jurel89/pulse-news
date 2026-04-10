@@ -4,12 +4,13 @@ type LoginPageProps = {
   initialized: boolean;
   busy: boolean;
   error: string | null;
-  onSubmit: (email: string, password: string) => Promise<void>;
+  onSubmit: (email: string, password: string, bootstrapSecret?: string) => Promise<void>;
 };
 
 export function LoginPage({ initialized, busy, error, onSubmit }: LoginPageProps) {
   const [email, setEmail] = useState("operator@example.com");
   const [password, setPassword] = useState("");
+  const [bootstrapSecret, setBootstrapSecret] = useState("");
   const title = useMemo(
     () => (initialized ? "Log in to Pulse News" : "Create the first operator account"),
     [initialized],
@@ -18,7 +19,7 @@ export function LoginPage({ initialized, busy, error, onSubmit }: LoginPageProps
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await onSubmit(email, password);
+    await onSubmit(email, password, initialized ? undefined : bootstrapSecret || undefined);
   }
 
   return (
@@ -57,6 +58,20 @@ export function LoginPage({ initialized, busy, error, onSubmit }: LoginPageProps
             value={password}
           />
         </label>
+
+        {!initialized ? (
+          <label>
+            <span>Bootstrap Secret (if required)</span>
+            <input
+              autoComplete="off"
+              disabled={busy}
+              onChange={(event) => setBootstrapSecret(event.target.value)}
+              placeholder="Leave blank if not configured"
+              type="password"
+              value={bootstrapSecret}
+            />
+          </label>
+        ) : null}
 
         {error ? <p className="form-error">{error}</p> : null}
 

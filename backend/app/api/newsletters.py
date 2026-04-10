@@ -303,12 +303,15 @@ def execute_newsletter_send(
     db.flush()
 
     try:
-        rendered = render_newsletter(newsletter)
-        if not rendered.plain_text.strip() and not rendered.html.strip():
+        from app.email_templates import normalize_draft_content
+
+        _subject, _preheader, _body = normalize_draft_content(newsletter)
+        if not _body.strip():
             raise ValueError(
                 "Newsletter has no content to send. "
                 "Add body text or generate a draft before sending."
             )
+        rendered = render_newsletter(newsletter)
         run.rendered_subject = rendered.subject
         run.rendered_preheader = rendered.preheader
         run.rendered_html = rendered.html
@@ -316,6 +319,7 @@ def execute_newsletter_send(
         run.started_at = utc_now()
         run.run_status = "sending"
         db.flush()
+        db.commit()
     except Exception as exc:
         run.run_status = "failed"
         run.failure_reason = str(exc)

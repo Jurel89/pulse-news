@@ -67,11 +67,11 @@ export default function App() {
     }
   }
 
-  async function handleAuthSubmit(email: string, password: string) {
+  async function handleAuthSubmit(email: string, password: string, bootstrapSecret?: string) {
     await runAuthAction(async () => {
       const nextSession = session.initialized
         ? await api.login(email, password)
-        : await api.bootstrap(email, password);
+        : await api.bootstrap(email, password, bootstrapSecret);
       setSession(asLoadedSession(nextSession));
       setActiveView("dashboard");
     });

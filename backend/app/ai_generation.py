@@ -143,6 +143,20 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     body_text = (
         "\n".join(body_lines).strip() or newsletter.description or newsletter.draft_body_text or ""
     )
+
+    if not body_lines and not body_text:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message=(
+                "AI output could not be parsed. Expected SUBJECT:/PREHEADER:/BODY: format. "
+                "Raw output was not in the expected structure."
+            ),
+            subject=subject,
+            preheader=preheader,
+            body_text=content[:500] if content else "",
+        )
+
     return GeneratedDraft(
         status="generated",
         mode="litellm",
