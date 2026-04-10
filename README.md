@@ -1,17 +1,25 @@
-<img src="docs/logo.svg" alt="Pulse News" width="200" />
+<div align="center">
+  <img src="docs/logo.svg" alt="Pulse News" width="400" />
+</div>
 
-# Pulse News
+<p align="center">
+  <strong>Self-hosted newsletter operations — AI content, scheduling, and delivery in one container.</strong>
+</p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/Jurel89/pulse-news/ci.yml?branch=main&style=flat-square&logo=github&label=CI)](https://github.com/Jurel89/pulse-news/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/Jurel89/pulse-news?style=flat-square)](LICENSE)
-[![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.135-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
+<p align="center">
+  <a href="https://github.com/Jurel89/pulse-news/actions/workflows/ci.yml"><img src="https://github.com/Jurel89/pulse-news/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React" />
+  <img src="https://img.shields.io/badge/FastAPI-0.135-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
+</p>
 
-Pulse News is a self-hosted newsletter operations platform designed for a single operator who needs complete control over content creation, scheduling, and delivery. Built around the philosophy that one person should be able to run multiple newsletters reliably without juggling separate tools for AI content generation, email sending, and performance tracking.
+<p align="center">
+  Pulse News is a self-hosted newsletter operations platform designed for a single operator who needs complete control over content creation, scheduling, and delivery. Built around the philosophy that one person should be able to run multiple newsletters reliably without juggling separate tools for AI content generation, email sending, and performance tracking.
+</p>
 
-Whether you are curating weekly digests or running automated content newsletters, Pulse News gives you a unified control panel to generate content with your preferred AI provider, schedule sends with flexible cron expressions, and track every delivery through to the inbox.
+---
 
 ## Key Features
 
@@ -25,31 +33,9 @@ Whether you are curating weekly digests or running automated content newsletters
 
 ## Architecture
 
-Pulse News runs as a unified service with clear internal boundaries:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Pulse News Container                         │
-│                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐   │
-│  │   FastAPI    │◄──►│   SQLite     │    │   APScheduler    │   │
-│  │   Backend    │    │   Database   │◄──►│   (Job Queue)    │   │
-│  └──────┬───────┘    └──────────────┘    └────────┬─────────┘   │
-│         │                                          │              │
-│         │         ┌──────────────┐                 │              │
-│         └────────►│   React 19   │◄────────────────┘              │
-│                   │   Frontend   │                                │
-│                   └──────────────┘                                │
-│                                                                  │
-│  External Services:                                              │
-│         │                  │                  │                  │
-│         ▼                  ▼                  ▼                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │    Resend    │    │   LiteLLM    │    │   Webhook    │       │
-│  │   (Email)    │    │  (AI/LLM)    │    │  Callbacks   │       │
-│  └──────────────┘    └──────────────┘    └──────────────┘       │
-└─────────────────────────────────────────────────────────────────┘
-```
+<div align="center">
+  <img src="docs/architecture.svg" alt="Pulse News Architecture" width="700" />
+</div>
 
 The backend handles API requests, database operations, and job scheduling all within a single process. The scheduler manages newsletter send jobs and tracks execution history. LiteLLM provides a unified interface to multiple AI providers without vendor lock-in.
 
