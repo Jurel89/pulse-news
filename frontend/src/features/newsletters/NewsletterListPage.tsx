@@ -4,6 +4,7 @@ type NewsletterListPageProps = {
   items: NewsletterSummary[];
   loading?: boolean;
   error?: string | null;
+  onDismissError?: () => void;
   onCreate: () => void;
   onEdit: (newsletter: NewsletterSummary) => void;
   onPreview: (newsletter: NewsletterSummary) => void;
@@ -18,6 +19,7 @@ export function NewsletterListPage({
   items,
   loading,
   error,
+  onDismissError,
   onCreate,
   onEdit,
   onPreview,
@@ -42,6 +44,11 @@ export function NewsletterListPage({
       {error ? (
         <div className="error-banner">
           <span>{error}</span>
+          {onDismissError ? (
+            <button className="error-banner-dismiss" onClick={onDismissError} type="button">
+              Dismiss
+            </button>
+          ) : null}
         </div>
       ) : null}
 

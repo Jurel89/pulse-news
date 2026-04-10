@@ -221,7 +221,13 @@ export default function App() {
             <button
               className={item.id === activeView ? "nav-pill active" : "nav-pill"}
               key={item.id}
-              onClick={() => setActiveView(item.id)}
+              onClick={() => {
+                if (item.id !== activeView) {
+                  setError(null);
+                  setNotice(null);
+                }
+                setActiveView(item.id);
+              }}
               type="button"
             >
               {item.label}
@@ -261,6 +267,7 @@ export default function App() {
             items={newsletters}
             loading={newslettersLoading}
             error={error}
+            onDismissError={() => setError(null)}
             onArchive={handleArchiveNewsletter}
             onCreate={() => {
               setEditingNewsletter(null);

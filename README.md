@@ -19,7 +19,7 @@ Whether you are curating weekly digests or running automated content newsletters
 - **Flexible Scheduling** — Schedule newsletters with cron expressions using APScheduler, run on-demand, or set up recurring sends
 - **Reusable Email Templates** — Create and manage reusable templates with consistent branding across all your newsletters
 - **Audience Management** — Track subscribers with unsubscribe handling and bounce management via Resend webhooks
-- **Real-Time Delivery Tracking** — Monitor send progress, track opens, clicks, and delivery status with full audit trails
+- **Delivery Tracking** — Monitor send progress and delivery status through Resend webhooks with full audit trails
 - **Single-Container Deployment** — One Docker image runs everything: backend, scheduler, database, and frontend
 - **Operator-First Auth** — Simple single-user authentication designed for solo operators, no multi-user complexity
 
@@ -74,12 +74,13 @@ cd pulse-news
 cd backend
 pip install -e ".[dev]"
 
-# Frontend setup (in a separate terminal)
+# Frontend setup (in a separate terminal, from the repo root)
 cd frontend
 npm install
 npm run dev
 
-# Start the backend (from backend directory)
+# Start the backend (in another terminal, from backend directory)
+cd backend
 PULSE_NEWS_ENVIRONMENT=development uvicorn app.main:app --app-dir . --reload --port 8000
 ```
 
