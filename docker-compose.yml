@@ -1,0 +1,31 @@
+services:
+  pulse-news:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pulse-news
+    ports:
+      - "${PULSE_NEWS_PORT:-9876}:8000"
+    environment:
+      - PULSE_NEWS_ENVIRONMENT=${PULSE_NEWS_ENVIRONMENT:-development}
+      - PULSE_NEWS_SECRET_KEY=${PULSE_NEWS_SECRET_KEY:-change-me-before-production}
+      - PULSE_NEWS_RESEND_API_KEY=${PULSE_NEWS_RESEND_API_KEY:-}
+      - PULSE_NEWS_RESEND_FROM_EMAIL=${PULSE_NEWS_RESEND_FROM_EMAIL:-}
+      - PULSE_NEWS_RESEND_WEBHOOK_SECRET=${PULSE_NEWS_RESEND_WEBHOOK_SECRET:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+    volumes:
+      - pulse-news-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  pulse-news-data:
+    name: pulse-news-data
