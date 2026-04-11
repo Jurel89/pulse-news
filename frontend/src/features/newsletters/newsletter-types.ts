@@ -7,7 +7,10 @@ export type NewsletterSummary = {
   draft_subject: string;
   draft_preheader: string | null;
   draft_body_text: string;
+  provider_id: number | null;
   provider_name: string;
+  api_key_id: number | null;
+  resend_api_key_id: number | null;
   model_name: string;
   template_key: string;
   audience_name: string;
@@ -42,7 +45,10 @@ export type NewsletterInput = {
   draft_subject: string;
   draft_preheader: string;
   draft_body_text: string;
+  provider_id: number | null;
   provider_name: string;
+  api_key_id: number | null;
+  resend_api_key_id: number | null;
   model_name: string;
   template_key: string;
   audience_name: string;
@@ -62,15 +68,18 @@ export const emptyNewsletterInput: NewsletterInput = {
   draft_subject: "",
   draft_preheader: "",
   draft_body_text: "",
-  provider_name: "openai",
-  model_name: "gpt-4o-mini",
-  template_key: "signal",
-  audience_name: "default-audience",
-  delivery_topic: "default-topic",
-  timezone: "UTC",
+  provider_id: null,
+  provider_name: "",
+  api_key_id: null,
+  resend_api_key_id: null,
+  model_name: "",
+  template_key: "",
+  audience_name: "",
+  delivery_topic: "",
+  timezone: "",
   schedule_cron: "",
   schedule_enabled: false,
-  status: "draft",
+  status: "",
   notes: "",
   recipient_import_text: "",
 };
@@ -83,7 +92,10 @@ export function toNewsletterInput(detail: NewsletterDetail): NewsletterInput {
     draft_subject: detail.draft_subject,
     draft_preheader: detail.draft_preheader ?? "",
     draft_body_text: detail.draft_body_text,
+    provider_id: detail.provider_id ?? null,
     provider_name: detail.provider_name,
+    api_key_id: detail.api_key_id ?? null,
+    resend_api_key_id: detail.resend_api_key_id ?? null,
     model_name: detail.model_name,
     template_key: detail.template_key,
     audience_name: detail.audience_name,

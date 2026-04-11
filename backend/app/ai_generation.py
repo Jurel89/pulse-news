@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
+from typing import Any
 
 from app.models import Newsletter
 
@@ -24,18 +26,84 @@ class GeneratedDraft:
 SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter"}
 
 
+def _get_newsletter_provider(newsletter: Newsletter):
+    from sqlalchemy import select
+
+    from app.database import get_session_maker
+    from app.models import Provider
+
+    if newsletter.provider is not None:
+        return newsletter.provider
+    if newsletter.provider_id is None:
+        return None
+
+    session = get_session_maker()()
+    try:
+        return session.scalar(select(Provider).where(Provider.id == newsletter.provider_id))
+    finally:
+        session.close()
+
+
 def _normalized_provider_name(newsletter: Newsletter) -> str:
-    return newsletter.provider_name.strip().lower()
+    provider = _get_newsletter_provider(newsletter)
+    source = provider.provider_type if provider is not None else newsletter.provider_name
+    return source.strip().lower()
+
+
+def _resolved_model_name(newsletter: Newsletter) -> str:
+    configured_model = newsletter.model_name.strip()
+    if configured_model:
+        return configured_model
+
+    provider = _get_newsletter_provider(newsletter)
+    if provider is not None and provider.default_model:
+        return provider.default_model.strip()
+
+    return ""
 
 
 def _provider_model_name(newsletter: Newsletter) -> str:
     provider_name = _normalized_provider_name(newsletter)
-    if "/" in newsletter.model_name:
-        return newsletter.model_name
-    return f"{provider_name}/{newsletter.model_name}"
+    model_name = _resolved_model_name(newsletter)
+    if "/" in model_name:
+        return model_name
+    return f"{provider_name}/{model_name}"
 
 
-def _has_live_provider_credentials(provider_name: str) -> bool:
+def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
+    from sqlalchemy import select
+
+    from app.database import get_session_maker
+    from app.models import ApiKey
+
+    provider_name = _normalized_provider_name(newsletter)
+    session = get_session_maker()()
+
+    try:
+        if newsletter.api_key_id:
+            api_key = session.scalar(
+                select(ApiKey).where(
+                    ApiKey.id == newsletter.api_key_id,
+                    ApiKey.is_active.is_(True),
+                    ApiKey.provider_type == provider_name,
+                )
+            )
+            if api_key and api_key.key_value:
+                return api_key.key_value
+
+        active_provider_key = session.scalar(
+            select(ApiKey)
+            .where(
+                ApiKey.provider_type == provider_name,
+                ApiKey.is_active.is_(True),
+            )
+            .order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
+        )
+        if active_provider_key and active_provider_key.key_value:
+            return active_provider_key.key_value
+    finally:
+        session.close()
+
     env_by_provider = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -43,8 +111,33 @@ def _has_live_provider_credentials(provider_name: str) -> bool:
         "google": "GEMINI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
     }
-    env_name = env_by_provider.get(provider_name.lower())
-    return bool(env_name and os.getenv(env_name))
+    env_name = env_by_provider.get(provider_name)
+    if env_name:
+        return os.getenv(env_name)
+    return None
+
+
+def _has_live_provider_credentials(newsletter: Newsletter) -> bool:
+    return _get_api_key_for_newsletter(newsletter) is not None
+
+
+def _provider_completion_configuration(newsletter: Newsletter) -> dict[str, Any]:
+    provider = _get_newsletter_provider(newsletter)
+    if provider is None or not provider.configuration:
+        return {}
+
+    try:
+        configuration = json.loads(provider.configuration)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Provider configuration must be valid JSON: {exc.msg}.") from exc
+
+    if not isinstance(configuration, dict):
+        raise ValueError("Provider configuration must be a JSON object.")
+
+    sanitized_configuration = dict(configuration)
+    for reserved_key in ("api_key", "messages", "model"):
+        sanitized_configuration.pop(reserved_key, None)
+    return sanitized_configuration
 
 
 def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
@@ -89,7 +182,7 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             body_text=newsletter.draft_body_text or "",
         )
 
-    if completion is None or not _has_live_provider_credentials(provider_name):
+    if completion is None or not _has_live_provider_credentials(newsletter):
         return _fallback_generate(newsletter)
 
     prompt = "\n".join(
@@ -112,13 +205,26 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         ]
     )
 
-    try:  # pragma: no cover - live provider behavior is not exercised in automated tests
+    try:
+        api_key = _get_api_key_for_newsletter(newsletter)
+        completion_kwargs = _provider_completion_configuration(newsletter)
         response = completion(
             model=_provider_model_name(newsletter),
             messages=[{"role": "user", "content": prompt}],
+            api_key=api_key,
+            **completion_kwargs,
         )
         content = response.choices[0].message.content or ""
-    except Exception as exc:  # pragma: no cover - local fallback handles unexpected live failures
+    except ValueError as exc:
+        return GeneratedDraft(
+            status="error",
+            mode="none",
+            message=str(exc),
+            subject=newsletter.draft_subject or newsletter.name,
+            preheader=newsletter.draft_preheader or newsletter.description or "",
+            body_text=newsletter.draft_body_text or "",
+        )
+    except Exception as exc:
         fallback = _fallback_generate(newsletter)
         fallback.message = f"Live generation failed, using local fallback instead: {exc}"
         return fallback

@@ -4,6 +4,7 @@ import json
 import re
 import secrets
 import uuid
+from zoneinfo import available_timezones
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -16,11 +17,14 @@ from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
 from app.email_templates import render_newsletter
 from app.models import (
+    ApiKey,
     AuditEvent,
+    EmailTemplate,
     Newsletter,
     NewsletterRecipient,
     NewsletterRun,
     NewsletterRunEvent,
+    Provider,
     utc_now,
 )
 from app.schemas import (
@@ -341,6 +345,7 @@ def execute_newsletter_send(
                 for recipient in active_recipients
             ],
             attempt_key=run.attempt_key,
+            newsletter=newsletter,
         )
     except Exception as exc:
         run.run_status = "failed"
@@ -416,11 +421,14 @@ def create_newsletter(
         draft_subject=payload.draft_subject,
         draft_preheader=payload.draft_preheader,
         draft_body_text=payload.draft_body_text,
+        provider_id=payload.provider_id,
         provider_name=payload.provider_name,
         model_name=payload.model_name,
         template_key=payload.template_key,
+        api_key_id=payload.api_key_id,
+        resend_api_key_id=payload.resend_api_key_id,
         audience_name=payload.audience_name,
-        delivery_topic=payload.delivery_topic or slugify(payload.name),
+        delivery_topic=payload.delivery_topic,
         timezone=payload.timezone,
         schedule_cron=payload.schedule_cron,
         schedule_enabled=payload.schedule_enabled,
@@ -455,6 +463,86 @@ def create_newsletter(
 
     sync_newsletter_schedule(newsletter)
     return serialize_newsletter_detail(newsletter)
+
+
+@newsletters_router.get("/form-options")
+def get_form_options(request: Request, db: DbSession) -> dict:
+    require_authenticated_user(request, db)
+
+    # Get all templates (both system and custom)
+    all_templates = db.scalars(select(EmailTemplate).order_by(EmailTemplate.name)).all()
+    template_options = [
+        {"key": t.key, "name": t.name, "is_system": t.is_system} for t in all_templates
+    ]
+
+    built_in_templates = [
+        {"key": "signal", "name": "Signal", "is_system": True},
+        {"key": "ledger", "name": "Ledger", "is_system": True},
+    ]
+
+    existing_keys = {t["key"] for t in template_options}
+    for built_in in built_in_templates:
+        if built_in["key"] not in existing_keys:
+            template_options.append(built_in)
+
+    # Get configured providers
+    providers = db.scalars(
+        select(Provider).where(Provider.is_enabled.is_(True)).order_by(Provider.name)
+    ).all()
+    provider_options = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "provider_type": p.provider_type,
+            "default_model": p.default_model,
+        }
+        for p in providers
+    ]
+
+    models: dict[str, list[str]] = {}
+    for provider in providers:
+        provider_models: list[str] = []
+        if provider.default_model:
+            provider_models.append(provider.default_model)
+
+        if provider.configuration:
+            config = provider.configuration
+            if isinstance(config, str):
+                try:
+                    config = json.loads(config)
+                except json.JSONDecodeError:
+                    config = None
+            if isinstance(config, dict):
+                config_models = config.get("models", [])
+                if isinstance(config_models, list):
+                    for model in config_models:
+                        if isinstance(model, str) and model not in provider_models:
+                            provider_models.append(model)
+
+        if provider_models:
+            models[str(provider.id)] = provider_models
+
+    # Get active API keys
+    api_keys = db.scalars(
+        select(ApiKey).where(ApiKey.is_active.is_(True)).order_by(ApiKey.name)
+    ).all()
+    api_key_options = [
+        {
+            "id": k.id,
+            "name": k.name,
+            "provider_type": k.provider_type,
+            "masked_key": f"****{k.key_value[-4:]}" if k.key_value else "****",
+        }
+        for k in api_keys
+    ]
+
+    return {
+        "templates": template_options,
+        "providers": provider_options,
+        "models": models,
+        "api_keys": api_key_options,
+        "timezones": sorted(available_timezones()),
+    }
 
 
 @newsletters_router.get("/{newsletter_id}", response_model=NewsletterDetail)
@@ -496,6 +584,7 @@ def test_send_newsletter(
         settings=get_settings(),
         rendered=rendered,
         to_email=payload.to_email,
+        newsletter=newsletter,
     )
     return NewsletterTestSendResponse(
         status=result.status,
@@ -639,11 +728,14 @@ def update_newsletter(
     newsletter.draft_subject = payload.draft_subject
     newsletter.draft_preheader = payload.draft_preheader
     newsletter.draft_body_text = payload.draft_body_text
+    newsletter.provider_id = payload.provider_id
     newsletter.provider_name = payload.provider_name
     newsletter.model_name = payload.model_name
     newsletter.template_key = payload.template_key
+    newsletter.api_key_id = payload.api_key_id
+    newsletter.resend_api_key_id = payload.resend_api_key_id
     newsletter.audience_name = payload.audience_name
-    newsletter.delivery_topic = payload.delivery_topic or slugify(payload.name)
+    newsletter.delivery_topic = payload.delivery_topic
     newsletter.timezone = payload.timezone
     newsletter.schedule_cron = payload.schedule_cron
     newsletter.schedule_enabled = payload.schedule_enabled
