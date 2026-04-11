@@ -88,9 +88,10 @@ def render_custom_template(html_template: str, subject: str, preheader: str, bod
 
 
 def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
+    from sqlalchemy import select
+
     from app.deps import get_db_session
     from app.models import EmailTemplate
-    from sqlalchemy import select
 
     subject, preheader, body = normalize_draft_content(newsletter)
     body_lines = [line.strip() for line in body.splitlines()]
