@@ -76,7 +76,22 @@ def render_ledger_template(subject: str, preheader: str, body_html: str) -> str:
     )
 
 
+def render_custom_template(html_template: str, subject: str, preheader: str, body_html: str) -> str:
+    result = html_template
+    result = result.replace("{{subject}}", escape(subject))
+    result = result.replace("{{preheader}}", escape(preheader))
+    result = result.replace("{{headline}}", escape(subject))
+    result = result.replace("{{content}}", body_html)
+    result = result.replace("{{body_html}}", body_html)
+    result = result.replace("{{newsletter_name}}", escape(subject))
+    return result
+
+
 def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
+    from app.deps import get_db_session
+    from app.models import EmailTemplate
+    from sqlalchemy import select
+
     subject, preheader, body = normalize_draft_content(newsletter)
     body_lines = [line.strip() for line in body.splitlines()]
     body_html = "".join(
@@ -89,12 +104,24 @@ def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
     )
 
     template_key = newsletter.template_key or "signal"
-    if template_key == "signal":
-        html = render_signal_template(subject, preheader, body_html)
-    elif template_key == "ledger":
-        html = render_ledger_template(subject, preheader, body_html)
-    else:
-        raise ValueError(f"Unknown template_key '{template_key}'. Supported: signal, ledger")
+    try:
+        db = next(get_db_session())
+        custom_template = db.scalar(select(EmailTemplate).where(EmailTemplate.key == template_key))
+        if custom_template and custom_template.html_template:
+            html = render_custom_template(
+                custom_template.html_template, subject, preheader, body_html
+            )
+        elif template_key == "signal":
+            html = render_signal_template(subject, preheader, body_html)
+        elif template_key == "ledger":
+            html = render_ledger_template(subject, preheader, body_html)
+        else:
+            html = render_signal_template(subject, preheader, body_html)
+    except Exception:
+        if template_key == "ledger":
+            html = render_ledger_template(subject, preheader, body_html)
+        else:
+            html = render_signal_template(subject, preheader, body_html)
 
     return RenderedNewsletter(
         subject=subject,

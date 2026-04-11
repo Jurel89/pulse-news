@@ -172,3 +172,81 @@ def test_generate_newsletter_draft_parses_subject_preheader_and_body_sections(
     assert result.subject == "Operator Watch"
     assert result.preheader == "Signals worth scanning"
     assert result.body_text == "First section\n\nSecond section"
+
+
+def test_generate_newsletter_draft_uses_provider_defaults_and_active_database_key(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+    from app.database import get_session_maker
+    from app.models import ApiKey, Provider
+
+    session = get_session_maker()()
+    provider = Provider(
+        name="Primary OpenAI",
+        provider_type="openai",
+        is_enabled=True,
+        default_model="gpt-4o",
+        configuration='{"temperature": 0.25, "max_tokens": 600}',
+    )
+    api_key = ApiKey(
+        name="Team OpenAI Key",
+        provider_type="openai",
+        key_value="db-openai-key",
+        is_active=True,
+    )
+    session.add_all([provider, api_key])
+    session.commit()
+    session.refresh(provider)
+    session.close()
+
+    newsletter = build_newsletter(provider_id=provider.id, model_name="")
+    newsletter.provider = provider
+
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "SUBJECT: Provider Defaults\n"
+            "PREHEADER: Configured by provider\n"
+            "BODY:\n"
+            "- Uses the provider default model"
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "generated"
+    assert completion_mock.call_args.kwargs["model"] == "openai/gpt-4o"
+    assert completion_mock.call_args.kwargs["api_key"] == "db-openai-key"
+    assert completion_mock.call_args.kwargs["temperature"] == 0.25
+    assert completion_mock.call_args.kwargs["max_tokens"] == 600
+
+
+def test_generate_newsletter_draft_returns_error_for_invalid_provider_configuration(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+    from app.models import Provider
+
+    newsletter = build_newsletter()
+    newsletter.provider = Provider(
+        name="Broken OpenAI",
+        provider_type="openai",
+        is_enabled=True,
+        default_model="gpt-4o-mini",
+        configuration='["not", "an", "object"]',
+    )
+
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_has_live_provider_credentials",
+        Mock(return_value=True),
+    )
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert result.mode == "none"
+    assert result.message == "Provider configuration must be a JSON object."

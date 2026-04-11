@@ -9,6 +9,7 @@ from urllib import error, request
 
 from app.config import Settings
 from app.email_templates import RenderedNewsletter
+from app.models import Newsletter
 
 
 @dataclass(frozen=True)
@@ -53,9 +54,43 @@ RESEND_BATCH_CHUNK_SIZE = 100
 RESEND_BATCH_MAX_ATTEMPTS = 3
 
 
-def _resend_headers(settings: Settings) -> dict[str, str]:
+def _get_resend_api_key(settings: Settings, newsletter: Newsletter | None = None) -> str | None:
+    if newsletter and newsletter.resend_api_key_id:
+        session_generator = None
+        try:
+            from sqlalchemy import select
+
+            from app.deps import get_db_session
+            from app.models import ApiKey
+
+            session_generator = get_db_session()
+            db = next(session_generator)
+            api_key = db.scalar(
+                select(ApiKey).where(
+                    ApiKey.id == newsletter.resend_api_key_id,
+                    ApiKey.is_active.is_(True),
+                    ApiKey.provider_type == "resend",
+                )
+            )
+            if api_key and api_key.key_value:
+                return api_key.key_value
+        except Exception:
+            pass
+        finally:
+            if session_generator is not None:
+                session_generator.close()
+    return settings.resend_api_key
+
+
+def _get_resend_from_email(settings: Settings, newsletter: Newsletter | None = None) -> str | None:
+    if newsletter and newsletter.delivery_topic:
+        return f"newsletter@{newsletter.delivery_topic}"
+    return settings.resend_from_email
+
+
+def _resend_headers(api_key: str) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {settings.resend_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
@@ -112,7 +147,7 @@ def _unsubscribe_headers(unsubscribe_url: str | None) -> dict[str, str] | None:
 
 def _build_recipient_payload(
     *,
-    settings: Settings,
+    from_email: str,
     rendered: RenderedNewsletter,
     target: RecipientDeliveryTarget,
 ) -> dict[str, object]:
@@ -122,7 +157,7 @@ def _build_recipient_payload(
         unsubscribe_url=unsubscribe_url,
     )
     payload_dict: dict[str, object] = {
-        "from": settings.resend_from_email,
+        "from": from_email,
         "to": [target.email],
         "subject": rendered.subject,
         "html": html_content,
@@ -154,24 +189,26 @@ def _failed_outcome(*, email: str, detail: str) -> RecipientSendOutcome:
 
 def _send_single_recipient_via_resend(
     *,
-    settings: Settings,
+    api_key: str,
+    from_email: str,
+    resend_api_url: str,
     rendered: RenderedNewsletter,
     target: RecipientDeliveryTarget,
     attempt_key: str | None,
 ) -> RecipientSendOutcome:
     payload = json.dumps(
         _build_recipient_payload(
-            settings=settings,
+            from_email=from_email,
             rendered=rendered,
             target=target,
         )
     ).encode("utf-8")
-    headers = _resend_headers(settings)
+    headers = _resend_headers(api_key)
     if attempt_key:
         headers["Idempotency-Key"] = f"{attempt_key}-{target.email}"
 
     send_request = request.Request(
-        settings.resend_api_url,
+        resend_api_url,
         data=payload,
         headers=headers,
         method="POST",
@@ -199,11 +236,11 @@ def _send_single_recipient_via_resend(
 
 
 def _batch_headers(
-    settings: Settings,
+    api_key: str,
     *,
     idempotency_key: str | None,
 ) -> dict[str, str]:
-    headers = _resend_headers(settings)
+    headers = _resend_headers(api_key)
     headers["x-batch-validation"] = "permissive"
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
@@ -283,7 +320,9 @@ def _map_batch_response_to_outcomes(
 
 def _send_recipient_chunk_via_resend_batch(
     *,
-    settings: Settings,
+    api_key: str,
+    from_email: str,
+    resend_api_base_url: str,
     rendered: RenderedNewsletter,
     recipient_targets: list[RecipientDeliveryTarget],
     chunk_index: int,
@@ -291,21 +330,21 @@ def _send_recipient_chunk_via_resend_batch(
 ) -> list[RecipientSendOutcome]:
     payload_items = [
         _build_recipient_payload(
-            settings=settings,
+            from_email=from_email,
             rendered=rendered,
             target=target,
         )
         for target in recipient_targets
     ]
     payload = json.dumps(payload_items).encode("utf-8")
-    batch_url = f"{settings.resend_api_base_url}/emails/batch"
+    batch_url = f"{resend_api_base_url}/emails/batch"
     idempotency_key = f"{attempt_key}-chunk-{chunk_index}" if attempt_key else None
 
     for attempt_number in range(1, RESEND_BATCH_MAX_ATTEMPTS + 1):
         send_request = request.Request(
             batch_url,
             data=payload,
-            headers=_batch_headers(settings, idempotency_key=idempotency_key),
+            headers=_batch_headers(api_key, idempotency_key=idempotency_key),
             method="POST",
         )
         try:
@@ -350,8 +389,12 @@ def send_test_email(
     settings: Settings,
     rendered: RenderedNewsletter,
     to_email: str,
+    newsletter: Newsletter | None = None,
 ) -> TestSendResult:
-    if not settings.resend_api_key or not settings.resend_from_email:
+    api_key = _get_resend_api_key(settings, newsletter)
+    from_email = _get_resend_from_email(settings, newsletter)
+
+    if not api_key or not from_email:
         return TestSendResult(
             status="simulated",
             mode="local-preview",
@@ -362,14 +405,14 @@ def send_test_email(
 
     payload = json.dumps(
         {
-            "from": settings.resend_from_email,
+            "from": from_email,
             "to": [to_email],
             "subject": rendered.subject,
             "html": rendered.html,
             "text": rendered.plain_text,
         }
     ).encode("utf-8")
-    headers = _resend_headers(settings)
+    headers = _resend_headers(api_key)
 
     send_request = request.Request(
         settings.resend_api_url,
@@ -381,10 +424,10 @@ def send_test_email(
     try:
         with request.urlopen(send_request, timeout=15) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:  # pragma: no cover - network path not exercised in tests
+    except error.HTTPError as exc:
         detail = exc.read().decode("utf-8")
         raise RuntimeError(f"Resend test send failed: {detail}") from exc
-    except error.URLError as exc:  # pragma: no cover - network path not exercised in tests
+    except error.URLError as exc:
         raise RuntimeError(f"Resend test send failed: {exc.reason}") from exc
 
     return TestSendResult(
@@ -402,16 +445,19 @@ def send_newsletter_email(
     rendered: RenderedNewsletter,
     recipient_targets: list[RecipientDeliveryTarget],
     attempt_key: str | None = None,
+    newsletter: Newsletter | None = None,
 ) -> ManualSendResult:
-    if settings.environment == "production" and (
-        not settings.resend_api_key or not settings.resend_from_email
-    ):
+    api_key = _get_resend_api_key(settings, newsletter)
+    from_email = _get_resend_from_email(settings, newsletter)
+
+    if settings.environment == "production" and (not api_key or not from_email):
         raise RuntimeError(
             "Cannot send emails in production without Resend configuration. "
-            "Set PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
+            "Set PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL "
+            "or configure a Resend API key for this newsletter."
         )
 
-    if not settings.resend_api_key or not settings.resend_from_email:
+    if not api_key or not from_email:
         return ManualSendResult(
             status="fallback",
             mode="local-preview",
@@ -431,21 +477,25 @@ def send_newsletter_email(
         )
 
     outcomes: list[RecipientSendOutcome] = []
-    if len(recipient_targets) == 1:  # pragma: no cover - live network path not exercised in tests
+    if len(recipient_targets) == 1:
         outcomes.append(
             _send_single_recipient_via_resend(
-                settings=settings,
+                api_key=api_key,
+                from_email=from_email,
+                resend_api_url=settings.resend_api_url,
                 rendered=rendered,
                 target=recipient_targets[0],
                 attempt_key=attempt_key,
             )
         )
-    else:  # pragma: no cover - live network path not exercised in tests
+    else:
         for chunk_start in range(0, len(recipient_targets), RESEND_BATCH_CHUNK_SIZE):
             chunk_targets = recipient_targets[chunk_start : chunk_start + RESEND_BATCH_CHUNK_SIZE]
             outcomes.extend(
                 _send_recipient_chunk_via_resend_batch(
-                    settings=settings,
+                    api_key=api_key,
+                    from_email=from_email,
+                    resend_api_base_url=settings.resend_api_base_url,
                     rendered=rendered,
                     recipient_targets=chunk_targets,
                     chunk_index=(chunk_start // RESEND_BATCH_CHUNK_SIZE) + 1,
@@ -479,6 +529,7 @@ def retrieve_email_status(
     settings: Settings,
     provider_id: str | None,
     current_mode: str | None,
+    newsletter: Newsletter | None = None,
 ) -> ReconciliationEvent:
     if current_mode != "resend" or not provider_id:
         return ReconciliationEvent(
@@ -487,13 +538,21 @@ def retrieve_email_status(
             provider_id=provider_id,
         )
 
+    api_key = _get_resend_api_key(settings, newsletter)
+    if not api_key:
+        return ReconciliationEvent(
+            event_status="unknown",
+            message="Cannot retrieve status without Resend API key.",
+            provider_id=provider_id,
+        )
+
     retrieve_request = request.Request(
         f"{settings.resend_api_base_url}/emails/{provider_id}",
-        headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+        headers={"Authorization": f"Bearer {api_key}"},
         method="GET",
     )
 
-    try:  # pragma: no cover - live network path not exercised in tests
+    try:
         with request.urlopen(retrieve_request, timeout=15) as response:
             payload = json.loads(response.read().decode("utf-8"))
         return ReconciliationEvent(
@@ -501,7 +560,7 @@ def retrieve_email_status(
             message="Delivery status retrieved from Resend.",
             provider_id=provider_id,
         )
-    except Exception as exc:  # pragma: no cover - local tests exercise fallback path
+    except Exception as exc:
         return ReconciliationEvent(
             event_status="unknown",
             message=f"Unable to retrieve live delivery status: {exc}",

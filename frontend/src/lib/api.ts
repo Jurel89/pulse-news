@@ -1,4 +1,7 @@
 import type { NewsletterSummary, NewsletterDetail, NewsletterInput } from "../features/newsletters/newsletter-types";
+import type { EmailTemplateSummary, EmailTemplateDetail, EmailTemplateInput } from "../features/templates/template-types";
+import type { ProviderSummary, ProviderDetail, ProviderInput } from "../features/providers/provider-types";
+import type { ApiKeySummary, ApiKeyDetail, ApiKeyInput } from "../features/api-keys/api-key-types";
 
 export type UserSummary = {
   id: number;
@@ -86,6 +89,54 @@ export type NewsletterGenerationResult = {
   mode: string;
   message: string;
   newsletter: NewsletterDetail;
+};
+
+export type FormOptionTemplate = {
+  key: string;
+  name: string;
+  is_system: boolean;
+};
+
+export type FormOptionProvider = {
+  id: number;
+  name: string;
+  provider_type: string;
+  default_model: string | null;
+};
+
+export type FormOptionApiKey = {
+  id: number;
+  name: string;
+  provider_type: string;
+  masked_key: string;
+};
+
+export type FormOptions = {
+  templates: FormOptionTemplate[];
+  providers: FormOptionProvider[];
+  models: Record<string, string[]>;
+  api_keys: FormOptionApiKey[];
+  timezones: string[];
+};
+
+export type ProviderModelsResponse = {
+  models: string[];
+  default_model: string | null;
+};
+
+export type ProviderTestResponse = {
+  status: string;
+  message: string;
+  provider_type: string;
+  default_model: string | null;
+  has_active_api_key: boolean;
+};
+
+export type ApiKeyTestResponse = {
+  status: string;
+  message: string;
+  provider_type: string;
+  masked_key: string;
 };
 
 type ApiRequestInit = Omit<RequestInit, "body"> & {
@@ -204,5 +255,86 @@ export const api = {
   deleteNewsletter: (newsletterId: number) =>
     request<void>(`/newsletters/${newsletterId}`, {
       method: "DELETE"
-    })
+    }),
+
+  formOptions: () => request<FormOptions>("/newsletters/form-options"),
+
+  emailTemplates: {
+    list: () => request<EmailTemplateSummary[]>("/email-templates"),
+    get: (templateId: number) =>
+      request<EmailTemplateDetail>(`/email-templates/${templateId}`),
+    create: (payload: EmailTemplateInput) =>
+      request<EmailTemplateDetail>("/email-templates", {
+        method: "POST",
+        jsonBody: payload
+      }),
+    update: (templateId: number, payload: EmailTemplateInput) =>
+      request<EmailTemplateDetail>(`/email-templates/${templateId}`, {
+        method: "PUT",
+        jsonBody: payload
+      }),
+    delete: (templateId: number) =>
+      request<void>(`/email-templates/${templateId}`, {
+        method: "DELETE"
+      }),
+    preview: (templateId: number, variables?: Record<string, string>) =>
+      request<{ html: string }>(`/email-templates/${templateId}/preview`, {
+        method: "POST",
+        jsonBody: variables ? { variables } : undefined
+      }),
+    setDefault: (templateId: number) =>
+      request<EmailTemplateDetail>(`/email-templates/${templateId}/set-default`, {
+        method: "POST"
+      })
+  },
+
+  providers: {
+    list: () => request<ProviderSummary[]>("/providers"),
+    get: (providerId: number) =>
+      request<ProviderDetail>(`/providers/${providerId}`),
+    create: (payload: ProviderInput) =>
+      request<ProviderDetail>("/providers", {
+        method: "POST",
+        jsonBody: payload
+      }),
+    update: (providerId: number, payload: ProviderInput) =>
+      request<ProviderDetail>(`/providers/${providerId}`, {
+        method: "PUT",
+        jsonBody: payload
+      }),
+    delete: (providerId: number) =>
+      request<void>(`/providers/${providerId}`, {
+        method: "DELETE"
+      }),
+    getModels: (providerId: number) =>
+      request<ProviderModelsResponse>(`/providers/${providerId}/models`),
+    test: (providerId: number) =>
+      request<ProviderTestResponse>(`/providers/${providerId}/test`, {
+        method: "POST"
+      })
+  },
+
+  apiKeys: {
+    list: () => request<ApiKeySummary[]>("/api-keys"),
+    get: (apiKeyId: number) =>
+      request<ApiKeyDetail>(`/api-keys/${apiKeyId}`),
+    create: (payload: ApiKeyInput) =>
+      request<ApiKeyDetail>("/api-keys", {
+        method: "POST",
+        jsonBody: payload
+      }),
+    update: (apiKeyId: number, payload: ApiKeyInput) =>
+      request<ApiKeyDetail>(`/api-keys/${apiKeyId}`, {
+        method: "PUT",
+        jsonBody: payload
+      }),
+    delete: (apiKeyId: number) =>
+      request<void>(`/api-keys/${apiKeyId}`, {
+        method: "DELETE"
+      }),
+    test: (apiKeyId: number) =>
+      request<ApiKeyTestResponse>(`/api-keys/${apiKeyId}/test`, {
+        method: "POST"
+      })
+  }
 };

@@ -73,6 +73,58 @@ def build_rendered_newsletter():
     )
 
 
+def test_get_resend_api_key_uses_newsletter_resend_key_instead_of_ai_key(client: TestClient):
+    import app.database
+    import app.email_delivery
+    from app.models import ApiKey, Newsletter
+
+    session = app.database.get_session_maker()()
+    try:
+        ai_key = ApiKey(
+            name="OpenAI key",
+            provider_type="openai",
+            key_value="sk-ai-key",
+            is_active=True,
+        )
+        resend_key = ApiKey(
+            name="Resend key",
+            provider_type="resend",
+            key_value="re-newsletter-key",
+            is_active=True,
+        )
+        session.add_all([ai_key, resend_key])
+        session.flush()
+
+        newsletter = Newsletter(
+            name="Delivery Brief",
+            slug="delivery-brief",
+            description="Newsletter-specific resend key test",
+            prompt="Generate a delivery brief.",
+            draft_subject="Delivery Brief",
+            draft_preheader="Delivery test",
+            draft_body_text="Body copy",
+            provider_name="openai",
+            model_name="gpt-4o-mini",
+            template_key="signal",
+            api_key_id=ai_key.id,
+            resend_api_key_id=resend_key.id,
+            audience_name="ops",
+            delivery_topic="delivery-brief",
+            timezone="UTC",
+            schedule_enabled=False,
+            status="active",
+        )
+        session.add(newsletter)
+        session.commit()
+        session.refresh(newsletter)
+    finally:
+        session.close()
+
+    settings = make_settings(resend_api_key="re-env-key")
+
+    assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-newsletter-key"
+
+
 def test_send_test_email_returns_local_preview_when_resend_is_not_configured(
     client: TestClient,
     monkeypatch,

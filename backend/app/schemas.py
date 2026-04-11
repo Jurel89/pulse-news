@@ -6,7 +6,14 @@ from enum import StrEnum
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 try:  # pragma: no cover - depends on local environment extras
     import email_validator  # noqa: F401
@@ -37,9 +44,33 @@ class SupportedProvider(StrEnum):
     GEMINI = "gemini"
     GOOGLE = "google"
     OPENROUTER = "openrouter"
+    RESEND = "resend"
 
 
 CRON_5_FIELD_PATTERN = re.compile(r"^\S+(?:\s+\S+){4}$")
+RESOURCE_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _normalize_required_text(value: str, *, field_name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty.")
+    return normalized
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _validate_supported_provider_name(value: str, *, field_name: str) -> str:
+    normalized = _normalize_required_text(value, field_name=field_name).lower()
+    if normalized not in SupportedProvider._value2member_map_:
+        supported = ", ".join(provider.value for provider in SupportedProvider)
+        raise ValueError(f"{field_name} must be one of: {supported}.")
+    return normalized
 
 
 class HealthResponse(BaseModel):
@@ -92,9 +123,12 @@ class NewsletterSummary(BaseModel):
     draft_subject: str
     draft_preheader: str | None
     draft_body_text: str
+    provider_id: int | None = None
     provider_name: str
     model_name: str
     template_key: str
+    api_key_id: int | None = None
+    resend_api_key_id: int | None = None
     audience_name: str
     delivery_topic: str
     timezone: str
@@ -122,30 +156,34 @@ class NewsletterRecipientSummary(BaseModel):
 class NewsletterCreateRequest(BaseModel):
     name: str
     description: str | None = None
-    prompt: str = ""
-    draft_subject: str = ""
+    prompt: str
+    draft_subject: str
     draft_preheader: str | None = None
-    draft_body_text: str = ""
-    provider_name: str = "openai"
-    model_name: str = "gpt-4o-mini"
-    template_key: TemplateKey = TemplateKey.SIGNAL
-    audience_name: str = "default-audience"
-    delivery_topic: str = "default-topic"
-    timezone: str = "UTC"
-    schedule_enabled: bool = False
+    draft_body_text: str
+    provider_id: int | None = None
+    provider_name: str
+    model_name: str
+    template_key: str
+    api_key_id: int | None = None
+    resend_api_key_id: int | None = None
+    audience_name: str
+    delivery_topic: str
+    timezone: str
+    schedule_enabled: bool
     schedule_cron: str | None = None
-    status: NewsletterStatus = NewsletterStatus.DRAFT
+    status: NewsletterStatus
     notes: str | None = None
-    recipient_import_text: str = ""
+    recipient_import_text: str
+
+    @field_validator("name", "model_name", "template_key")
+    @classmethod
+    def validate_required_text_fields(cls, value: str, info: ValidationInfo) -> str:
+        return _normalize_required_text(value, field_name=info.field_name)
 
     @field_validator("provider_name")
     @classmethod
     def validate_provider_name(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in SupportedProvider._value2member_map_:
-            supported = ", ".join(provider.value for provider in SupportedProvider)
-            raise ValueError(f"provider_name must be one of: {supported}.")
-        return normalized
+        return _validate_supported_provider_name(value, field_name="provider_name")
 
     @field_validator("timezone")
     @classmethod
@@ -188,6 +226,200 @@ class NewsletterUpdateRequest(NewsletterCreateRequest):
 class NewsletterDetail(NewsletterSummary):
     recipients: list[NewsletterRecipientSummary]
     recipient_import_text: str
+
+
+class EmailTemplateSummary(BaseModel):
+    id: int
+    name: str
+    key: str
+    description: str | None
+    is_default: bool
+    is_system: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EmailTemplateDetail(EmailTemplateSummary):
+    html_template: str
+
+
+class EmailTemplateCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    key: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    html_template: str = Field(min_length=1)
+    is_default: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="name")
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, value: str) -> str:
+        normalized = _normalize_required_text(value, field_name="key").lower()
+        if RESOURCE_KEY_PATTERN.fullmatch(normalized) is None:
+            raise ValueError(
+                "key must start with a letter or number and contain only lowercase "
+                "letters, numbers, hyphens, or underscores."
+            )
+        return normalized
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value)
+
+    @field_validator("html_template")
+    @classmethod
+    def validate_html_template(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("html_template must not be empty.")
+        return normalized
+
+
+class EmailTemplateUpdateRequest(EmailTemplateCreateRequest):
+    pass
+
+
+class EmailTemplatePreviewRequest(BaseModel):
+    variables: dict[str, str] = Field(default_factory=dict)
+
+
+class EmailTemplatePreviewResponse(BaseModel):
+    html: str
+
+
+class ProviderSummary(BaseModel):
+    id: int
+    name: str
+    provider_type: str
+    is_enabled: bool
+    description: str | None
+    default_model: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProviderDetail(ProviderSummary):
+    configuration: str | None
+
+
+class ProviderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    provider_type: str = Field(min_length=1, max_length=64)
+    is_enabled: bool = False
+    description: str | None = None
+    default_model: str | None = None
+    configuration: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="name")
+
+    @field_validator("provider_type")
+    @classmethod
+    def validate_provider_type(cls, value: str) -> str:
+        return _validate_supported_provider_name(value, field_name="provider_type")
+
+    @field_validator("description", "default_model", "configuration")
+    @classmethod
+    def validate_optional_text_fields(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value)
+
+
+class ProviderUpdateRequest(ProviderCreateRequest):
+    pass
+
+
+class ProviderModelsResponse(BaseModel):
+    models: list[str]
+    default_model: str | None = None
+
+
+class ProviderTestResponse(BaseModel):
+    status: str
+    message: str
+    provider_type: str
+    default_model: str | None = None
+    has_active_api_key: bool
+
+
+class ApiKeySummary(BaseModel):
+    id: int
+    name: str
+    provider_type: str
+    masked_key: str
+    is_active: bool
+    last_used_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ApiKeyDetail(ApiKeySummary):
+    pass
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    provider_type: str = Field(min_length=1, max_length=64)
+    key_value: str = Field(min_length=1)
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="name")
+
+    @field_validator("provider_type")
+    @classmethod
+    def validate_provider_type(cls, value: str) -> str:
+        return _validate_supported_provider_name(value, field_name="provider_type")
+
+    @field_validator("key_value")
+    @classmethod
+    def validate_key_value(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="key_value")
+
+
+class ApiKeyUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    provider_type: str = Field(min_length=1, max_length=64)
+    key_value: str | None = None
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="name")
+
+    @field_validator("provider_type")
+    @classmethod
+    def validate_provider_type(cls, value: str) -> str:
+        return _validate_supported_provider_name(value, field_name="provider_type")
+
+    @field_validator("key_value")
+    @classmethod
+    def validate_key_value(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalize_required_text(value, field_name="key_value")
+
+
+class ApiKeyTestResponse(BaseModel):
+    status: str
+    message: str
+    provider_type: str
+    masked_key: str
 
 
 class NewsletterPreviewResponse(BaseModel):

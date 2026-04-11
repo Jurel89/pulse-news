@@ -48,6 +48,51 @@ class SystemSettings(Base):
     )
 
 
+class EmailTemplate(TimestampMixin, Base):
+    __tablename__ = "email_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    html_template: Mapped[str] = mapped_column(Text(), nullable=False)
+    is_default: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_system: Mapped[bool] = mapped_column(default=False, nullable=False)
+    newsletters: Mapped[list[Newsletter]] = relationship(back_populates="template")
+
+
+class Provider(TimestampMixin, Base):
+    __tablename__ = "providers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    is_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    default_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    configuration: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    newsletters: Mapped[list[Newsletter]] = relationship(back_populates="provider")
+
+
+class ApiKey(TimestampMixin, Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    key_value: Mapped[str] = mapped_column(Text(), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    newsletters: Mapped[list[Newsletter]] = relationship(
+        back_populates="api_key",
+        foreign_keys="Newsletter.api_key_id",
+    )
+    resend_newsletters: Mapped[list[Newsletter]] = relationship(
+        back_populates="resend_api_key",
+        foreign_keys="Newsletter.resend_api_key_id",
+    )
+
+
 class Newsletter(TimestampMixin, Base):
     __tablename__ = "newsletters"
 
@@ -59,9 +104,29 @@ class Newsletter(TimestampMixin, Base):
     draft_subject: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     draft_preheader: Mapped[str | None] = mapped_column(String(255), nullable=True)
     draft_body_text: Mapped[str] = mapped_column(Text(), default="", nullable=False)
+    provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     provider_name: Mapped[str] = mapped_column(String(255), default="openai", nullable=False)
     model_name: Mapped[str] = mapped_column(String(255), default="gpt-4o-mini", nullable=False)
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("email_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     template_key: Mapped[str] = mapped_column(String(255), default="signal", nullable=False)
+    api_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    resend_api_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     audience_name: Mapped[str] = mapped_column(
         String(255),
         default="default-audience",
@@ -78,6 +143,16 @@ class Newsletter(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)
     notes: Mapped[str | None] = mapped_column(Text(), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    template: Mapped[EmailTemplate | None] = relationship(back_populates="newsletters")
+    provider: Mapped[Provider | None] = relationship(back_populates="newsletters")
+    api_key: Mapped[ApiKey | None] = relationship(
+        back_populates="newsletters",
+        foreign_keys=[api_key_id],
+    )
+    resend_api_key: Mapped[ApiKey | None] = relationship(
+        back_populates="resend_newsletters",
+        foreign_keys=[resend_api_key_id],
+    )
     recipients: Mapped[list[NewsletterRecipient]] = relationship(
         back_populates="newsletter",
         cascade="all, delete-orphan",

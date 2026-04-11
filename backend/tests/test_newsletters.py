@@ -65,7 +65,9 @@ def test_newsletter_crud_flow(client: TestClient):
             "model_name": "gpt-4o-mini",
             "template_key": "signal",
             "audience_name": "founders",
+            "delivery_topic": "daily-brief",
             "timezone": "Europe/Madrid",
+            "schedule_enabled": False,
             "schedule_cron": "0 7 * * 1-5",
             "status": "active",
             "notes": "Primary weekday newsletter",
@@ -96,7 +98,9 @@ def test_newsletter_crud_flow(client: TestClient):
             "model_name": "claude-sonnet-4-20250514",
             "template_key": "ledger",
             "audience_name": "europe-operators",
+            "delivery_topic": "daily-brief-europe",
             "timezone": "Europe/Madrid",
+            "schedule_enabled": False,
             "schedule_cron": "15 7 * * 1-5",
             "status": "draft",
             "notes": "Renamed for regional edition",
@@ -141,6 +145,19 @@ def test_newsletter_crud_flow(client: TestClient):
     assert final_list_response.json() == []
 
 
+def test_form_options_do_not_return_fallback_models_without_enabled_providers(client: TestClient):
+    bootstrap_operator(client)
+
+    response = client.get("/api/newsletters/form-options")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["providers"] == []
+    assert payload["models"] == {}
+    assert payload["api_keys"] == []
+    assert isinstance(payload["timezones"], list)
+
+
 def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     bootstrap_operator(client)
 
@@ -159,7 +176,9 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
             "model_name": "gpt-4o-mini",
             "template_key": "signal",
             "audience_name": "founders",
+            "delivery_topic": "founder-radar",
             "timezone": "UTC",
+            "schedule_enabled": False,
             "schedule_cron": None,
             "status": "active",
             "notes": "Used for generation tests",
