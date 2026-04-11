@@ -20,7 +20,7 @@ export type ProviderInput = {
   is_enabled: boolean;
   description: string;
   default_model: string;
-  configuration: string;
+  configuration?: string;
 };
 
 export const providerTypes = [

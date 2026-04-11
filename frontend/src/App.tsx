@@ -299,14 +299,13 @@ export default function App() {
     await runAuthAction(async () => {
       const provider = providers.find(p => p.id === providerId);
       if (!provider) return;
-      await api.providers.update(providerId, {
-        name: provider.name,
-        provider_type: provider.provider_type,
-        is_enabled: enabled,
-        description: provider.description ?? "",
-        default_model: provider.default_model ?? "",
-        configuration: provider.configuration ?? ""
-      });
+        await api.providers.update(providerId, {
+          name: provider.name,
+          provider_type: provider.provider_type,
+          is_enabled: enabled,
+          description: provider.description ?? "",
+          default_model: provider.default_model ?? ""
+        });
       await loadProviders();
     });
   }

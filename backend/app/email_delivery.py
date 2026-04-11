@@ -83,8 +83,6 @@ def _get_resend_api_key(settings: Settings, newsletter: Newsletter | None = None
 
 
 def _get_resend_from_email(settings: Settings, newsletter: Newsletter | None = None) -> str | None:
-    if newsletter and newsletter.delivery_topic:
-        return f"newsletter@{newsletter.delivery_topic}"
     return settings.resend_from_email
 
 

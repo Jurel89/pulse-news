@@ -505,12 +505,19 @@ def get_form_options(request: Request, db: DbSession) -> dict:
         if provider.default_model:
             provider_models.append(provider.default_model)
 
-        if provider.configuration and isinstance(provider.configuration, dict):
-            config_models = provider.configuration.get("models", [])
-            if isinstance(config_models, list):
-                for model in config_models:
-                    if isinstance(model, str) and model not in provider_models:
-                        provider_models.append(model)
+        if provider.configuration:
+            config = provider.configuration
+            if isinstance(config, str):
+                try:
+                    config = json.loads(config)
+                except json.JSONDecodeError:
+                    config = None
+            if isinstance(config, dict):
+                config_models = config.get("models", [])
+                if isinstance(config_models, list):
+                    for model in config_models:
+                        if isinstance(model, str) and model not in provider_models:
+                            provider_models.append(model)
 
         if provider_models:
             models[str(provider.id)] = provider_models
