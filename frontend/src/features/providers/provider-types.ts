@@ -23,29 +23,36 @@ export type ProviderInput = {
   configuration?: string;
 };
 
-export const providerTypes = [
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "gemini", label: "Gemini" },
-  { value: "google", label: "Google" },
-  { value: "openrouter", label: "OpenRouter" }
-] as const;
-
-export const providerModelCatalog: Record<string, string[]> = {
-  openai: ["gpt-4o-mini", "gpt-4o", "o4-mini"],
-  anthropic: ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"],
-  gemini: ["gemini-2.5-flash", "gemini-2.5-pro"],
-  google: ["gemini-2.5-flash", "gemini-2.5-pro"],
-  openrouter: [
-    "openai/gpt-4o-mini",
-    "anthropic/claude-3.5-sonnet",
-    "google/gemini-2.0-flash-001"
-  ]
+export type ProviderPreset = {
+  key: string;
+  name: string;
+  adapter: string;
+  base_url: string | null;
+  recommended_models: string[];
+  supports_discovery: boolean;
 };
+
+export type ProviderTypeOption = {
+  value: string;
+  label: string;
+};
+
+// Provider type and model suggestions come from backend presets.
+export const providerTypes: ProviderTypeOption[] = [];
+
+// Model suggestions come from backend presets.
+export const providerModelCatalog: Record<string, string[]> = {};
+
+export function getProviderTypeOptionsFromPresets(presets: ProviderPreset[]): ProviderTypeOption[] {
+  return presets.map((preset) => ({
+    value: preset.key,
+    label: preset.name
+  }));
+}
 
 export const emptyProviderInput: ProviderInput = {
   name: "",
-  provider_type: "openai",
+  provider_type: "",
   is_enabled: true,
   description: "",
   default_model: "",

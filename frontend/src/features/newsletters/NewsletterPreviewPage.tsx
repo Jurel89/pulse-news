@@ -152,7 +152,13 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
           ) : null}
 
           {activeTab === "html" ? (
-            <article className="preview-frame" dangerouslySetInnerHTML={{ __html: preview.html }} />
+            <iframe
+              className="preview-frame"
+              srcDoc={preview.html}
+              sandbox=""
+              title="Newsletter Preview"
+              style={{ width: "100%", minHeight: "400px", border: "none", borderRadius: "12px" }}
+            />
           ) : (
             <article className="plain-preview">
               <pre>{preview.plain_text}</pre>

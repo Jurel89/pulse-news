@@ -29,7 +29,64 @@ PROVIDER_MODEL_CATALOG = {
         "anthropic/claude-3.5-sonnet",
         "google/gemini-2.0-flash-001",
     ],
+    "zai": ["glm-5.1", "glm-5-turbo"],
+    "kimi": ["kimi-k2.5", "kimi-k2-turbo-preview"],
 }
+
+PROVIDER_PRESETS = [
+    {
+        "key": "openai",
+        "name": "OpenAI",
+        "adapter": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "recommended_models": ["gpt-4o-mini", "gpt-4o", "o4-mini"],
+        "supports_discovery": False,
+    },
+    {
+        "key": "anthropic",
+        "name": "Anthropic",
+        "adapter": "anthropic",
+        "base_url": None,
+        "recommended_models": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"],
+        "supports_discovery": False,
+    },
+    {
+        "key": "gemini",
+        "name": "Google Gemini",
+        "adapter": "gemini",
+        "base_url": None,
+        "recommended_models": ["gemini-2.5-flash", "gemini-2.5-pro"],
+        "supports_discovery": False,
+    },
+    {
+        "key": "openrouter",
+        "name": "OpenRouter",
+        "adapter": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "recommended_models": [
+            "openai/gpt-4o-mini",
+            "anthropic/claude-3.5-sonnet",
+            "google/gemini-2.0-flash-001",
+        ],
+        "supports_discovery": False,
+    },
+    {
+        "key": "zai",
+        "name": "Z.AI",
+        "adapter": "openai_compatible",
+        "base_url": "https://api.z.ai/api/paas/v4/",
+        "recommended_models": ["glm-5.1", "glm-5-turbo"],
+        "supports_discovery": False,
+    },
+    {
+        "key": "kimi",
+        "name": "Kimi (Moonshot)",
+        "adapter": "openai_compatible",
+        "base_url": "https://api.moonshot.ai/v1",
+        "recommended_models": ["kimi-k2.5", "kimi-k2-turbo-preview"],
+        "supports_discovery": True,
+    },
+]
 
 
 def create_audit_event(
@@ -130,12 +187,19 @@ def update_provider(
     user = require_authenticated_user(request, db)
     provider = get_provider_or_404(db, provider_id)
 
-    provider.name = payload.name
-    provider.provider_type = payload.provider_type
+    # Preserve existing configuration fields when omitted to avoid destructive updates
+    provider.name = payload.name or provider.name
+    provider.provider_type = payload.provider_type or provider.provider_type
     provider.is_enabled = payload.is_enabled
-    provider.description = payload.description
-    provider.default_model = payload.default_model
-    provider.configuration = payload.configuration
+    provider.description = (
+        payload.description if payload.description is not None else provider.description
+    )
+    provider.default_model = (
+        payload.default_model if payload.default_model is not None else provider.default_model
+    )
+    provider.configuration = (
+        payload.configuration if payload.configuration is not None else provider.configuration
+    )
 
     db.add(provider)
     create_audit_event(
@@ -229,3 +293,9 @@ def test_provider(provider_id: int, request: Request, db: DbSession) -> Provider
         default_model=provider.default_model,
         has_active_api_key=True,
     )
+
+
+@providers_router.get("/presets/list")
+def list_provider_presets(request: Request, db: DbSession) -> list[dict]:
+    require_authenticated_user(request, db)
+    return PROVIDER_PRESETS

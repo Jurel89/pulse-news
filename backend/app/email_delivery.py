@@ -393,10 +393,19 @@ def send_test_email(
     from_email = _get_resend_from_email(settings, newsletter)
 
     if not api_key or not from_email:
+        if settings.environment == "production":
+            raise RuntimeError(
+                "Cannot test-send in production without Resend configuration. "
+                "Set PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL "
+                "or configure a Resend API key for this newsletter."
+            )
         return TestSendResult(
             status="simulated",
             mode="local-preview",
-            message="Resend is not configured; returning a local preview-only test-send result.",
+            message=(
+                "Resend is not configured; this is a local preview-only "
+                "result, not a real delivery test."
+            ),
             provider_id=None,
             to_email=to_email,
         )

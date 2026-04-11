@@ -76,14 +76,16 @@ def render_ledger_template(subject: str, preheader: str, body_html: str) -> str:
     )
 
 
-def render_custom_template(html_template: str, subject: str, preheader: str, body_html: str) -> str:
+def render_custom_template(
+    html_template: str, subject: str, preheader: str, body_html: str, newsletter_name: str
+) -> str:
     result = html_template
     result = result.replace("{{subject}}", escape(subject))
     result = result.replace("{{preheader}}", escape(preheader))
     result = result.replace("{{headline}}", escape(subject))
     result = result.replace("{{content}}", body_html)
     result = result.replace("{{body_html}}", body_html)
-    result = result.replace("{{newsletter_name}}", escape(subject))
+    result = result.replace("{{newsletter_name}}", escape(newsletter_name))
     return result
 
 
@@ -105,24 +107,21 @@ def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
     )
 
     template_key = newsletter.template_key or "signal"
-    try:
-        db = next(get_db_session())
-        custom_template = db.scalar(select(EmailTemplate).where(EmailTemplate.key == template_key))
-        if custom_template and custom_template.html_template:
-            html = render_custom_template(
-                custom_template.html_template, subject, preheader, body_html
-            )
-        elif template_key == "signal":
-            html = render_signal_template(subject, preheader, body_html)
-        elif template_key == "ledger":
-            html = render_ledger_template(subject, preheader, body_html)
-        else:
-            html = render_signal_template(subject, preheader, body_html)
-    except Exception:
-        if template_key == "ledger":
-            html = render_ledger_template(subject, preheader, body_html)
-        else:
-            html = render_signal_template(subject, preheader, body_html)
+    db = next(get_db_session())
+    custom_template = db.scalar(select(EmailTemplate).where(EmailTemplate.key == template_key))
+
+    if custom_template and custom_template.html_template:
+        html = render_custom_template(
+            custom_template.html_template, subject, preheader, body_html, newsletter.name
+        )
+    elif template_key == "signal":
+        html = render_signal_template(subject, preheader, body_html)
+    elif template_key == "ledger":
+        html = render_ledger_template(subject, preheader, body_html)
+    else:
+        raise ValueError(
+            f"Template '{template_key}' was not found and no built-in template matches."
+        )
 
     return RenderedNewsletter(
         subject=subject,

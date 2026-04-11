@@ -1,3 +1,5 @@
+export type { ProviderTypeOption } from "../providers/provider-types";
+
 export type ApiKeySummary = {
   id: number;
   name: string;
@@ -18,18 +20,9 @@ export type ApiKeyInput = {
   is_active: boolean;
 };
 
-export const providerTypes = [
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "gemini", label: "Gemini" },
-  { value: "google", label: "Google" },
-  { value: "openrouter", label: "OpenRouter" },
-  { value: "resend", label: "Resend" }
-] as const;
-
 export const emptyApiKeyInput: ApiKeyInput = {
   name: "",
-  provider_type: "openai",
+  provider_type: "",
   key_value: "",
   is_active: true
 };

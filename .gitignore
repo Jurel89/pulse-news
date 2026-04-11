@@ -24,3 +24,15 @@ CLAUDE.md
 
 # Lock files
 backend/uv.lock
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Playwright MCP logs and dumps
+.playwright-mcp/
+
+# Temporary screenshots
+*-page*.png
+pulse-*.png

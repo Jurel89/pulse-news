@@ -45,6 +45,8 @@ class SupportedProvider(StrEnum):
     GOOGLE = "google"
     OPENROUTER = "openrouter"
     RESEND = "resend"
+    ZAI = "zai"
+    KIMI = "kimi"
 
 
 CRON_5_FIELD_PATTERN = re.compile(r"^\S+(?:\s+\S+){4}$")

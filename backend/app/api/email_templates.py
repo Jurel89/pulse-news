@@ -221,8 +221,17 @@ def delete_email_template(
             detail="System templates cannot be deleted.",
         )
 
-    for newsletter in email_template.newsletters:
-        newsletter.template_id = None
+    # Block deletion when in use by any newsletter (live or historical)
+    in_use = db.scalar(
+        select(EmailTemplate)
+        .join(EmailTemplate.newsletters)
+        .where(EmailTemplate.id == email_template.id)
+    )
+    if in_use:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete a template that is referenced by newsletters. Reassign first.",
+        )
 
     create_audit_event(
         db,

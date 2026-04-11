@@ -23,7 +23,7 @@ class GeneratedDraft:
     body_text: str
 
 
-SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter"}
+SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter", "zai", "kimi"}
 
 
 def _get_newsletter_provider(newsletter: Newsletter):
@@ -110,6 +110,8 @@ def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
         "gemini": "GEMINI_API_KEY",
         "google": "GEMINI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
+        "zai": "ZAI_API_KEY",
+        "kimi": "KIMI_API_KEY",
     }
     env_name = env_by_provider.get(provider_name)
     if env_name:
@@ -123,21 +125,33 @@ def _has_live_provider_credentials(newsletter: Newsletter) -> bool:
 
 def _provider_completion_configuration(newsletter: Newsletter) -> dict[str, Any]:
     provider = _get_newsletter_provider(newsletter)
-    if provider is None or not provider.configuration:
-        return {}
+    provider_name = _normalized_provider_name(newsletter)
 
-    try:
-        configuration = json.loads(provider.configuration)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Provider configuration must be valid JSON: {exc.msg}.") from exc
+    PRESET_BASE_URLS = {
+        "zai": "https://api.z.ai/api/paas/v4/",
+        "kimi": "https://api.moonshot.ai/v1",
+    }
 
-    if not isinstance(configuration, dict):
-        raise ValueError("Provider configuration must be a JSON object.")
+    config: dict[str, Any] = {}
 
-    sanitized_configuration = dict(configuration)
-    for reserved_key in ("api_key", "messages", "model"):
-        sanitized_configuration.pop(reserved_key, None)
-    return sanitized_configuration
+    preset_url = PRESET_BASE_URLS.get(provider_name)
+    if preset_url:
+        config["api_base"] = preset_url
+
+    if provider is not None and provider.configuration:
+        try:
+            configuration = json.loads(provider.configuration)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Provider configuration must be valid JSON: {exc.msg}.") from exc
+
+        if not isinstance(configuration, dict):
+            raise ValueError("Provider configuration must be a JSON object.")
+
+        for reserved_key in ("api_key", "messages", "model"):
+            configuration.pop(reserved_key, None)
+        config.update(configuration)
+
+    return config
 
 
 def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
@@ -168,6 +182,19 @@ def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
 
 def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     provider_name = _normalized_provider_name(newsletter)
+
+    # Enforce provider enabled at generation time
+    provider = _get_newsletter_provider(newsletter)
+    if provider is not None and not provider.is_enabled:
+        return GeneratedDraft(
+            status="error",
+            mode="none",
+            message=f"Provider '{provider.name}' is disabled. Enable it before generating.",
+            subject=newsletter.draft_subject or newsletter.name,
+            preheader=newsletter.draft_preheader or "",
+            body_text=newsletter.draft_body_text or "",
+        )
+
     if provider_name not in SUPPORTED_PROVIDERS:
         supported_providers = ", ".join(sorted(SUPPORTED_PROVIDERS))
         return GeneratedDraft(
