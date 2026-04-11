@@ -48,7 +48,7 @@ build:
 up:
 	@echo "$(BLUE)Starting Pulse News on port $(PORT)...$(RESET)"
 	@echo "$(YELLOW)Make sure you've configured your .env file!$(RESET)"
-	PULSE_NEWS_PORT=$(PORT) docker-compose up -d --build
+	PULSE_NEWS_PORT=$(PORT) docker compose up -d --build
 	@echo ""
 	@echo "$(GREEN)Pulse News is starting up!$(RESET)"
 	@echo "$(BLUE)Access URLs:$(RESET)"
@@ -61,7 +61,7 @@ up:
 ## Stop the service
 down:
 	@echo "$(BLUE)Stopping Pulse News...$(RESET)"
-	docker-compose down
+	docker compose down
 	@echo "$(GREEN)Service stopped.$(RESET)"
 
 ## Restart the service
@@ -70,7 +70,7 @@ restart: down up
 ## View container logs
 logs:
 	@echo "$(BLUE)Following logs (Ctrl+C to exit)...$(RESET)"
-	docker-compose logs -f
+	docker compose logs -f
 
 ## Open a shell in the container
 shell:
@@ -88,7 +88,7 @@ status:
 ## Clean up everything
 clean:
 	@echo "$(RED)Removing container, image, and volumes...$(RESET)"
-	docker-compose down -v
+	docker compose down -v
 	docker rmi $(IMAGE_NAME):latest 2>/dev/null || true
 	@echo "$(GREEN)Cleanup complete!$(RESET)"
 
