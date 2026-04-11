@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.ai_generation import generate_newsletter_draft
-from app.api.providers import get_provider_models
+from app.api.providers import PROVIDER_MODEL_CATALOG, get_provider_models
 from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.deps import DbSession
@@ -580,7 +580,6 @@ def _validate_newsletter_entities(
                 detail="provider_name does not match provider type.",
             )
 
-        # Validate model membership if catalog available
         provider_models = get_provider_models(provider)
         if provider_models and payload.model_name not in provider_models:
             raise HTTPException(
@@ -589,6 +588,20 @@ def _validate_newsletter_entities(
                     f"Model '{payload.model_name}' is not enabled for provider '{provider.name}'."
                 ),
             )
+    elif payload.provider_name:
+        provider = db.scalar(
+            select(Provider).where(
+                Provider.provider_type == payload.provider_name,
+                Provider.is_enabled.is_(True),
+            )
+        )
+        if provider is None and payload.model_name:
+            known_types = set(PROVIDER_MODEL_CATALOG.keys())
+            if payload.provider_name not in known_types:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown provider type '{payload.provider_name}'.",
+                )
 
     api_key: ApiKey | None = None
     if payload.api_key_id is not None:
@@ -705,7 +718,7 @@ def generate_draft(
         message=generated.message,
     )
 
-    if generated.status in {"ok", "fallback"} and newsletter.api_key_id:
+    if generated.status in {"ok", "fallback", "generated"} and newsletter.api_key_id:
         api_key_obj = db.scalar(select(ApiKey).where(ApiKey.id == newsletter.api_key_id))
         if api_key_obj:
             api_key_obj.last_used_at = utc_now()

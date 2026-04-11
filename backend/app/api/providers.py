@@ -170,6 +170,12 @@ def create_provider(
     return serialize_provider_detail(provider)
 
 
+@providers_router.get("/presets/list")
+def list_provider_presets(request: Request, db: DbSession) -> list[dict]:
+    require_authenticated_user(request, db)
+    return PROVIDER_PRESETS
+
+
 @providers_router.get("/{provider_id}", response_model=ProviderDetail)
 def get_provider(provider_id: int, request: Request, db: DbSession) -> ProviderDetail:
     require_authenticated_user(request, db)
@@ -293,9 +299,3 @@ def test_provider(provider_id: int, request: Request, db: DbSession) -> Provider
         default_model=provider.default_model,
         has_active_api_key=True,
     )
-
-
-@providers_router.get("/presets/list")
-def list_provider_presets(request: Request, db: DbSession) -> list[dict]:
-    require_authenticated_user(request, db)
-    return PROVIDER_PRESETS
