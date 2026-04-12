@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.auth import require_authenticated_user
+from app.crypto import decrypt_secret, encrypt_secret
 from app.deps import DbSession
 from app.models import ApiKey, AuditEvent, Provider
 from app.schemas import (
@@ -54,11 +55,12 @@ def mask_api_key(key_value: str) -> str:
 
 
 def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
+    decrypted_key_value = decrypt_secret(api_key.key_value)
     return ApiKeyDetail(
         id=api_key.id,
         name=api_key.name,
         provider_type=api_key.provider_type,
-        masked_key=mask_api_key(api_key.key_value),
+        masked_key=mask_api_key(decrypted_key_value),
         is_active=api_key.is_active,
         last_used_at=api_key.last_used_at,
         created_at=api_key.created_at,
@@ -83,7 +85,7 @@ def create_api_key(
     api_key = ApiKey(
         name=payload.name,
         provider_type=payload.provider_type,
-        key_value=payload.key_value,
+        key_value=encrypt_secret(payload.key_value),
         is_active=payload.is_active,
     )
     db.add(api_key)
@@ -123,7 +125,7 @@ def update_api_key(
     api_key.provider_type = payload.provider_type
     api_key.is_active = payload.is_active
     if payload.key_value is not None:
-        api_key.key_value = payload.key_value
+        api_key.key_value = encrypt_secret(payload.key_value)
 
     db.add(api_key)
     create_audit_event(
@@ -171,6 +173,7 @@ def delete_api_key(api_key_id: int, request: Request, db: DbSession) -> Response
 def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTestResponse:
     require_authenticated_user(request, db)
     api_key = get_api_key_or_404(db, api_key_id)
+    decrypted_key_value = decrypt_secret(api_key.key_value)
     has_enabled_provider = (
         db.scalar(
             select(Provider).where(
@@ -186,7 +189,7 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
             status="warning",
             message="API key is inactive. Activate it before using it for provider requests.",
             provider_type=api_key.provider_type,
-            masked_key=mask_api_key(api_key.key_value),
+            masked_key=mask_api_key(decrypted_key_value),
         )
 
     if not has_enabled_provider:
@@ -194,12 +197,12 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
             status="warning",
             message="API key is active, but there is no enabled provider configured for this type.",
             provider_type=api_key.provider_type,
-            masked_key=mask_api_key(api_key.key_value),
+            masked_key=mask_api_key(decrypted_key_value),
         )
 
     return ApiKeyTestResponse(
         status="ok",
         message="API key is active and matches an enabled provider configuration.",
         provider_type=api_key.provider_type,
-        masked_key=mask_api_key(api_key.key_value),
+        masked_key=mask_api_key(decrypted_key_value),
     )

@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from app.crypto import decrypt_secret
 from app.models import Newsletter
 
 try:  # pragma: no cover - exercised conditionally when dependency is present and configured
@@ -89,7 +90,7 @@ def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
                 )
             )
             if api_key and api_key.key_value:
-                return api_key.key_value
+                return decrypt_secret(api_key.key_value)
 
         active_provider_key = session.scalar(
             select(ApiKey)
@@ -100,7 +101,7 @@ def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
             .order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
         )
         if active_provider_key and active_provider_key.key_value:
-            return active_provider_key.key_value
+            return decrypt_secret(active_provider_key.key_value)
     finally:
         session.close()
 

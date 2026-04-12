@@ -8,6 +8,7 @@ from html import escape
 from urllib import error, request
 
 from app.config import Settings
+from app.crypto import decrypt_secret
 from app.email_templates import RenderedNewsletter
 from app.models import Newsletter
 
@@ -73,7 +74,7 @@ def _get_resend_api_key(settings: Settings, newsletter: Newsletter | None = None
                 )
             )
             if api_key and api_key.key_value:
-                return api_key.key_value
+                return decrypt_secret(api_key.key_value)
         except Exception:
             pass
         finally:

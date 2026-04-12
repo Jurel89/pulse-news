@@ -14,6 +14,7 @@ from app.ai_generation import generate_newsletter_draft
 from app.api.providers import PROVIDER_MODEL_CATALOG, get_provider_models
 from app.auth import require_authenticated_user
 from app.config import get_settings
+from app.crypto import decrypt_secret
 from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
 from app.email_templates import render_newsletter
@@ -45,6 +46,12 @@ newsletters_router = APIRouter(prefix="/newsletters", tags=["newsletters"])
 
 SEND_ALLOWED_STATUSES = {"active"}
 SCHEDULE_ALLOWED_STATUSES = {"active"}
+
+
+def mask_api_key(key_value: str) -> str:
+    decrypted_key_value = decrypt_secret(key_value)
+    suffix = decrypted_key_value[-4:] if decrypted_key_value else ""
+    return f"****{suffix}" if suffix else "****"
 
 
 def slugify(value: str) -> str:
@@ -533,7 +540,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
             "id": k.id,
             "name": k.name,
             "provider_type": k.provider_type,
-            "masked_key": f"****{k.key_value[-4:]}" if k.key_value else "****",
+            "masked_key": mask_api_key(k.key_value),
         }
         for k in api_keys
     ]
