@@ -139,6 +139,15 @@ def list_providers(request: Request, db: DbSession) -> list[ProviderSummary]:
     return [ProviderSummary.model_validate(provider) for provider in providers]
 
 
+def _get_active_api_key(db: DbSession, provider_type: str) -> ApiKey | None:
+    return db.scalar(
+        select(ApiKey).where(
+            ApiKey.provider_type == provider_type,
+            ApiKey.is_active.is_(True),
+        )
+    )
+
+
 @providers_router.post("", response_model=ProviderDetail, status_code=status.HTTP_201_CREATED)
 def create_provider(
     payload: ProviderCreateRequest,
@@ -146,6 +155,14 @@ def create_provider(
     db: DbSession,
 ) -> ProviderDetail:
     user = require_authenticated_user(request, db)
+
+    active_key = _get_active_api_key(db, payload.provider_type)
+    if active_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No active API key found for provider type '{payload.provider_type}'. Create an API key first.",
+        )
+
     provider = Provider(
         name=payload.name,
         provider_type=payload.provider_type,
@@ -193,9 +210,16 @@ def update_provider(
     user = require_authenticated_user(request, db)
     provider = get_provider_or_404(db, provider_id)
 
-    # Preserve existing configuration fields when omitted to avoid destructive updates
+    effective_provider_type = payload.provider_type or provider.provider_type
+    active_key = _get_active_api_key(db, effective_provider_type)
+    if active_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No active API key found for provider type '{effective_provider_type}'. Create an API key first.",
+        )
+
     provider.name = payload.name or provider.name
-    provider.provider_type = payload.provider_type or provider.provider_type
+    provider.provider_type = effective_provider_type
     provider.is_enabled = payload.is_enabled
     provider.description = (
         payload.description if payload.description is not None else provider.description

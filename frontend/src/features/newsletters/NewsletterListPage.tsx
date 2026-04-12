@@ -30,11 +30,11 @@ export function NewsletterListPage({
   onDelete
 }: NewsletterListPageProps) {
   return (
-    <section className="newsletters-grid">
+    <section className="data-grid-section">
       <header className="section-header">
         <div>
           <p className="eyebrow">Newsletters</p>
-          <h2 className="section-title">Control every newsletter definition from one place.</h2>
+          <h2 className="section-title">Manage your newsletters</h2>
         </div>
         <button className="primary-button" onClick={onCreate} type="button">
           New Newsletter
@@ -53,14 +53,29 @@ export function NewsletterListPage({
       ) : null}
 
       {loading ? (
-        <div className="newsletter-list">
-          {Array.from({ length: 3 }, (_, index) => (
-            <article className="loading-skeleton" key={index}>
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-            </article>
-          ))}
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Provider</th>
+                <th>Schedule</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 3 }, (_, index) => (
+                <tr key={index} className="loading-row">
+                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '200px' }} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : items.length === 0 ? (
         <article className="empty-state">
@@ -71,78 +86,116 @@ export function NewsletterListPage({
           </p>
         </article>
       ) : (
-        <div className="newsletter-list">
-          {items.map((newsletter) => (
-            <article className="newsletter-card" key={newsletter.id}>
-              <div className="newsletter-card-header">
-                <div>
-                  <h3>{newsletter.name}</h3>
-                  <p>{newsletter.slug}</p>
-                </div>
-                <span className={`status-chip status-${newsletter.status}`}>{newsletter.status}</span>
-              </div>
-
-              <dl className="newsletter-meta">
-                <div>
-                  <dt>Provider</dt>
-                  <dd>
-                    {newsletter.provider_name} / {newsletter.model_name}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Template</dt>
-                  <dd>{newsletter.template_key}</dd>
-                </div>
-                <div>
-                  <dt>Audience</dt>
-                  <dd>{newsletter.audience_name}</dd>
-                </div>
-                <div>
-                  <dt>Schedule</dt>
-                  <dd>{newsletter.schedule_cron ?? "Manual only"}</dd>
-                </div>
-              </dl>
-
-              <p className="newsletter-description">{newsletter.description || "No description yet."}</p>
-
-              <div className="card-actions">
-                <button className="secondary-button" onClick={() => onPreview(newsletter)} type="button">
-                  Preview
-                </button>
-                <button className="secondary-button" onClick={() => onEdit(newsletter)} type="button">
-                  Edit
-                </button>
-                <button className="secondary-button" onClick={() => void onPause(newsletter.id)} type="button">
-                  Pause
-                </button>
-                {newsletter.schedule_cron ? (
-                  newsletter.schedule_enabled ? (
-                    <button
-                      className="secondary-button"
-                      onClick={() => void onSchedulePause(newsletter.id)}
-                      type="button"
-                    >
-                      Pause Schedule
-                    </button>
-                  ) : (
-                    <button
-                      className="secondary-button"
-                      onClick={() => void onScheduleResume(newsletter.id)}
-                      type="button"
-                    >
-                      Resume Schedule
-                    </button>
-                  )
-                ) : null}
-                <button className="secondary-button" onClick={() => void onArchive(newsletter.id)} type="button">
-                  Archive
-                </button>
-                <button className="danger-button" onClick={() => void onDelete(newsletter.id)} type="button">
-                  Delete
-                </button>
-              </div>
-            </article>
-          ))}
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Provider / Model</th>
+                <th>Template</th>
+                <th>Audience</th>
+                <th>Schedule</th>
+                <th className="actions-column">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((newsletter) => (
+                <tr key={newsletter.id} className="data-row">
+                  <td className="name-cell">
+                    <div className="cell-primary">{newsletter.name}</div>
+                    <div className="cell-secondary">{newsletter.slug}</div>
+                  </td>
+                  <td>
+                    <span className={`status-badge status-${newsletter.status}`}>
+                      {newsletter.status}
+                    </span>
+                  </td>
+                  <td className="provider-cell">
+                    <div className="cell-primary">{newsletter.provider_name}</div>
+                    <div className="cell-secondary">{newsletter.model_name}</div>
+                  </td>
+                  <td>{newsletter.template_key}</td>
+                  <td>{newsletter.audience_name}</td>
+                  <td>
+                    {newsletter.schedule_cron ? (
+                      <span className={newsletter.schedule_enabled ? 'schedule-active' : 'schedule-paused'}>
+                        {newsletter.schedule_enabled ? 'Active' : 'Paused'}
+                        <span className="schedule-cron">{newsletter.schedule_cron}</span>
+                      </span>
+                    ) : (
+                      <span className="schedule-none">Manual</span>
+                    )}
+                  </td>
+                  <td className="actions-cell">
+                    <div className="row-actions">
+                      <button 
+                        className="action-button" 
+                        onClick={() => onPreview(newsletter)} 
+                        type="button"
+                        title="Preview"
+                      >
+                        Preview
+                      </button>
+                      <button 
+                        className="action-button" 
+                        onClick={() => onEdit(newsletter)} 
+                        type="button"
+                        title="Edit"
+                      >
+                        Edit
+                      </button>
+                      <button 
+                        className="action-button" 
+                        onClick={() => void onPause(newsletter.id)} 
+                        type="button"
+                        title="Pause"
+                      >
+                        Pause
+                      </button>
+                      {newsletter.schedule_cron ? (
+                        newsletter.schedule_enabled ? (
+                          <button
+                            className="action-button"
+                            onClick={() => void onSchedulePause(newsletter.id)}
+                            type="button"
+                            title="Pause Schedule"
+                          >
+                            Pause Schedule
+                          </button>
+                        ) : (
+                          <button
+                            className="action-button"
+                            onClick={() => void onScheduleResume(newsletter.id)}
+                            type="button"
+                            title="Resume Schedule"
+                          >
+                            Resume
+                          </button>
+                        )
+                      ) : null}
+                      <button 
+                        className="action-button secondary" 
+                        onClick={() => void onArchive(newsletter.id)} 
+                        type="button"
+                        title="Archive"
+                      >
+                        Archive
+                      </button>
+                      <button 
+                        className="action-button danger" 
+                        onClick={() => void onDelete(newsletter.id)} 
+                        type="button"
+                        title="Delete"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>

@@ -21,6 +21,13 @@ export type EmailTemplateInput = {
   is_default: boolean;
 };
 
+export type TemplatePreset = {
+  key: string;
+  name: string;
+  description: string;
+  html_template: string;
+};
+
 export const emptyEmailTemplateInput: EmailTemplateInput = {
   name: "",
   key: "",
