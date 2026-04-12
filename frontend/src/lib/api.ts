@@ -1,6 +1,6 @@
 import type { NewsletterSummary, NewsletterDetail, NewsletterInput } from "../features/newsletters/newsletter-types";
 import type { EmailTemplateSummary, EmailTemplateDetail, EmailTemplateInput } from "../features/templates/template-types";
-import type { ProviderSummary, ProviderDetail, ProviderInput } from "../features/providers/provider-types";
+import type { ProviderSummary, ProviderDetail, ProviderInput, ProviderPreset } from "../features/providers/provider-types";
 import type { ApiKeySummary, ApiKeyDetail, ApiKeyInput } from "../features/api-keys/api-key-types";
 
 export type UserSummary = {
@@ -290,6 +290,7 @@ export const api = {
 
   providers: {
     list: () => request<ProviderSummary[]>("/providers"),
+    listPresets: () => request<ProviderPreset[]>("/providers/presets/list"),
     get: (providerId: number) =>
       request<ProviderDetail>(`/providers/${providerId}`),
     create: (payload: ProviderInput) =>

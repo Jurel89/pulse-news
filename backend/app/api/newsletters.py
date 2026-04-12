@@ -11,8 +11,10 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.ai_generation import generate_newsletter_draft
+from app.api.providers import PROVIDER_MODEL_CATALOG, get_provider_models
 from app.auth import require_authenticated_user
 from app.config import get_settings
+from app.crypto import decrypt_secret
 from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
 from app.email_templates import render_newsletter
@@ -44,6 +46,12 @@ newsletters_router = APIRouter(prefix="/newsletters", tags=["newsletters"])
 
 SEND_ALLOWED_STATUSES = {"active"}
 SCHEDULE_ALLOWED_STATUSES = {"active"}
+
+
+def mask_api_key(key_value: str) -> str:
+    decrypted_key_value = decrypt_secret(key_value)
+    suffix = decrypted_key_value[-4:] if decrypted_key_value else ""
+    return f"****{suffix}" if suffix else "****"
 
 
 def slugify(value: str) -> str:
@@ -413,6 +421,7 @@ def create_newsletter(
     db: DbSession,
 ) -> NewsletterDetail:
     user = require_authenticated_user(request, db)
+    _validate_newsletter_entities(db, payload)
     newsletter = Newsletter(
         name=payload.name,
         slug=ensure_unique_slug(db, desired_slug=slugify(payload.name)),
@@ -531,7 +540,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
             "id": k.id,
             "name": k.name,
             "provider_type": k.provider_type,
-            "masked_key": f"****{k.key_value[-4:]}" if k.key_value else "****",
+            "masked_key": mask_api_key(k.key_value),
         }
         for k in api_keys
     ]
@@ -543,6 +552,94 @@ def get_form_options(request: Request, db: DbSession) -> dict:
         "api_keys": api_key_options,
         "timezones": sorted(available_timezones()),
     }
+
+
+def _ensure_template_exists(db: DbSession, template_key: str) -> None:
+    if template_key in {"signal", "ledger"}:
+        return
+    exists = db.scalar(select(EmailTemplate).where(EmailTemplate.key == template_key))
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Template '{template_key}' does not exist.",
+        )
+
+
+def _validate_newsletter_entities(
+    db: DbSession, payload: NewsletterCreateRequest
+) -> tuple[Provider | None, ApiKey | None, ApiKey | None]:
+    provider: Provider | None = None
+    if payload.provider_id is not None:
+        provider = db.scalar(select(Provider).where(Provider.id == payload.provider_id))
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provider does not exist.",
+            )
+        if not provider.is_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provider is disabled.",
+            )
+        if provider.provider_type != payload.provider_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="provider_name does not match provider type.",
+            )
+
+        provider_models = get_provider_models(provider)
+        if provider_models and payload.model_name not in provider_models:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Model '{payload.model_name}' is not enabled for provider '{provider.name}'."
+                ),
+            )
+    elif payload.provider_name:
+        provider = db.scalar(
+            select(Provider).where(
+                Provider.provider_type == payload.provider_name,
+                Provider.is_enabled.is_(True),
+            )
+        )
+        if provider is None and payload.model_name:
+            known_types = set(PROVIDER_MODEL_CATALOG.keys())
+            if payload.provider_name not in known_types:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown provider type '{payload.provider_name}'.",
+                )
+
+    api_key: ApiKey | None = None
+    if payload.api_key_id is not None:
+        api_key = db.scalar(select(ApiKey).where(ApiKey.id == payload.api_key_id))
+        if api_key is None or not api_key.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="API key is missing or inactive.",
+            )
+        if api_key.provider_type != payload.provider_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="API key provider_type does not match newsletter provider.",
+            )
+
+    resend_key: ApiKey | None = None
+    if payload.resend_api_key_id is not None:
+        resend_key = db.scalar(select(ApiKey).where(ApiKey.id == payload.resend_api_key_id))
+        if resend_key is None or not resend_key.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Resend API key is missing or inactive.",
+            )
+        if resend_key.provider_type != "resend":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Resend API key must have provider_type 'resend'.",
+            )
+
+    _ensure_template_exists(db, payload.template_key)
+    return provider, api_key, resend_key
 
 
 @newsletters_router.get("/{newsletter_id}", response_model=NewsletterDetail)
@@ -627,6 +724,12 @@ def generate_draft(
         event_status=generated.status,
         message=generated.message,
     )
+
+    if generated.status in {"ok", "fallback", "generated"} and newsletter.api_key_id:
+        api_key_obj = db.scalar(select(ApiKey).where(ApiKey.id == newsletter.api_key_id))
+        if api_key_obj:
+            api_key_obj.last_used_at = utc_now()
+
     db.commit()
     db.refresh(newsletter)
     db.refresh(run)
@@ -716,6 +819,7 @@ def update_newsletter(
 ) -> NewsletterDetail:
     user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
+    _validate_newsletter_entities(db, payload)
 
     newsletter.name = payload.name
     newsletter.slug = ensure_unique_slug(

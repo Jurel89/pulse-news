@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ApiKeySummary, ApiKeyDetail, ApiKeyInput } from "./api-key-types";
-import { emptyApiKeyInput, toApiKeyInput, providerTypes } from "./api-key-types";
+import { emptyApiKeyInput, toApiKeyInput } from "./api-key-types";
+import { getProviderTypeOptionsFromPresets, type ProviderPreset } from "../providers/provider-types";
 import { api } from "../../lib/api";
 import type { ApiKeyTestResponse } from "../../lib/api";
 
@@ -116,7 +117,7 @@ export function ApiKeysPage({
               <dl className="newsletter-meta">
                 <div>
                   <dt>Provider</dt>
-                  <dd>{providerTypes.find(t => t.value === apiKey.provider_type)?.label ?? apiKey.provider_type}</dd>
+                  <dd>{apiKey.provider_type}</dd>
                 </div>
                 <div>
                   <dt>Last Used</dt>
@@ -178,10 +179,40 @@ export function ApiKeyEditor({
   const [busy, setBusy] = useState(false);
   const [testResult, setTestResult] = useState<ApiKeyTestResponse | null>(null);
   const [testLoading, setTestLoading] = useState(false);
+  const [presets, setPresets] = useState<ProviderPreset[]>([]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadPresets() {
+      try {
+        const nextPresets = await api.providers.listPresets();
+        if (!isActive) return;
+        setPresets(nextPresets);
+      } catch {
+        if (!isActive) return;
+        setPresets([]);
+      }
+    }
+
+    void loadPresets();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const title = useMemo(
     () => (initialApiKey ? `Edit ${initialApiKey.name}` : "Create API key"),
     [initialApiKey]
+  );
+
+  const providerOptions = useMemo(
+    () => [
+      ...getProviderTypeOptionsFromPresets(presets),
+      { value: "resend", label: "Resend" }
+    ],
+    [presets]
   );
 
   function updateField<K extends keyof ApiKeyInput>(key: K, value: ApiKeyInput[K]) {
@@ -235,15 +266,20 @@ export function ApiKeyEditor({
 
         <label>
           <span>Provider</span>
-          <select
+          <input
+            list="api-key-provider-options"
             onChange={(event) => updateField("provider_type", event.target.value)}
             required
             value={form.provider_type}
-          >
-            {providerTypes.map(type => (
-              <option key={type.value} value={type.value}>{type.label}</option>
+            placeholder="openai"
+          />
+          <datalist id="api-key-provider-options">
+            {providerOptions.map((type) => (
+              <option key={type.value} value={type.value}>
+                {type.label}
+              </option>
             ))}
-          </select>
+          </datalist>
         </label>
 
         <label>

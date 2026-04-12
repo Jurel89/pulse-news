@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.auth import require_authenticated_user
 from app.deps import DbSession
-from app.models import AuditEvent, EmailTemplate
+from app.models import AuditEvent, EmailTemplate, Newsletter
 from app.schemas import (
     EmailTemplateCreateRequest,
     EmailTemplateDetail,
@@ -221,8 +221,20 @@ def delete_email_template(
             detail="System templates cannot be deleted.",
         )
 
-    for newsletter in email_template.newsletters:
-        newsletter.template_id = None
+    # Block deletion when in use by any newsletter (by template_id FK or template_key match)
+    in_use_by_id = db.scalar(
+        select(EmailTemplate)
+        .join(EmailTemplate.newsletters)
+        .where(EmailTemplate.id == email_template.id)
+    )
+    in_use_by_key = db.scalar(
+        select(Newsletter).where(Newsletter.template_key == email_template.key)
+    )
+    if in_use_by_id or in_use_by_key:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete a template that is referenced by newsletters. Reassign first.",
+        )
 
     create_audit_event(
         db,

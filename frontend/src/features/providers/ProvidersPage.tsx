@@ -1,6 +1,6 @@
-import { useState, useMemo, FormEvent } from "react";
-import type { ProviderSummary, ProviderDetail, ProviderInput } from "./provider-types";
-import { emptyProviderInput, toProviderInput, providerTypes, providerModelCatalog } from "./provider-types";
+import { useEffect, useMemo, useState, type BaseSyntheticEvent } from "react";
+import type { ProviderSummary, ProviderDetail, ProviderInput, ProviderPreset } from "./provider-types";
+import { emptyProviderInput, toProviderInput } from "./provider-types";
 import { api } from "../../lib/api";
 import type { ProviderTestResponse } from "../../lib/api";
 
@@ -104,7 +104,7 @@ export function ProvidersPage({
               <dl className="newsletter-meta">
                 <div>
                   <dt>Type</dt>
-                  <dd>{providerTypes.find(t => t.value === provider.provider_type)?.label ?? provider.provider_type}</dd>
+                  <dd>{provider.provider_type}</dd>
                 </div>
                 <div>
                   <dt>Default Model</dt>
@@ -170,10 +170,50 @@ export function ProviderEditor({
   const [busy, setBusy] = useState(false);
   const [testResult, setTestResult] = useState<ProviderTestResponse | null>(null);
   const [testLoading, setTestLoading] = useState(false);
+  const [presets, setPresets] = useState<ProviderPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadPresets() {
+      setPresetsLoading(true);
+      setPresetsError(null);
+      try {
+        const nextPresets = await api.providers.listPresets();
+        if (!isActive) return;
+        setPresets(nextPresets);
+      } catch (error) {
+        if (!isActive) return;
+        setPresetsError(error instanceof Error ? error.message : "Unable to load provider presets.");
+      } finally {
+        if (isActive) {
+          setPresetsLoading(false);
+        }
+      }
+    }
+
+    void loadPresets();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const selectedPreset = useMemo(
+    () => presets.find((preset) => preset.key === form.provider_type) ?? null,
+    [form.provider_type, presets]
+  );
 
   const availableModels = useMemo(() => {
-    return providerModelCatalog[form.provider_type] ?? [];
-  }, [form.provider_type]);
+    const models = selectedPreset?.recommended_models ?? [];
+    if (!form.default_model) {
+      return models;
+    }
+
+    return Array.from(new Set([form.default_model, ...models]));
+  }, [form.default_model, selectedPreset]);
 
   const title = useMemo(
     () => (initialProvider ? `Edit ${initialProvider.name}` : "Create provider"),
@@ -187,7 +227,20 @@ export function ProviderEditor({
     }));
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function applyPreset(presetKey: string) {
+    const preset = presets.find((entry) => entry.key === presetKey);
+    if (!preset) return;
+
+    setForm((current) => ({
+      ...current,
+      name: preset.name,
+      provider_type: preset.key,
+      default_model: preset.recommended_models[0] ?? current.default_model,
+      configuration: JSON.stringify({ base_url: preset.base_url }, null, 2)
+    }));
+  }
+
+  async function handleSubmit(event: BaseSyntheticEvent) {
     event.preventDefault();
     setBusy(true);
     try {
@@ -221,6 +274,34 @@ export function ProviderEditor({
       </header>
 
       <form className="editor-form" onSubmit={handleSubmit}>
+        {!initialProvider ? (
+          <label>
+            <span>Provider Preset</span>
+            <select
+              onChange={(event) => applyPreset(event.target.value)}
+              disabled={presetsLoading}
+              value={selectedPreset?.key ?? ""}
+            >
+              <option value="">Manual entry</option>
+              {presets.map((preset) => (
+                <option key={preset.key} value={preset.key}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            {presetsLoading ? <small>Loading backend presets…</small> : null}
+            {presetsError ? <small>{presetsError}</small> : null}
+            {selectedPreset ? (
+              <small>
+                Adapter: {selectedPreset.adapter}
+                {selectedPreset.base_url ? ` • Base URL: ${selectedPreset.base_url}` : " • Uses provider default base URL"}
+              </small>
+            ) : (
+              <small>Select a preset to auto-fill, or continue with manual entry.</small>
+            )}
+          </label>
+        ) : null}
+
         <label>
           <span>Name</span>
           <input
@@ -232,35 +313,37 @@ export function ProviderEditor({
 
         <label>
           <span>Provider Type</span>
-          <select
-            onChange={(event) => {
-              const newType = event.target.value;
-              updateField("provider_type", newType);
-              const models = providerModelCatalog[newType] ?? [];
-              if (models.length > 0 && !models.includes(form.default_model)) {
-                updateField("default_model", models[0]);
-              }
-            }}
+          <input
+            list="provider-type-options"
+            onChange={(event) => updateField("provider_type", event.target.value)}
             required
             value={form.provider_type}
-          >
-            {providerTypes.map(type => (
-              <option key={type.value} value={type.value}>{type.label}</option>
+            placeholder="openai"
+          />
+          <datalist id="provider-type-options">
+            {presets.map((preset) => (
+              <option key={preset.key} value={preset.key}>
+                {preset.name}
+              </option>
             ))}
-          </select>
+          </datalist>
         </label>
 
         <label>
           <span>Default Model</span>
-          <select
+          <input
+            list="provider-model-options"
             onChange={(event) => updateField("default_model", event.target.value)}
             value={form.default_model}
-          >
-            <option value="">Select a model...</option>
-            {availableModels.map(model => (
-              <option key={model} value={model}>{model}</option>
+            placeholder={selectedPreset?.recommended_models[0] ?? "gpt-4o-mini"}
+          />
+          <datalist id="provider-model-options">
+            {availableModels.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
             ))}
-          </select>
+          </datalist>
         </label>
 
         <label className="checkbox-row">

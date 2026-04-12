@@ -1,4 +1,4 @@
-import { useState, useMemo, FormEvent } from "react";
+import { useState, useMemo, type BaseSyntheticEvent } from "react";
 import type { EmailTemplateSummary, EmailTemplateDetail, EmailTemplateInput } from "./template-types";
 import { emptyEmailTemplateInput, toEmailTemplateInput } from "./template-types";
 import { api } from "../../lib/api";
@@ -15,19 +15,21 @@ type EmailTemplatesPageProps = {
   onRefresh: () => void;
 };
 
-export function EmailTemplatesPage({
-  templates,
-  loading,
-  error,
-  onDismissError,
-  onCreate,
-  onEdit,
-  onDelete,
-  onSetDefault,
-  onRefresh
-}: EmailTemplatesPageProps) {
+export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
+  const {
+    templates,
+    loading,
+    error,
+    onDismissError,
+    onCreate,
+    onEdit,
+    onDelete,
+    onSetDefault
+  } = props;
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [settingDefaultId, setSettingDefaultId] = useState<number | null>(null);
+
+  void props.onRefresh;
 
   async function handleDelete(templateId: number) {
     setDeletingId(templateId);
@@ -185,7 +187,7 @@ export function EmailTemplateEditor({
     }));
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: BaseSyntheticEvent) {
     event.preventDefault();
     setBusy(true);
     try {
@@ -290,9 +292,12 @@ export function EmailTemplateEditor({
               </button>
             </div>
             {previewHtml ? (
-              <div
+              <iframe
                 className="template-preview-frame"
-                dangerouslySetInnerHTML={{ __html: previewHtml }}
+                srcDoc={previewHtml}
+                sandbox=""
+                title="Template Preview"
+                style={{ width: "100%", minHeight: "400px", border: "none", borderRadius: "12px" }}
               />
             ) : (
               <div className="template-preview-placeholder">
