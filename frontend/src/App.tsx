@@ -451,6 +451,8 @@ export default function App() {
           return (
             <ProviderEditor
               initialProvider={editingProvider}
+              error={error}
+              onDismissError={() => setError(null)}
               onCancel={() => {
                 setEditingProvider(null);
                 setShowProviderEditor(false);

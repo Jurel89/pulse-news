@@ -1,5 +1,5 @@
-import { useState, useMemo, type BaseSyntheticEvent } from "react";
-import type { EmailTemplateSummary, EmailTemplateDetail, EmailTemplateInput } from "./template-types";
+import { useState, useMemo, useEffect, type BaseSyntheticEvent } from "react";
+import type { EmailTemplateSummary, EmailTemplateDetail, EmailTemplateInput, TemplatePreset } from "./template-types";
 import { emptyEmailTemplateInput, toEmailTemplateInput } from "./template-types";
 import { api } from "../../lib/api";
 
@@ -50,11 +50,11 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
   }
 
   return (
-    <section className="newsletters-grid">
+    <section className="data-grid-section">
       <header className="section-header">
         <div>
           <p className="eyebrow">Email Templates</p>
-          <h2 className="section-title">Design reusable email layouts.</h2>
+          <h2 className="section-title">Design reusable email layouts</h2>
         </div>
         <button className="primary-button" onClick={onCreate} type="button">
           New Template
@@ -73,14 +73,29 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
       ) : null}
 
       {loading ? (
-        <div className="newsletter-list">
-          {Array.from({ length: 3 }, (_, index) => (
-            <article className="loading-skeleton" key={index}>
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-            </article>
-          ))}
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Key</th>
+                <th>Default</th>
+                <th>Updated</th>
+                <th className="actions-column">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 3 }, (_, index) => (
+                <tr key={index} className="loading-row">
+                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : templates.length === 0 ? (
         <article className="empty-state">
@@ -91,66 +106,75 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
           </p>
         </article>
       ) : (
-        <div className="newsletter-list">
-          {templates.map((template) => (
-            <article className="newsletter-card" key={template.id}>
-              <div className="newsletter-card-header">
-                <div>
-                  <h3>{template.name}</h3>
-                  <p>{template.key}</p>
-                </div>
-                <div className="template-badges">
-                  {template.is_default ? (
-                    <span className="status-chip status-active">Default</span>
-                  ) : null}
-                  {template.is_system ? (
-                    <span className="status-chip">System</span>
-                  ) : null}
-                </div>
-              </div>
-
-              <dl className="newsletter-meta">
-                <div>
-                  <dt>Key</dt>
-                  <dd>{template.key}</dd>
-                </div>
-                <div>
-                  <dt>Updated</dt>
-                  <dd>{new Date(template.updated_at).toLocaleDateString()}</dd>
-                </div>
-              </dl>
-
-              <p className="newsletter-description">
-                {template.description || "No description yet."}
-              </p>
-
-              <div className="card-actions">
-                <button className="secondary-button" onClick={() => onEdit(template)} type="button">
-                  Edit
-                </button>
-                {!template.is_default ? (
-                  <button
-                    className="secondary-button"
-                    onClick={() => void handleSetDefault(template.id)}
-                    disabled={settingDefaultId === template.id}
-                    type="button"
-                  >
-                    {settingDefaultId === template.id ? "Setting..." : "Set Default"}
-                  </button>
-                ) : null}
-                {!template.is_system ? (
-                  <button
-                    className="danger-button"
-                    onClick={() => void handleDelete(template.id)}
-                    disabled={deletingId === template.id}
-                    type="button"
-                  >
-                    {deletingId === template.id ? "Deleting..." : "Delete"}
-                  </button>
-                ) : null}
-              </div>
-            </article>
-          ))}
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Key</th>
+                <th>Status</th>
+                <th>Updated</th>
+                <th className="actions-column">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {templates.map((template) => (
+                <tr key={template.id} className="data-row">
+                  <td className="name-cell">
+                    <div className="cell-primary">{template.name}</div>
+                    <div className="cell-secondary">{template.description || "No description"}</div>
+                  </td>
+                  <td>
+                    <code>{template.key}</code>
+                  </td>
+                  <td>
+                    <div className="template-badges">
+                      {template.is_default ? (
+                        <span className="status-badge status-active">Default</span>
+                      ) : null}
+                      {template.is_system ? (
+                        <span className="status-badge">System</span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="cell-secondary">
+                    {new Date(template.updated_at).toLocaleDateString()}
+                  </td>
+                  <td className="actions-cell">
+                    <div className="row-actions">
+                      <button 
+                        className="action-button" 
+                        onClick={() => onEdit(template)} 
+                        type="button"
+                      >
+                        Edit
+                      </button>
+                      {!template.is_default ? (
+                        <button
+                          className="action-button"
+                          onClick={() => void handleSetDefault(template.id)}
+                          disabled={settingDefaultId === template.id}
+                          type="button"
+                        >
+                          {settingDefaultId === template.id ? "..." : "Set Default"}
+                        </button>
+                      ) : null}
+                      {!template.is_system ? (
+                        <button
+                          className="action-button danger"
+                          onClick={() => void handleDelete(template.id)}
+                          disabled={deletingId === template.id}
+                          type="button"
+                        >
+                          {deletingId === template.id ? "..." : "Delete"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
@@ -174,16 +198,73 @@ export function EmailTemplateEditor({
   const [busy, setBusy] = useState(false);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [presets, setPresets] = useState<TemplatePreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [selectedPresetKey, setSelectedPresetKey] = useState<string | null>(null);
 
   const title = useMemo(
     () => (initialTemplate ? `Edit ${initialTemplate.name}` : "Create email template"),
     [initialTemplate]
   );
 
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadPresets() {
+      setPresetsLoading(true);
+      try {
+        const nextPresets = await api.emailTemplates.listPresets();
+        if (!isActive) return;
+        setPresets(nextPresets);
+      } catch {
+        setPresets([]);
+      } finally {
+        if (isActive) {
+          setPresetsLoading(false);
+        }
+      }
+    }
+
+    void loadPresets();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (initialTemplate) {
+      handlePreview();
+    }
+  }, [initialTemplate?.id]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (form.html_template) {
+        handleLivePreview();
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [form.html_template]);
+
   function updateField<K extends keyof EmailTemplateInput>(key: K, value: EmailTemplateInput[K]) {
     setForm((current) => ({
       ...current,
       [key]: value
+    }));
+  }
+
+  function applyPreset(presetKey: string) {
+    const preset = presets.find((p) => p.key === presetKey);
+    if (!preset) return;
+
+    setSelectedPresetKey(presetKey);
+    setForm((current) => ({
+      ...current,
+      name: current.name || preset.name,
+      key: current.key || preset.key,
+      html_template: preset.html_template
     }));
   }
 
@@ -210,6 +291,23 @@ export function EmailTemplateEditor({
     }
   }
 
+  async function handleLivePreview() {
+    if (!form.html_template) {
+      setPreviewHtml(null);
+      return;
+    }
+    
+    setPreviewLoading(true);
+    try {
+      const result = await api.emailTemplates.previewLive(form.html_template);
+      setPreviewHtml(result.html);
+    } catch {
+      setPreviewHtml("<p style='color: red;'>Failed to render preview. Check your HTML.</p>");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
   return (
     <section className="editor-shell">
       <header className="section-header">
@@ -221,6 +319,25 @@ export function EmailTemplateEditor({
           Back to list
         </button>
       </header>
+
+      {!initialTemplate && presets.length > 0 && (
+        <div className="template-presets-section">
+          <h3>Choose a preset</h3>
+          <div className="template-presets-grid">
+            {presets.map((preset) => (
+              <div
+                key={preset.key}
+                className={`template-preset-card ${selectedPresetKey === preset.key ? 'selected' : ''}`}
+                onClick={() => applyPreset(preset.key)}
+              >
+                <h4>{preset.name}</h4>
+                <p>{preset.description}</p>
+              </div>
+            ))}
+          </div>
+          <hr className="form-divider" />
+        </div>
+      )}
 
       <div className="template-editor-layout">
         <form className="editor-form" onSubmit={handleSubmit}>
@@ -260,7 +377,7 @@ export function EmailTemplateEditor({
               required
               rows={20}
               value={form.html_template}
-              placeholder={'<!DOCTYPE html>\n<html>\n<head>\n  <meta charset="UTF-8">\n  <title>{{subject}}</title>\n</head>\n<body>\n  <h1>{{headline}}</h1>\n  <div>{{content}}</div>\n</body>\n</html>'}
+              placeholder={'<!DOCTYPE html>\n<html>\n<head>\n  <meta charset="UTF-8">\n  <title>{{subject}}</title>\n</head>\n<body>\n  <h1>{{headline}}</h1>\n  <div>{{body_html}}</div>\n</body>\n</html>'}
             />
           </label>
 
@@ -278,37 +395,27 @@ export function EmailTemplateEditor({
           </button>
         </form>
 
-        {initialTemplate ? (
-          <div className="template-preview-panel">
-            <div className="template-preview-header">
-              <h3>Preview</h3>
-              <button
-                className="secondary-button"
-                onClick={handlePreview}
-                disabled={previewLoading}
-                type="button"
-              >
-                {previewLoading ? "Loading..." : "Refresh Preview"}
-              </button>
-            </div>
-            {previewHtml ? (
-              <iframe
-                className="template-preview-frame"
-                srcDoc={previewHtml}
-                sandbox=""
-                title="Template Preview"
-                style={{ width: "100%", minHeight: "400px", border: "none", borderRadius: "12px" }}
-              />
-            ) : (
-              <div className="template-preview-placeholder">
-                <p>Click "Refresh Preview" to see how this template will render.</p>
-                <p className="template-variables-hint">
-                  Available variables: subject, preheader, headline, newsletter_name, body_html, content
-                </p>
-              </div>
-            )}
+        <div className="live-preview-panel">
+          <div className="live-preview-header">
+            <h3>Live Preview</h3>
+            {previewLoading && <span>Rendering...</span>}
           </div>
-        ) : null}
+          {previewHtml ? (
+            <iframe
+              className="live-preview-frame"
+              srcDoc={previewHtml}
+              sandbox=""
+              title="Template Preview"
+            />
+          ) : (
+            <div className="live-preview-placeholder">
+              <p>Start typing HTML to see a live preview</p>
+              <p className="template-variables-hint">
+                Available variables: subject, preheader, headline, newsletter_name, body_html, content
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );

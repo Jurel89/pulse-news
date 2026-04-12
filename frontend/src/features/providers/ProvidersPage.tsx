@@ -47,11 +47,11 @@ export function ProvidersPage({
   }
 
   return (
-    <section className="newsletters-grid">
+    <section className="data-grid-section">
       <header className="section-header">
         <div>
           <p className="eyebrow">AI Providers</p>
-          <h2 className="section-title">Configure AI providers for content generation.</h2>
+          <h2 className="section-title">Configure AI providers for content generation</h2>
         </div>
         <button className="primary-button" onClick={onCreate} type="button">
           New Provider
@@ -70,14 +70,31 @@ export function ProvidersPage({
       ) : null}
 
       {loading ? (
-        <div className="newsletter-list">
-          {Array.from({ length: 3 }, (_, index) => (
-            <article className="loading-skeleton" key={index}>
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-            </article>
-          ))}
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Default Model</th>
+                <th>Updated</th>
+                <th className="actions-column">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: 3 }, (_, index) => (
+                <tr key={index} className="loading-row">
+                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : providers.length === 0 ? (
         <article className="empty-state">
@@ -88,65 +105,74 @@ export function ProvidersPage({
           </p>
         </article>
       ) : (
-        <div className="newsletter-list">
-          {providers.map((provider) => (
-            <article className="newsletter-card" key={provider.id}>
-              <div className="newsletter-card-header">
-                <div>
-                  <h3>{provider.name}</h3>
-                  <p>{provider.provider_type}</p>
-                </div>
-                <span className={`status-chip ${provider.is_enabled ? "status-active" : "status-paused"}`}>
-                  {provider.is_enabled ? "Enabled" : "Disabled"}
-                </span>
-              </div>
-
-              <dl className="newsletter-meta">
-                <div>
-                  <dt>Type</dt>
-                  <dd>{provider.provider_type}</dd>
-                </div>
-                <div>
-                  <dt>Default Model</dt>
-                  <dd>{provider.default_model ?? "None set"}</dd>
-                </div>
-                <div>
-                  <dt>Updated</dt>
-                  <dd>{new Date(provider.updated_at).toLocaleDateString()}</dd>
-                </div>
-              </dl>
-
-              <p className="newsletter-description">
-                {provider.description || "No description yet."}
-              </p>
-
-              <div className="card-actions">
-                <button className="secondary-button" onClick={() => onEdit(provider)} type="button">
-                  Edit
-                </button>
-                <button
-                  className="secondary-button"
-                  onClick={() => void handleToggle(provider.id, provider.is_enabled)}
-                  disabled={togglingId === provider.id}
-                  type="button"
-                >
-                  {togglingId === provider.id
-                    ? "Updating..."
-                    : provider.is_enabled
-                      ? "Disable"
-                      : "Enable"}
-                </button>
-                <button
-                  className="danger-button"
-                  onClick={() => void handleDelete(provider.id)}
-                  disabled={deletingId === provider.id}
-                  type="button"
-                >
-                  {deletingId === provider.id ? "Deleting..." : "Delete"}
-                </button>
-              </div>
-            </article>
-          ))}
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Default Model</th>
+                <th>Updated</th>
+                <th className="actions-column">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {providers.map((provider) => (
+                <tr key={provider.id} className="data-row">
+                  <td className="name-cell">
+                    <div className="cell-primary">{provider.name}</div>
+                    <div className="cell-secondary">{provider.description || "No description"}</div>
+                  </td>
+                  <td>
+                    <span className="provider-type-badge">
+                      {provider.provider_type}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`status-badge ${provider.is_enabled ? "status-active" : "status-paused"}`}>
+                      {provider.is_enabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </td>
+                  <td>{provider.default_model || "—"}</td>
+                  <td className="cell-secondary">
+                    {new Date(provider.updated_at).toLocaleDateString()}
+                  </td>
+                  <td className="actions-cell">
+                    <div className="row-actions">
+                      <button 
+                        className="action-button" 
+                        onClick={() => onEdit(provider)} 
+                        type="button"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="action-button"
+                        onClick={() => void handleToggle(provider.id, provider.is_enabled)}
+                        disabled={togglingId === provider.id}
+                        type="button"
+                      >
+                        {togglingId === provider.id
+                          ? "..."
+                          : provider.is_enabled
+                            ? "Disable"
+                            : "Enable"}
+                      </button>
+                      <button
+                        className="action-button danger"
+                        onClick={() => void handleDelete(provider.id)}
+                        disabled={deletingId === provider.id}
+                        type="button"
+                      >
+                        {deletingId === provider.id ? "..." : "Delete"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
@@ -155,12 +181,16 @@ export function ProvidersPage({
 
 type ProviderEditorProps = {
   initialProvider: ProviderDetail | null;
+  error?: string | null;
+  onDismissError?: () => void;
   onCancel: () => void;
   onSave: (payload: ProviderInput, providerId?: number) => Promise<void>;
 };
 
 export function ProviderEditor({
   initialProvider,
+  error,
+  onDismissError,
   onCancel,
   onSave
 }: ProviderEditorProps) {
@@ -173,28 +203,35 @@ export function ProviderEditor({
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
+  const [apiKeys, setApiKeys] = useState<Array<{ id: number; name: string; provider_type: string; is_active: boolean }>>([]);
+  const [apiKeysLoading, setApiKeysLoading] = useState(false);
 
   useEffect(() => {
     let isActive = true;
 
-    async function loadPresets() {
+    async function loadData() {
       setPresetsLoading(true);
-      setPresetsError(null);
+      setApiKeysLoading(true);
       try {
-        const nextPresets = await api.providers.listPresets();
+        const [nextPresets, nextApiKeys] = await Promise.all([
+          api.providers.listPresets(),
+          api.apiKeys.list()
+        ]);
         if (!isActive) return;
         setPresets(nextPresets);
+        setApiKeys(nextApiKeys);
       } catch (error) {
         if (!isActive) return;
-        setPresetsError(error instanceof Error ? error.message : "Unable to load provider presets.");
+        setPresetsError(error instanceof Error ? error.message : "Unable to load data.");
       } finally {
         if (isActive) {
           setPresetsLoading(false);
+          setApiKeysLoading(false);
         }
       }
     }
 
-    void loadPresets();
+    void loadData();
 
     return () => {
       isActive = false;
@@ -205,6 +242,14 @@ export function ProviderEditor({
     () => presets.find((preset) => preset.key === form.provider_type) ?? null,
     [form.provider_type, presets]
   );
+
+  const matchingApiKeys = useMemo(() => {
+    return apiKeys.filter(key => 
+      key.provider_type === form.provider_type && key.is_active
+    );
+  }, [apiKeys, form.provider_type]);
+
+  const hasMatchingApiKey = matchingApiKeys.length > 0;
 
   const availableModels = useMemo(() => {
     const models = selectedPreset?.recommended_models ?? [];
@@ -242,6 +287,7 @@ export function ProviderEditor({
 
   async function handleSubmit(event: BaseSyntheticEvent) {
     event.preventDefault();
+    
     setBusy(true);
     try {
       await onSave(form, initialProvider?.id);
@@ -273,33 +319,53 @@ export function ProviderEditor({
         </button>
       </header>
 
+      {error ? (
+        <div className="error-banner">
+          <span>{error}</span>
+          {onDismissError ? (
+            <button className="error-banner-dismiss" onClick={onDismissError} type="button">
+              Dismiss
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       <form className="editor-form" onSubmit={handleSubmit}>
         {!initialProvider ? (
-          <label>
-            <span>Provider Preset</span>
-            <select
-              onChange={(event) => applyPreset(event.target.value)}
-              disabled={presetsLoading}
-              value={selectedPreset?.key ?? ""}
-            >
-              <option value="">Manual entry</option>
-              {presets.map((preset) => (
-                <option key={preset.key} value={preset.key}>
-                  {preset.name}
-                </option>
-              ))}
-            </select>
-            {presetsLoading ? <small>Loading backend presets…</small> : null}
-            {presetsError ? <small>{presetsError}</small> : null}
-            {selectedPreset ? (
-              <small>
-                Adapter: {selectedPreset.adapter}
-                {selectedPreset.base_url ? ` • Base URL: ${selectedPreset.base_url}` : " • Uses provider default base URL"}
-              </small>
-            ) : (
-              <small>Select a preset to auto-fill, or continue with manual entry.</small>
+          <>
+            <label>
+              <span>Provider Preset</span>
+              <select
+                onChange={(event) => applyPreset(event.target.value)}
+                disabled={presetsLoading}
+                value={selectedPreset?.key ?? ""}
+              >
+                <option value="">Manual entry</option>
+                {presets.map((preset) => (
+                  <option key={preset.key} value={preset.key}>
+                    {preset.name}
+                  </option>
+                ))}
+              </select>
+              {presetsLoading ? <small>Loading backend presets…</small> : null}
+              {presetsError ? <small className="form-error">{presetsError}</small> : null}
+              {selectedPreset ? (
+                <small>
+                  Adapter: {selectedPreset.adapter}
+                  {selectedPreset.base_url ? ` • Base URL: ${selectedPreset.base_url}` : " • Uses provider default base URL"}
+                </small>
+              ) : (
+                <small>Select a preset to auto-fill, or continue with manual entry.</small>
+              )}
+            </label>
+
+            {!hasMatchingApiKey && form.provider_type && !apiKeysLoading && (
+              <div className="form-error">
+                <strong>Warning:</strong> No active API key found for {form.provider_type}. 
+                You must <a href="#" onClick={(e) => { e.preventDefault(); onCancel(); }}>configure an API key</a> before using this provider.
+              </div>
             )}
-          </label>
+          </>
         ) : null}
 
         <label>

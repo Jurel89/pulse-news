@@ -6,6 +6,38 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def create_test_api_key(client: TestClient, provider_type: str = "openai") -> int:
+    response = client.post(
+        "/api/api-keys",
+        json={
+            "name": f"Test {provider_type} Key",
+            "provider_type": provider_type,
+            "key_value": f"sk-test-{provider_type}-key-12345",
+            "is_active": True,
+        },
+    )
+    assert response.status_code == 201, f"Failed to create API key: {response.text}"
+    return response.json()["id"]
+
+
+def create_test_provider(
+    client: TestClient, provider_type: str = "openai", is_enabled: bool = True
+) -> int:
+    create_test_api_key(client, provider_type)
+
+    response = client.post(
+        "/api/providers",
+        json={
+            "name": f"Test {provider_type.title()}",
+            "provider_type": provider_type,
+            "is_enabled": is_enabled,
+            "default_model": "gpt-4o-mini",
+        },
+    )
+    assert response.status_code == 201, f"Failed to create provider: {response.text}"
+    return response.json()["id"]
+
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PULSE_NEWS_DATA_DIR", str(tmp_path / "data"))
@@ -52,6 +84,8 @@ def bootstrap_operator(client: TestClient) -> None:
 
 
 def create_newsletter(client: TestClient) -> dict:
+    create_test_provider(client, "openai")
+
     response = client.post(
         "/api/newsletters",
         json={

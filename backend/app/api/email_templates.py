@@ -31,6 +31,221 @@ DEFAULT_PREVIEW_VARIABLES = {
     "content": "<p>This is a sample email template preview.</p>",
 }
 
+TEMPLATE_PRESETS = [
+    {
+        "key": "minimal",
+        "name": "Minimal",
+        "description": "Clean, minimal layout with centered content",
+        "html_template": """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{subject}}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header { text-align: center; margin-bottom: 30px; }
+        .content { background: #fff; padding: 30px; }
+        h1 { color: #111; font-size: 24px; margin-bottom: 20px; }
+        .footer { text-align: center; margin-top: 30px; font-size: 12px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{headline}}</h1>
+    </div>
+    <div class="content">
+        {{body_html}}
+    </div>
+    <div class="footer">
+        <p>{{newsletter_name}}</p>
+    </div>
+</body>
+</html>""",
+    },
+    {
+        "key": "newsletter",
+        "name": "Newsletter",
+        "description": "Classic newsletter layout with header and styled content blocks",
+        "html_template": """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{subject}}</title>
+    <style>
+        body {
+            font-family: Georgia, serif;
+            line-height: 1.8;
+            color: #222;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; }
+        .header {
+            background: #2c3e50;
+            color: #fff;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        .header h1 { margin: 0; font-size: 28px; font-weight: normal; }
+        .preheader { color: #bdc3c7; font-size: 14px; margin-top: 10px; }
+        .content { padding: 40px 30px; }
+        .content h2 { color: #2c3e50; font-size: 22px; margin-top: 0; }
+        .content p { margin-bottom: 20px; }
+        .footer {
+            background: #ecf0f1;
+            padding: 20px 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{headline}}</h1>
+            <div class="preheader">{{preheader}}</div>
+        </div>
+        <div class="content">
+            {{body_html}}
+        </div>
+        <div class="footer">
+            <p>{{newsletter_name}}</p>
+        </div>
+    </div>
+</body>
+</html>""",
+    },
+    {
+        "key": "modern",
+        "name": "Modern Card",
+        "description": "Modern card-based design with subtle shadows and rounded corners",
+        "html_template": """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{subject}}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                Roboto, sans-serif;
+            line-height: 1.6;
+            color: #2d3748;
+            background: #f7fafc;
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            padding: 40px 30px;
+        }
+        .card-header h1 { margin: 0; font-size: 26px; font-weight: 600; }
+        .card-body { padding: 40px 30px; }
+        .card-body h2 {
+            color: #4a5568;
+            font-size: 20px;
+            margin-top: 0;
+        }
+        .card-footer {
+            padding: 20px 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #a0aec0;
+            border-top: 1px solid #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h1>{{headline}}</h1>
+            </div>
+            <div class="card-body">
+                {{body_html}}
+            </div>
+            <div class="card-footer">
+                {{newsletter_name}}
+            </div>
+        </div>
+    </div>
+</body>
+</html>""",
+    },
+    {
+        "key": "bulletin",
+        "name": "Bulletin",
+        "description": "Simple bulletin style with border accent and clean typography",
+        "html_template": """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{subject}}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                Roboto, sans-serif;
+            line-height: 1.7;
+            color: #333;
+            background: #fff;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            border-left: 4px solid #e74c3c;
+        }
+        .header { padding: 30px; border-bottom: 1px solid #eee; }
+        .header h1 { margin: 0; font-size: 24px; color: #2c3e50; }
+        .content { padding: 30px; }
+        .content h2 { font-size: 20px; color: #34495e; margin-top: 0; }
+        .footer {
+            padding: 20px 30px;
+            border-top: 1px solid #eee;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{headline}}</h1>
+        </div>
+        <div class="content">
+            {{body_html}}
+        </div>
+        <div class="footer">
+            {{newsletter_name}}
+        </div>
+    </div>
+</body>
+</html>""",
+    },
+]
+
 
 def create_audit_event(
     db: DbSession,
@@ -115,6 +330,12 @@ def list_email_templates(request: Request, db: DbSession) -> list[EmailTemplateS
     return [
         EmailTemplateSummary.model_validate(email_template) for email_template in email_templates
     ]
+
+
+@email_templates_router.get("/presets/list")
+def list_template_presets(request: Request, db: DbSession) -> list[dict]:
+    require_authenticated_user(request, db)
+    return TEMPLATE_PRESETS
 
 
 @email_templates_router.post(
@@ -268,6 +489,18 @@ def preview_email_template(
             payload.variables if payload is not None else {},
         )
     )
+
+
+@email_templates_router.post("/preview-live", response_model=EmailTemplatePreviewResponse)
+def preview_live(
+    request: Request,
+    db: DbSession,
+    payload: dict,
+) -> EmailTemplatePreviewResponse:
+    require_authenticated_user(request, db)
+    html_template = payload.get("html_template", "")
+    variables = payload.get("variables", {})
+    return EmailTemplatePreviewResponse(html=render_template_preview(html_template, variables))
 
 
 @email_templates_router.post(

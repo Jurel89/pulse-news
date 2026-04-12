@@ -9,7 +9,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import PROJECT_ROOT, get_settings
@@ -58,8 +58,43 @@ def _project_root_working_directory() -> Iterator[None]:
         os.chdir(original_cwd)
 
 
+def _repair_invalid_provider_state(session: Session) -> None:
+    from app.models import ApiKey, Provider
+
+    providers = session.scalars(select(Provider).where(Provider.is_enabled.is_(True))).all()
+    disabled_count = 0
+
+    for provider in providers:
+        has_active_key = (
+            session.scalar(
+                select(ApiKey).where(
+                    ApiKey.provider_type == provider.provider_type,
+                    ApiKey.is_active.is_(True),
+                )
+            )
+            is not None
+        )
+
+        if not has_active_key:
+            provider.is_enabled = False
+            session.add(provider)
+            disabled_count += 1
+            logger.warning(
+                f"Disabled provider '{provider.name}' (id={provider.id}) "
+                f"because no active API key exists for type "
+                f"'{provider.provider_type}'"
+            )
+
+    if disabled_count > 0:
+        session.commit()
+        logger.info(f"Disabled {disabled_count} provider(s) due to missing API keys")
+
+
 def init_database() -> None:
     get_settings()
 
     with _project_root_working_directory():
         command.upgrade(_get_alembic_config(), "head")
+
+    with get_session_maker()() as session:
+        _repair_invalid_provider_state(session)

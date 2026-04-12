@@ -282,6 +282,12 @@ export const api = {
         method: "POST",
         jsonBody: variables ? { variables } : undefined
       }),
+    previewLive: (htmlTemplate: string) =>
+      request<{ html: string }>("/email-templates/preview-live", {
+        method: "POST",
+        jsonBody: { html_template: htmlTemplate, variables: {} }
+      }),
+    listPresets: () => request<Array<{ key: string; name: string; description: string; html_template: string }>>("/email-templates/presets/list"),
     setDefault: (templateId: number) =>
       request<EmailTemplateDetail>(`/email-templates/${templateId}/set-default`, {
         method: "POST"
