@@ -618,13 +618,27 @@ def _validate_newsletter_entities(
                 Provider.is_enabled.is_(True),
             )
         )
-        if provider is None and payload.model_name:
-            known_types = set(PROVIDER_MODEL_CATALOG.keys())
-            if payload.provider_name not in known_types:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Unknown provider type '{payload.provider_name}'.",
-                )
+        if provider is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No enabled provider found for type '{payload.provider_name}'. Create and enable a provider first.",
+            )
+
+        active_key = _get_active_api_key_for_provider(db, provider.provider_type)
+        if active_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Provider '{provider.name}' has no active API key configured. Create an API key for provider type '{provider.provider_type}' first.",
+            )
+
+        provider_models = get_provider_models(provider)
+        if provider_models and payload.model_name not in provider_models:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Model '{payload.model_name}' is not enabled for provider '{provider.name}'."
+                ),
+            )
 
     api_key: ApiKey | None = None
     if payload.api_key_id is not None:
