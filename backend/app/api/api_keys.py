@@ -155,7 +155,11 @@ def update_api_key(
         if active_count <= 1 and _has_enabled_providers_for_type(db, original_provider_type):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot deactivate the last active API key for '{original_provider_type}' while enabled providers exist. Create another API key first or disable the providers.",
+                detail=(
+                    f"Cannot deactivate the last active API key for "
+                    f"'{original_provider_type}' while enabled providers exist. "
+                    f"Create another API key first or disable the providers."
+                ),
             )
 
     if payload.provider_type != original_provider_type and original_is_active:
@@ -163,7 +167,12 @@ def update_api_key(
         if active_count <= 1 and _has_enabled_providers_for_type(db, original_provider_type):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot reassign the last active API key from '{original_provider_type}' while enabled providers exist. Create another API key for '{original_provider_type}' first or disable those providers.",
+                detail=(
+                    f"Cannot reassign the last active API key from "
+                    f"'{original_provider_type}' while enabled providers exist. "
+                    f"Create another API key for '{original_provider_type}' first "
+                    f"or disable those providers."
+                ),
             )
 
     api_key.name = payload.name
@@ -202,7 +211,11 @@ def delete_api_key(api_key_id: int, request: Request, db: DbSession) -> Response
         if active_count <= 1 and _has_enabled_providers_for_type(db, provider_type):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot delete the last active API key for '{provider_type}' while enabled providers exist. Create another API key first or disable the providers.",
+                detail=(
+                    f"Cannot delete the last active API key for "
+                    f"'{provider_type}' while enabled providers exist. "
+                    f"Create another API key first or disable the providers."
+                ),
             )
 
     for newsletter in api_key.newsletters:

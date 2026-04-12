@@ -160,7 +160,10 @@ def create_provider(
     if active_key is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No active API key found for provider type '{payload.provider_type}'. Create an API key first.",
+            detail=(
+                f"No active API key found for provider type "
+                f"'{payload.provider_type}'. Create an API key first."
+            ),
         )
 
     provider = Provider(
@@ -215,7 +218,10 @@ def update_provider(
     if active_key is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No active API key found for provider type '{effective_provider_type}'. Create an API key first.",
+            detail=(
+                f"No active API key found for provider type "
+                f"'{effective_provider_type}'. Create an API key first."
+            ),
         )
 
     provider.name = payload.name or provider.name

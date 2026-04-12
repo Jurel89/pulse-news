@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.ai_generation import generate_newsletter_draft
-from app.api.providers import PROVIDER_MODEL_CATALOG, get_provider_models
+from app.api.providers import get_provider_models
 from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.crypto import decrypt_secret
@@ -600,7 +600,11 @@ def _validate_newsletter_entities(
         if active_key is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Provider '{provider.name}' has no active API key configured. Create an API key for provider type '{provider.provider_type}' first.",
+                detail=(
+                    f"Provider '{provider.name}' has no active API key configured. "
+                    f"Create an API key for provider type "
+                    f"'{provider.provider_type}' first."
+                ),
             )
 
         provider_models = get_provider_models(provider)
@@ -621,14 +625,21 @@ def _validate_newsletter_entities(
         if provider is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"No enabled provider found for type '{payload.provider_name}'. Create and enable a provider first.",
+                detail=(
+                    f"No enabled provider found for type "
+                    f"'{payload.provider_name}'. Create and enable a provider first."
+                ),
             )
 
         active_key = _get_active_api_key_for_provider(db, provider.provider_type)
         if active_key is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Provider '{provider.name}' has no active API key configured. Create an API key for provider type '{provider.provider_type}' first.",
+                detail=(
+                    f"Provider '{provider.name}' has no active API key configured. "
+                    f"Create an API key for provider type "
+                    f"'{provider.provider_type}' first."
+                ),
             )
 
         provider_models = get_provider_models(provider)

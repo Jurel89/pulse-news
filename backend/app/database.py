@@ -9,10 +9,11 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import PROJECT_ROOT, get_settings
+from app.models import ApiKey, Provider
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +60,6 @@ def _project_root_working_directory() -> Iterator[None]:
 
 
 def _repair_invalid_provider_state(session: Session) -> None:
-    from sqlalchemy import select
-    from app.models import ApiKey, Provider
-
     providers = session.scalars(select(Provider).where(Provider.is_enabled.is_(True))).all()
     disabled_count = 0
 
@@ -81,7 +79,9 @@ def _repair_invalid_provider_state(session: Session) -> None:
             session.add(provider)
             disabled_count += 1
             logger.warning(
-                f"Disabled provider '{provider.name}' (id={provider.id}) because no active API key exists for type '{provider.provider_type}'"
+                f"Disabled provider '{provider.name}' (id={provider.id}) "
+                f"because no active API key exists for type "
+                f"'{provider.provider_type}'"
             )
 
     if disabled_count > 0:
