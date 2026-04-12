@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
 import type { NewsletterSummary } from "../newsletters/newsletter-types";
+import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 
 type RunSummary = {
   id: number;
@@ -47,6 +48,35 @@ type RunDashboardPageProps = {
   newsletters: NewsletterSummary[];
 };
 
+function getStatusBadgeClass(status: string): string {
+  switch (status) {
+    case "sent":
+      return "status-badge status-active";
+    case "partial":
+      return "status-badge status-paused";
+    case "generated":
+      return "status-badge status-draft";
+    case "fallback":
+      return "status-badge";
+    default:
+      return "status-badge";
+  }
+}
+
+function formatTriggerMode(mode: string): string {
+  return mode.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+}
+
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedRun, setSelectedRun] = useState<RunDetail | null>(null);
@@ -74,12 +104,6 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         date_to: dateTo || undefined
       });
       setRuns(payload.items);
-      if (payload.items.length > 0) {
-        const detail = await api.getRunDetail(payload.items[0].id);
-        setSelectedRun(detail);
-      } else {
-        setSelectedRun(null);
-      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load runs.");
     } finally {
@@ -106,8 +130,40 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
     }
   }
 
+  function getRunActions(run: RunSummary): ActionItem[] {
+    return [
+      {
+        label: "View Details",
+        onClick: () => void handleSelectRun(run.id),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 3C4 3 1 8 1 8s3 5 7 5 7-5 7-5-3-5-7-5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
+          </svg>
+        )
+      },
+      {
+        label: "Reconcile Delivery",
+        onClick: () => void handleReconcile(run.id),
+        variant: "primary",
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 8h12M8 2v12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        )
+      }
+    ];
+  }
+
+  const stats = {
+    totalRuns: runs.length,
+    sentRuns: runs.filter((r) => r.run_status === "sent").length,
+    partialRuns: runs.filter((r) => r.run_status === "partial").length,
+    totalRecipients: runs.reduce((sum, r) => sum + r.recipient_count, 0)
+  };
+
   return (
-    <section className="preview-shell">
+    <section className="data-grid-section">
       <header className="section-header">
         <div>
           <p className="eyebrow">Operations</p>
@@ -124,18 +180,25 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         </div>
       ) : null}
 
-      {loading ? (
-        <div className="newsletter-list">
-          {Array.from({ length: 3 }, (_, index) => (
-            <article className="loading-skeleton" key={index}>
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-              <div className="loading-skeleton-bar" />
-            </article>
-          ))}
-        </div>
-      ) : (
-        <>
+      <div className="info-card-grid">
+        <article className="info-card">
+          <span className="status-label">Total Runs</span>
+          <strong>{stats.totalRuns}</strong>
+        </article>
+        <article className="info-card">
+          <span className="status-label">Sent</span>
+          <strong>{stats.sentRuns}</strong>
+        </article>
+        <article className="info-card">
+          <span className="status-label">Partial</span>
+          <strong>{stats.partialRuns}</strong>
+        </article>
+        <article className="info-card">
+          <span className="status-label">Total Recipients</span>
+          <strong>{stats.totalRecipients.toLocaleString()}</strong>
+        </article>
+      </div>
+
       <div className="editor-form">
         <div className="form-grid">
           <label>
@@ -160,9 +223,7 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
               <option value="partial">Partial</option>
             </select>
           </label>
-        </div>
 
-        <div className="form-grid">
           <label>
             <span>Trigger mode</span>
             <select onChange={(event) => setTriggerMode(event.target.value)} value={triggerMode}>
@@ -177,61 +238,169 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
             <span>Date from</span>
             <input onChange={(event) => setDateFrom(event.target.value)} type="date" value={dateFrom} />
           </label>
+
+          <label>
+            <span>Date to</span>
+            <input onChange={(event) => setDateTo(event.target.value)} type="date" value={dateTo} />
+          </label>
         </div>
-
-        <label>
-          <span>Date to</span>
-          <input onChange={(event) => setDateTo(event.target.value)} type="date" value={dateTo} />
-        </label>
       </div>
 
-      <div className="newsletter-list">
-        {runs.map((run) => (
-          <article className="newsletter-card" key={run.id} onClick={() => void handleSelectRun(run.id)}>
-            <div className="newsletter-card-header">
-              <div>
-                <h3>{run.snapshot_subject}</h3>
-                <p>
-                  {run.trigger_mode} • {run.run_status}
-                </p>
-              </div>
-              <span className="status-chip">{run.result_mode ?? "run"}</span>
-            </div>
-          </article>
-        ))}
-      </div>
+      {loading ? (
+        <div className="newsletter-list">
+          {Array.from({ length: 3 }, (_, index) => (
+            <article className="loading-skeleton" key={index}>
+              <div className="loading-skeleton-bar" />
+              <div className="loading-skeleton-bar" />
+              <div className="loading-skeleton-bar" />
+            </article>
+          ))}
+        </div>
+      ) : runs.length === 0 ? (
+        <article className="empty-state">
+          <h3>No runs yet</h3>
+          <p>
+            No newsletter runs match your current filters. Try adjusting the filters or create
+            a new newsletter run.
+          </p>
+        </article>
+      ) : (
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Subject</th>
+                <th>Status</th>
+                <th>Trigger</th>
+                <th>Recipients</th>
+                <th>Date</th>
+                <th className="actions-column">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr
+                  key={run.id}
+                  className="data-row"
+                  onClick={() => void handleSelectRun(run.id)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <td className="name-cell" data-label="Subject">
+                    <div className="cell-primary">{run.snapshot_subject}</div>
+                    <div className="cell-secondary">{run.provider_name} / {run.model_name}</div>
+                  </td>
+                  <td data-label="Status">
+                    <span className={getStatusBadgeClass(run.run_status)}>
+                      {run.run_status}
+                    </span>
+                  </td>
+                  <td data-label="Trigger">{formatTriggerMode(run.trigger_mode)}</td>
+                  <td data-label="Recipients">{run.recipient_count.toLocaleString()}</td>
+                  <td className="cell-secondary" data-label="Date">
+                    {formatDate(run.created_at)}
+                  </td>
+                  <td className="actions-cell" onClick={(e) => e.stopPropagation()}>
+                    <ActionDropdown actions={getRunActions(run)} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {selectedRun ? (
-        <article className="preview-frame">
-          <h3>{selectedRun.run.snapshot_subject}</h3>
-          <p>{selectedRun.run.result_message ?? "No result message recorded."}</p>
-          <p>{selectedRun.run.snapshot_body_text}</p>
-          <p>Recipients: {selectedRun.recipient_emails.join(", ") || "None"}</p>
-          <button className="secondary-button" onClick={() => void handleReconcile(selectedRun.run.id)} type="button">
-            Reconcile Delivery
-          </button>
-          <div className="newsletter-list">
-            {selectedRun.recipient_outcomes.map((outcome) => (
-              <article className="newsletter-card" key={outcome.email}>
-                <strong>{outcome.email}</strong>
-                <p>{outcome.status}</p>
-                <p className="newsletter-description">{outcome.detail}</p>
-              </article>
-            ))}
+        <article className="editor-form">
+          <div className="section-header">
+            <h3>{selectedRun.run.snapshot_subject}</h3>
+            <span className={getStatusBadgeClass(selectedRun.run.run_status)}>
+              {selectedRun.run.run_status}
+            </span>
           </div>
+
+          <p className="cell-secondary">
+            {selectedRun.run.result_message ?? "No result message recorded."}
+          </p>
+
+          <hr className="form-divider" />
+
+          <div className="newsletter-meta">
+            <div>
+              <dt>Provider</dt>
+              <dd>{selectedRun.run.provider_name}</dd>
+            </div>
+            <div>
+              <dt>Model</dt>
+              <dd>{selectedRun.run.model_name}</dd>
+            </div>
+            <div>
+              <dt>Template</dt>
+              <dd>{selectedRun.run.template_key}</dd>
+            </div>
+            <div>
+              <dt>Recipients</dt>
+              <dd>{selectedRun.recipient_emails.length}</dd>
+            </div>
+          </div>
+
+          <hr className="form-divider" />
+
+          <h4>Recipient Outcomes</h4>
           <div className="newsletter-list">
-            {selectedRun.events.map((event) => (
-              <article className="newsletter-card" key={event.id}>
-                <strong>{event.event_type}</strong>
-                <p>{event.event_status}</p>
-                <p className="newsletter-description">{event.message}</p>
-              </article>
-            ))}
+            {selectedRun.recipient_outcomes.length > 0 ? (
+              selectedRun.recipient_outcomes.map((outcome) => (
+                <article className="newsletter-card" key={outcome.email}>
+                  <div className="newsletter-card-header">
+                    <div>
+                      <strong>{outcome.email}</strong>
+                      <p className="cell-secondary">{outcome.detail}</p>
+                    </div>
+                    <span
+                      className={`status-badge ${
+                        outcome.status === "delivered"
+                          ? "status-active"
+                          : outcome.status === "bounced" || outcome.status === "failed"
+                            ? "status-paused"
+                            : ""
+                      }`}
+                    >
+                      {outcome.status}
+                    </span>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <p className="cell-secondary">No recipient outcomes recorded.</p>
+            )}
+          </div>
+
+          <hr className="form-divider" />
+
+          <h4>Events</h4>
+          <div className="newsletter-list">
+            {selectedRun.events.length > 0 ? (
+              selectedRun.events.map((event) => (
+                <article className="newsletter-card" key={event.id}>
+                  <div className="newsletter-card-header">
+                    <div>
+                      <strong>{event.event_type}</strong>
+                      <p className="cell-secondary">{event.message}</p>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <span className="status-badge">{event.event_status}</span>
+                      <p className="cell-secondary" style={{ marginTop: "var(--sp-1)" }}>
+                        {formatDate(event.created_at)}
+                      </p>
+                    </div>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <p className="cell-secondary">No events recorded.</p>
+            )}
           </div>
         </article>
       ) : null}
-      </>
-      )}
     </section>
   );
 }
