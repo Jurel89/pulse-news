@@ -40,7 +40,7 @@ const fieldHelpText: Record<string, string> = {
   delivery_topic: "Topic name for webhook filtering and delivery tracking",
   provider_name: "AI provider for content generation (requires matching API key)",
   api_key_id: "Optional active AI API key to pin for this newsletter's generation requests",
-  resend_api_key_id: "Optional active Resend API key to pin for this newsletter's delivery requests",
+  resend_api_key_id: "Resend API key used for email delivery. Make sure the key has a Sender Email configured in Settings > API Keys.",
   model_name: "Specific AI model to use for generating content",
   template_key: "Email template design that determines the visual layout",
   timezone: "Timezone for interpreting the schedule cron expression",
@@ -400,12 +400,14 @@ export function NewsletterEditorPage({
               >
                 <option value="">
                   {availableResendApiKeys.length > 0
-                    ? "Use the environment Resend API key"
-                    : "No active Resend API keys available"}
+                    ? "Use any active Resend API key"
+                    : "No active Resend API keys — add one in Settings > API Keys"}
                 </option>
                 {availableResendApiKeys.map((apiKey) => (
                   <option key={apiKey.id} value={String(apiKey.id)}>
-                    {`${apiKey.name} (${apiKey.masked_key})`}
+                    {apiKey.from_email
+                      ? `${apiKey.name} — ${apiKey.from_email}`
+                      : `${apiKey.name} — no sender email configured`}
                   </option>
                 ))}
               </select>

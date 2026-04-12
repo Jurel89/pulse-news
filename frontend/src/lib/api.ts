@@ -120,6 +120,7 @@ export type FormOptionApiKey = {
   name: string;
   provider_type: string;
   masked_key: string;
+  from_email: string | null;
 };
 
 export type FormOptions = {

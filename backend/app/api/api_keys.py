@@ -64,6 +64,7 @@ def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
         name=api_key.name,
         provider_type=api_key.provider_type,
         masked_key=mask_api_key(decrypted_key_value),
+        from_email=api_key.from_email,
         is_active=api_key.is_active,
         last_used_at=api_key.last_used_at,
         created_at=api_key.created_at,
@@ -115,6 +116,7 @@ def create_api_key(
         name=payload.name,
         provider_type=payload.provider_type,
         key_value=encrypt_secret(payload.key_value),
+        from_email=payload.from_email,
         is_active=payload.is_active,
     )
     db.add(api_key)
@@ -180,6 +182,7 @@ def update_api_key(
 
     api_key.name = payload.name
     api_key.provider_type = payload.provider_type
+    api_key.from_email = payload.from_email
     api_key.is_active = payload.is_active
     if payload.key_value is not None:
         api_key.key_value = encrypt_secret(payload.key_value)
@@ -273,7 +276,7 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
         )
         is not None
     )
-    resend_from_email = get_settings().resend_from_email
+    resend_from_email = api_key.from_email or get_settings().resend_from_email
     resend_sender = resend_from_email.strip() if resend_from_email else ""
 
     if not decrypted_key_value:
@@ -305,7 +308,8 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
             status="warning",
             message=(
                 "Resend API key is active and matches an enabled provider, but "
-                "PULSE_NEWS_RESEND_FROM_EMAIL is not set. Newsletter test sends will "
+                "no sender email is configured. Add a Sender Email to this API key "
+                "or set PULSE_NEWS_RESEND_FROM_EMAIL. Newsletter sends will "
                 "fall back to local preview until a sender email is configured."
             ),
             provider_type=api_key.provider_type,

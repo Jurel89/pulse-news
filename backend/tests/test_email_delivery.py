@@ -179,7 +179,7 @@ def test_get_resend_api_key_uses_active_database_fallback_when_environment_key_m
     assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-database-key"
 
 
-def test_get_resend_api_key_prefers_environment_key_over_database_fallback(client: TestClient):
+def test_get_resend_api_key_prefers_complete_env_key_over_database_fallback(client: TestClient):
     import app.database
     import app.email_delivery
     from app.models import ApiKey, Newsletter
@@ -218,9 +218,55 @@ def test_get_resend_api_key_prefers_environment_key_over_database_fallback(clien
     finally:
         session.close()
 
-    settings = make_settings(resend_api_key="re-env-key")
+    settings = make_settings(resend_api_key="re-env-key", resend_from_email="sender@example.com")
 
     assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-env-key"
+
+
+def test_get_resend_api_key_skips_env_key_without_sender_email(client: TestClient):
+    import app.database
+    import app.email_delivery
+    from app.models import ApiKey, Newsletter
+
+    session = app.database.get_session_maker()()
+    try:
+        resend_key = ApiKey(
+            name="UI Resend key",
+            provider_type="resend",
+            key_value="re-database-key",
+            from_email="newsletter@example.com",
+            is_active=True,
+        )
+        session.add(resend_key)
+        session.flush()
+
+        newsletter = Newsletter(
+            name="Delivery Brief",
+            slug="delivery-brief-env-no-sender",
+            description="Environment key without sender email fallback test",
+            prompt="Generate a delivery brief.",
+            draft_subject="Delivery Brief",
+            draft_preheader="Delivery test",
+            draft_body_text="Body copy",
+            provider_name="openai",
+            model_name="gpt-4o-mini",
+            template_key="signal",
+            audience_name="ops",
+            delivery_topic="delivery-brief",
+            timezone="UTC",
+            schedule_enabled=False,
+            status="active",
+        )
+        session.add(newsletter)
+        session.commit()
+        session.refresh(newsletter)
+    finally:
+        session.close()
+
+    # Env API key set but no sender email — should fall through to DB key with from_email
+    settings = make_settings(resend_api_key="re-env-key")
+
+    assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-database-key"
 
 
 def test_send_test_email_returns_local_preview_when_resend_is_not_configured(
@@ -422,8 +468,87 @@ def test_send_test_email_reports_newsletter_key_decryption_failures(
     assert result.status == "simulated"
     assert "could not be decrypted" in result.message
     assert "PULSE_NEWS_RESEND_API_KEY is not set." in result.message
-    assert "PULSE_NEWS_RESEND_FROM_EMAIL is not set." in result.message
+    assert "No sender email configured" in result.message
     urlopen.assert_not_called()
+
+
+def test_send_test_email_prefers_api_key_sender_email_over_environment_setting(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.database
+    import app.email_delivery
+    from app.models import ApiKey, Newsletter
+
+    session = app.database.get_session_maker()()
+    try:
+        resend_key = ApiKey(
+            name="Newsletter Resend key",
+            provider_type="resend",
+            key_value="re-newsletter-key",
+            from_email="key-sender@example.com",
+            is_active=True,
+        )
+        session.add(resend_key)
+        session.flush()
+
+        newsletter = Newsletter(
+            name="Delivery Brief",
+            slug="delivery-brief-key-sender",
+            description="Newsletter-specific sender test",
+            prompt="Generate a delivery brief.",
+            draft_subject="Delivery Brief",
+            draft_preheader="Delivery test",
+            draft_body_text="Body copy",
+            provider_name="openai",
+            model_name="gpt-4o-mini",
+            template_key="signal",
+            resend_api_key_id=resend_key.id,
+            audience_name="ops",
+            delivery_topic="delivery-brief",
+            timezone="UTC",
+            schedule_enabled=False,
+            status="active",
+        )
+        session.add(newsletter)
+        session.commit()
+        session.refresh(newsletter)
+    finally:
+        session.close()
+
+    settings = make_settings(
+        resend_api_key="re-env-key",
+        resend_from_email="env-sender@example.com",
+    )
+
+    class ResponseStub:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"id":"email_123"}'
+
+    captured_request = {}
+
+    def fake_urlopen(request_obj, timeout):
+        captured_request["payload"] = __import__("json").loads(request_obj.data.decode("utf-8"))
+        return ResponseStub()
+
+    monkeypatch.setattr(app.email_delivery.request, "urlopen", fake_urlopen)
+
+    result = app.email_delivery.send_test_email(
+        settings=settings,
+        rendered=build_rendered_newsletter(),
+        to_email="qa@example.com",
+        newsletter=newsletter,
+    )
+
+    assert result.status == "sent"
+    assert captured_request["payload"]["from"] == "key-sender@example.com"
+    assert "Using sender 'key-sender@example.com'." in result.message
 
 
 def test_resend_api_key_test_reports_missing_sender_email(client: TestClient):
@@ -457,7 +582,42 @@ def test_resend_api_key_test_reports_missing_sender_email(client: TestClient):
     assert test_response.status_code == 200
     payload = test_response.json()
     assert payload["status"] == "warning"
-    assert "PULSE_NEWS_RESEND_FROM_EMAIL is not set" in payload["message"]
+    assert "no sender email is configured" in payload["message"]
+
+
+def test_resend_api_key_test_uses_api_key_sender_email(client: TestClient):
+    bootstrap_operator(client)
+
+    create_key_response = client.post(
+        "/api/api-keys",
+        json={
+            "name": "Resend key",
+            "provider_type": "resend",
+            "key_value": "re-live-key",
+            "from_email": "sender@example.com",
+            "is_active": True,
+        },
+    )
+    assert create_key_response.status_code == 201
+    api_key_id = create_key_response.json()["id"]
+
+    provider_response = client.post(
+        "/api/providers",
+        json={
+            "name": "Resend",
+            "provider_type": "resend",
+            "is_enabled": True,
+            "default_model": "n/a",
+        },
+    )
+    assert provider_response.status_code == 201
+
+    test_response = client.post(f"/api/api-keys/{api_key_id}/test")
+
+    assert test_response.status_code == 200
+    payload = test_response.json()
+    assert payload["status"] == "ok"
+    assert "sender@example.com" in payload["message"]
 
 
 def test_newsletter_test_send_endpoint_returns_provider_error_detail(

@@ -363,6 +363,7 @@ export default function App() {
         name: apiKey.name,
         provider_type: apiKey.provider_type,
         key_value: null as unknown as string,
+        from_email: apiKey.from_email,
         is_active: active
       });
       await loadApiKeys();

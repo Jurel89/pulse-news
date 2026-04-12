@@ -21,8 +21,13 @@ def list_audit_events(
     search: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    limit: int = 200,
+    offset: int = 0,
 ) -> AuditEventListResponse:
     require_authenticated_user(request, db)
+
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
 
     statement = select(AuditEvent).order_by(AuditEvent.created_at.desc())
 
@@ -54,6 +59,7 @@ def list_audit_events(
         next_day = end_of_day + timedelta(days=1)
         statement = statement.where(AuditEvent.created_at < next_day)
 
+    statement = statement.offset(offset).limit(limit)
     events = db.scalars(statement).all()
     return AuditEventListResponse(
         items=[AuditEventSummary.model_validate(event) for event in events]

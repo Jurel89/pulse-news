@@ -542,6 +542,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
             "name": k.name,
             "provider_type": k.provider_type,
             "masked_key": mask_api_key(k.key_value),
+            "from_email": k.from_email,
         }
         for k in api_keys
     ]
@@ -719,6 +720,16 @@ def test_send_newsletter(
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     rendered = render_newsletter(newsletter)
+
+    run = create_newsletter_run(
+        newsletter,
+        trigger_mode="test-send",
+        run_status="sending",
+        recipient_emails=[payload.to_email],
+    )
+    db.add(run)
+    db.flush()
+
     try:
         result = send_test_email(
             settings=get_settings(),
@@ -728,10 +739,37 @@ def test_send_newsletter(
             db_session=db,
         )
     except RuntimeError as exc:
+        run.run_status = "failed"
+        run.result_mode = "resend"
+        run.result_message = str(exc)
+        run.completed_at = utc_now()
+        add_run_event(
+            db,
+            run,
+            event_type="delivery",
+            event_status="failed",
+            message=str(exc),
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+
+    run.run_status = result.status
+    run.result_mode = result.mode
+    run.result_message = result.message
+    run.completed_at = utc_now()
+    add_run_event(
+        db,
+        run,
+        event_type="delivery",
+        event_status=result.status,
+        message=result.message,
+        provider_id=result.provider_id,
+    )
+    db.commit()
+
     return NewsletterTestSendResponse(
         status=result.status,
         mode=result.mode,

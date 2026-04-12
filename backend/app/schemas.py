@@ -67,6 +67,16 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
+def _normalize_optional_email(value: str | None, *, field_name: str) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is None:
+        return None
+    local_part, separator, domain = normalized.partition("@")
+    if not separator or not local_part or "." not in domain:
+        raise ValueError(f"{field_name} must be a valid email address.")
+    return normalized
+
+
 def _validate_supported_provider_name(value: str, *, field_name: str) -> str:
     normalized = _normalize_required_text(value, field_name=field_name).lower()
     if normalized not in SupportedProvider._value2member_map_:
@@ -359,6 +369,7 @@ class ApiKeySummary(BaseModel):
     name: str
     provider_type: str
     masked_key: str
+    from_email: str | None = None
     is_active: bool
     last_used_at: datetime | None = None
     created_at: datetime
@@ -375,6 +386,7 @@ class ApiKeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     provider_type: str = Field(min_length=1, max_length=64)
     key_value: str = Field(min_length=1)
+    from_email: str | None = None
     is_active: bool = True
 
     @field_validator("name")
@@ -392,11 +404,17 @@ class ApiKeyCreateRequest(BaseModel):
     def validate_key_value(cls, value: str) -> str:
         return _normalize_required_text(value, field_name="key_value")
 
+    @field_validator("from_email")
+    @classmethod
+    def validate_from_email(cls, value: str | None) -> str | None:
+        return _normalize_optional_email(value, field_name="from_email")
+
 
 class ApiKeyUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     provider_type: str = Field(min_length=1, max_length=64)
     key_value: str | None = None
+    from_email: str | None = None
     is_active: bool = True
 
     @field_validator("name")
@@ -415,6 +433,11 @@ class ApiKeyUpdateRequest(BaseModel):
         if value is None:
             return None
         return _normalize_required_text(value, field_name="key_value")
+
+    @field_validator("from_email")
+    @classmethod
+    def validate_from_email(cls, value: str | None) -> str | None:
+        return _normalize_optional_email(value, field_name="from_email")
 
 
 class ApiKeyTestResponse(BaseModel):
