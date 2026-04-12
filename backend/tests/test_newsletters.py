@@ -131,7 +131,7 @@ def test_newsletter_crud_flow(client: TestClient):
             "draft_preheader": "European operator scan",
             "draft_body_text": "Updated copy block",
             "provider_name": "anthropic",
-            "model_name": "claude-sonnet-4-20250514",
+            "model_name": "claude-3-5-sonnet-latest",
             "template_key": "ledger",
             "audience_name": "europe-operators",
             "delivery_topic": "daily-brief-europe",
@@ -232,7 +232,7 @@ def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
     recipient_token = create_response.json()["recipients"][0]["unsubscribe_token"]
 
     unsubscribe_response = client.get(
-        f"/unsubscribe?token={recipient_token}", allow_redirects=False
+        f"/unsubscribe?token={recipient_token}", follow_redirects=False
     )
     assert unsubscribe_response.status_code == 200
 
