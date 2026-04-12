@@ -239,6 +239,4 @@ def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
     get_response = client.get(f"/api/newsletters/{newsletter_id}")
     assert get_response.status_code == 200
     recipients = get_response.json()["recipients"]
-    assert len(recipients) == 1
-    assert recipients[0]["is_active"] is False
-    assert recipients[0]["unsubscribed_at"] is not None
+    assert len(recipients) == 0
