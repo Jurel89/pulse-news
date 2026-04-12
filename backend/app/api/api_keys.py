@@ -68,6 +68,32 @@ def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
     )
 
 
+def _count_active_keys_for_provider(db: DbSession, provider_type: str) -> int:
+    from sqlalchemy import func
+
+    return (
+        db.scalar(
+            select(func.count(ApiKey.id)).where(
+                ApiKey.provider_type == provider_type,
+                ApiKey.is_active.is_(True),
+            )
+        )
+        or 0
+    )
+
+
+def _has_enabled_providers_for_type(db: DbSession, provider_type: str) -> bool:
+    return (
+        db.scalar(
+            select(Provider).where(
+                Provider.provider_type == provider_type,
+                Provider.is_enabled.is_(True),
+            )
+        )
+        is not None
+    )
+
+
 @api_keys_router.get("", response_model=list[ApiKeySummary])
 def list_api_keys(request: Request, db: DbSession) -> list[ApiKeySummary]:
     require_authenticated_user(request, db)
@@ -121,6 +147,17 @@ def update_api_key(
     user = require_authenticated_user(request, db)
     api_key = get_api_key_or_404(db, api_key_id)
 
+    original_provider_type = api_key.provider_type
+    original_is_active = api_key.is_active
+
+    if payload.is_active is False and original_is_active is True:
+        active_count = _count_active_keys_for_provider(db, original_provider_type)
+        if active_count <= 1 and _has_enabled_providers_for_type(db, original_provider_type):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot deactivate the last active API key for '{original_provider_type}' while enabled providers exist. Create another API key first or disable the providers.",
+            )
+
     api_key.name = payload.name
     api_key.provider_type = payload.provider_type
     api_key.is_active = payload.is_active
@@ -148,6 +185,17 @@ def update_api_key(
 def delete_api_key(api_key_id: int, request: Request, db: DbSession) -> Response:
     user = require_authenticated_user(request, db)
     api_key = get_api_key_or_404(db, api_key_id)
+
+    provider_type = api_key.provider_type
+    is_active = api_key.is_active
+
+    if is_active:
+        active_count = _count_active_keys_for_provider(db, provider_type)
+        if active_count <= 1 and _has_enabled_providers_for_type(db, provider_type):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot delete the last active API key for '{provider_type}' while enabled providers exist. Create another API key first or disable the providers.",
+            )
 
     for newsletter in api_key.newsletters:
         newsletter.api_key_id = None
