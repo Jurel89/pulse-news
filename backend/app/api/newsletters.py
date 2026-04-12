@@ -565,6 +565,15 @@ def _ensure_template_exists(db: DbSession, template_key: str) -> None:
         )
 
 
+def _get_active_api_key_for_provider(db: DbSession, provider_type: str) -> ApiKey | None:
+    return db.scalar(
+        select(ApiKey).where(
+            ApiKey.provider_type == provider_type,
+            ApiKey.is_active.is_(True),
+        )
+    )
+
+
 def _validate_newsletter_entities(
     db: DbSession, payload: NewsletterCreateRequest
 ) -> tuple[Provider | None, ApiKey | None, ApiKey | None]:
@@ -585,6 +594,13 @@ def _validate_newsletter_entities(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="provider_name does not match provider type.",
+            )
+
+        active_key = _get_active_api_key_for_provider(db, provider.provider_type)
+        if active_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Provider '{provider.name}' has no active API key configured. Create an API key for provider type '{provider.provider_type}' first.",
             )
 
         provider_models = get_provider_models(provider)
