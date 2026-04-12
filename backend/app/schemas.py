@@ -354,6 +354,8 @@ class ProviderUpdateRequest(ProviderCreateRequest):
 class ProviderModelsResponse(BaseModel):
     models: list[str]
     default_model: str | None = None
+    verified_model: str | None = None
+    verification_message: str | None = None
 
 
 class ProviderTestResponse(BaseModel):

@@ -5,6 +5,11 @@ import json
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
+from app.ai_generation import (
+    discover_models_for_provider,
+    resolve_provider_test_config,
+    validate_provider_model,
+)
 from app.auth import require_authenticated_user
 from app.deps import DbSession
 from app.models import ApiKey, AuditEvent, Provider
@@ -19,7 +24,9 @@ from app.schemas import (
 
 providers_router = APIRouter(prefix="/providers", tags=["providers"])
 
-PROVIDER_MODEL_CATALOG = {
+PROVIDER_MODEL_CATALOG: dict[str, list[str]] = {}
+
+RECOMMENDED_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o-mini", "gpt-4o", "o4-mini"],
     "anthropic": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"],
     "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"],
@@ -40,7 +47,7 @@ PROVIDER_PRESETS = [
         "adapter": "openai",
         "base_url": "https://api.openai.com/v1",
         "recommended_models": ["gpt-4o-mini", "gpt-4o", "o4-mini"],
-        "supports_discovery": False,
+        "supports_discovery": True,
     },
     {
         "key": "anthropic",
@@ -48,7 +55,7 @@ PROVIDER_PRESETS = [
         "adapter": "anthropic",
         "base_url": None,
         "recommended_models": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"],
-        "supports_discovery": False,
+        "supports_discovery": True,
     },
     {
         "key": "gemini",
@@ -56,7 +63,7 @@ PROVIDER_PRESETS = [
         "adapter": "gemini",
         "base_url": None,
         "recommended_models": ["gemini-2.5-flash", "gemini-2.5-pro"],
-        "supports_discovery": False,
+        "supports_discovery": True,
     },
     {
         "key": "openrouter",
@@ -68,7 +75,7 @@ PROVIDER_PRESETS = [
             "anthropic/claude-3.5-sonnet",
             "google/gemini-2.0-flash-001",
         ],
-        "supports_discovery": False,
+        "supports_discovery": True,
     },
     {
         "key": "zai",
@@ -76,7 +83,7 @@ PROVIDER_PRESETS = [
         "adapter": "openai_compatible",
         "base_url": "https://api.z.ai/api/paas/v4/",
         "recommended_models": ["glm-5.1", "glm-5-turbo"],
-        "supports_discovery": False,
+        "supports_discovery": True,
     },
     {
         "key": "kimi",
@@ -125,9 +132,38 @@ def serialize_provider_detail(provider: Provider) -> ProviderDetail:
     )
 
 
-def get_provider_models(provider: Provider) -> list[str]:
-    models = list(PROVIDER_MODEL_CATALOG.get(provider.provider_type, []))
-    if provider.default_model and provider.default_model not in models:
+def _safe_decrypt(key_value: str) -> str | None:
+    from app.crypto import decrypt_secret
+
+    try:
+        return decrypt_secret(key_value)
+    except Exception:
+        return None
+
+
+def get_provider_models(provider: Provider, *, db: DbSession | None = None) -> list[str]:
+    api_key: str | None = None
+    if db is not None:
+        active_key = _get_active_api_key(db, provider.provider_type)
+        if active_key:
+            api_key = _safe_decrypt(active_key.key_value)
+    discovered = discover_models_for_provider(
+        provider.provider_type,
+        api_key=api_key,
+        configuration=provider.configuration,
+    )
+    recommended = RECOMMENDED_MODELS.get(provider.provider_type, [])
+    seen: set[str] = set()
+    models: list[str] = []
+    for m in recommended:
+        if m not in seen:
+            seen.add(m)
+            models.append(m)
+    for m in discovered:
+        if m not in seen:
+            seen.add(m)
+            models.append(m)
+    if provider.default_model and provider.default_model not in seen:
         models.insert(0, provider.default_model)
     return models
 
@@ -141,10 +177,12 @@ def list_providers(request: Request, db: DbSession) -> list[ProviderSummary]:
 
 def _get_active_api_key(db: DbSession, provider_type: str) -> ApiKey | None:
     return db.scalar(
-        select(ApiKey).where(
+        select(ApiKey)
+        .where(
             ApiKey.provider_type == provider_type,
             ApiKey.is_active.is_(True),
         )
+        .order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
     )
 
 
@@ -194,6 +232,50 @@ def create_provider(
 def list_provider_presets(request: Request, db: DbSession) -> list[dict]:
     require_authenticated_user(request, db)
     return PROVIDER_PRESETS
+
+
+@providers_router.get("/presets/{provider_type}/models")
+def list_preset_models(
+    provider_type: str, request: Request, db: DbSession
+) -> ProviderModelsResponse:
+    require_authenticated_user(request, db)
+    active_key = _get_active_api_key(db, provider_type)
+    api_key: str | None = None
+    if active_key:
+        api_key = _safe_decrypt(active_key.key_value)
+    models = discover_models_for_provider(provider_type, api_key=api_key)
+    recommended = RECOMMENDED_MODELS.get(provider_type, [])
+    seen: set[str] = set()
+    merged: list[str] = []
+    for m in recommended:
+        if m not in seen:
+            seen.add(m)
+            merged.append(m)
+    for m in models:
+        if m not in seen:
+            seen.add(m)
+            merged.append(m)
+
+    verified_model: str | None = None
+    verification_message: str | None = None
+    model_to_verify = recommended[0] if recommended else None
+    if model_to_verify:
+        active_key = _get_active_api_key(db, provider_type)
+        if active_key:
+            api_key = _safe_decrypt(active_key.key_value)
+            if api_key:
+                ok, msg = validate_provider_model(provider_type, model_to_verify, api_key)
+                if ok:
+                    verified_model = model_to_verify
+                else:
+                    verification_message = msg
+
+    return ProviderModelsResponse(
+        models=merged,
+        default_model=recommended[0] if recommended else None,
+        verified_model=verified_model,
+        verification_message=verification_message,
+    )
 
 
 @providers_router.get("/{provider_id}", response_model=ProviderDetail)
@@ -284,9 +366,35 @@ def list_provider_models(
 ) -> ProviderModelsResponse:
     require_authenticated_user(request, db)
     provider = get_provider_or_404(db, provider_id)
+
+    models = get_provider_models(provider, db=db)
+    verified_model: str | None = None
+    verification_message: str | None = None
+
+    model_to_verify = (
+        provider.default_model or (RECOMMENDED_MODELS.get(provider.provider_type, [None])[0])
+    )
+    if model_to_verify:
+        active_key = _get_active_api_key(db, provider.provider_type)
+        if active_key:
+            api_key = _safe_decrypt(active_key.key_value)
+            if api_key:
+                ok, msg = validate_provider_model(
+                    provider.provider_type,
+                    model_to_verify,
+                    api_key,
+                    configuration=provider.configuration,
+                )
+                if ok:
+                    verified_model = model_to_verify
+                else:
+                    verification_message = msg
+
     return ProviderModelsResponse(
-        models=get_provider_models(provider),
+        models=models,
         default_model=provider.default_model,
+        verified_model=verified_model,
+        verification_message=verification_message,
     )
 
 
@@ -294,15 +402,9 @@ def list_provider_models(
 def test_provider(provider_id: int, request: Request, db: DbSession) -> ProviderTestResponse:
     require_authenticated_user(request, db)
     provider = get_provider_or_404(db, provider_id)
-    has_active_api_key = (
-        db.scalar(
-            select(ApiKey).where(
-                ApiKey.provider_type == provider.provider_type,
-                ApiKey.is_active.is_(True),
-            )
-        )
-        is not None
-    )
+
+    active_key = _get_active_api_key(db, provider.provider_type)
+    has_active_api_key = active_key is not None
 
     if not provider.is_enabled:
         return ProviderTestResponse(
@@ -322,9 +424,72 @@ def test_provider(provider_id: int, request: Request, db: DbSession) -> Provider
             has_active_api_key=False,
         )
 
+    try:
+        from litellm import completion
+    except Exception:
+        return ProviderTestResponse(
+            status="ok",
+            message=(
+                "Provider is enabled and has an active API key. "
+                "(LiteLLM not installed — live test skipped.)"
+            ),
+            provider_type=provider.provider_type,
+            default_model=provider.default_model,
+            has_active_api_key=True,
+        )
+
+    model_name = (
+        provider.default_model or RECOMMENDED_MODELS.get(provider.provider_type, ["test"])[0]
+    )
+
+    try:
+        full_model, completion_kwargs = resolve_provider_test_config(
+            provider, model_name=model_name
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        return ProviderTestResponse(
+            status="warning",
+            message=f"Invalid provider configuration: {exc}",
+            provider_type=provider.provider_type,
+            default_model=provider.default_model,
+            has_active_api_key=True,
+        )
+
+    decrypted_key = _safe_decrypt(active_key.key_value)
+    if not decrypted_key:
+        return ProviderTestResponse(
+            status="warning",
+            message="Active API key could not be decrypted. Re-save the key and try again.",
+            provider_type=provider.provider_type,
+            default_model=provider.default_model,
+            has_active_api_key=True,
+        )
+
+    try:
+        completion(
+            model=full_model,
+            messages=[{"role": "user", "content": "Reply with exactly: ok"}],
+            api_key=decrypted_key,
+            max_tokens=3,
+            **completion_kwargs,
+        )
+    except Exception as exc:
+        return ProviderTestResponse(
+            status="warning",
+            message=f"API key found but live test failed: {type(exc).__name__}",
+            provider_type=provider.provider_type,
+            default_model=provider.default_model,
+            has_active_api_key=True,
+        )
+
+    from app.models import utc_now
+
+    active_key.last_used_at = utc_now()
+    db.commit()
+
     return ProviderTestResponse(
         status="ok",
-        message="Provider is enabled and has at least one active API key configured.",
+        message=f"Connection successful. Verified API key with live call to {full_model}.",
         provider_type=provider.provider_type,
         default_model=provider.default_model,
         has_active_api_key=True,
