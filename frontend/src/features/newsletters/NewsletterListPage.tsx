@@ -9,8 +9,10 @@ type NewsletterListPageProps = {
   onCreate: () => void;
   onEdit: (newsletter: NewsletterSummary) => void;
   onPreview: (newsletter: NewsletterSummary) => void;
+  onRun: (newsletterId: number) => Promise<void>;
   onArchive: (newsletterId: number) => Promise<void>;
   onPause: (newsletterId: number) => Promise<void>;
+  onResume: (newsletterId: number) => Promise<void>;
   onSchedulePause: (newsletterId: number) => Promise<void>;
   onScheduleResume: (newsletterId: number) => Promise<void>;
   onDelete: (newsletterId: number) => Promise<void>;
@@ -24,13 +26,16 @@ export function NewsletterListPage({
   onCreate,
   onEdit,
   onPreview,
+  onRun,
   onArchive,
   onPause,
+  onResume,
   onSchedulePause,
   onScheduleResume,
   onDelete
 }: NewsletterListPageProps) {
   function getNewsletterActions(newsletter: NewsletterSummary): ActionItem[] {
+    const canRunNewsletter = newsletter.status === "active";
     const actions: ActionItem[] = [
       {
         label: "Preview",
@@ -41,6 +46,18 @@ export function NewsletterListPage({
             <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
           </svg>
         )
+      },
+      {
+        label: "Run",
+        onClick: () => void onRun(newsletter.id),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 3.5v9l8-4.5-8-4.5z" fill="currentColor"/>
+            <path d="M12.5 3.5v9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        ),
+        variant: "primary",
+        hidden: !canRunNewsletter
       },
       {
         label: "Edit",
@@ -60,11 +77,21 @@ export function NewsletterListPage({
             <rect x="9" y="3" width="3" height="10" rx="1" fill="currentColor"/>
           </svg>
         ),
-        hidden: newsletter.status === "archived"
+        hidden: newsletter.status === "archived" || newsletter.status === "paused"
+      },
+      {
+        label: "Resume",
+        onClick: () => void onResume(newsletter.id),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M5 3.5v9l7-4.5-7-4.5z" fill="currentColor"/>
+          </svg>
+        ),
+        hidden: newsletter.status !== "paused"
       }
     ];
 
-    if (newsletter.schedule_cron) {
+    if (newsletter.schedule_cron && newsletter.status === "active") {
       if (newsletter.schedule_enabled) {
         actions.push({
           label: "Pause Schedule",

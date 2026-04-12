@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
 import type { NewsletterSummary } from "../newsletters/newsletter-types";
@@ -88,11 +88,7 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void loadRuns();
-  }, [newsletterId, runStatus, triggerMode, dateFrom, dateTo]);
-
-  async function loadRuns() {
+  const loadRuns = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -110,7 +106,11 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [newsletterId, runStatus, triggerMode, dateFrom, dateTo]);
+
+  useEffect(() => {
+    void loadRuns();
+  }, [loadRuns]);
 
   async function handleSelectRun(runId: number) {
     try {
@@ -138,6 +138,7 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         onClick: () => void handleSelectRun(run.id),
         icon: (
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <title>View details</title>
             <path d="M8 3C4 3 1 8 1 8s3 5 7 5 7-5 7-5-3-5-7-5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
           </svg>
@@ -149,6 +150,7 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         variant: "primary",
         icon: (
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <title>Reconcile delivery</title>
             <path d="M2 8h12M8 2v12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
           </svg>
         )
@@ -200,57 +202,77 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         </article>
       </div>
 
-      <div className="editor-form">
-        <div className="form-grid">
-          <label>
-            <span>Newsletter</span>
-            <select onChange={(event) => setNewsletterId(event.target.value)} value={newsletterId}>
-              <option value="">All newsletters</option>
-              {newsletters.map((newsletter) => (
-                <option key={newsletter.id} value={String(newsletter.id)}>
-                  {newsletter.name}
-                </option>
-              ))}
-            </select>
-          </label>
+      <div className="filter-bar">
+        <div className="filter-group">
+          <label htmlFor="filter-newsletter">Newsletter</label>
+          <select
+            id="filter-newsletter"
+            onChange={(event) => setNewsletterId(event.target.value)}
+            value={newsletterId}
+          >
+            <option value="">All newsletters</option>
+            {newsletters.map((newsletter) => (
+              <option key={newsletter.id} value={String(newsletter.id)}>
+                {newsletter.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-          <label>
-            <span>Status</span>
-            <select onChange={(event) => setRunStatus(event.target.value)} value={runStatus}>
-              <option value="">Any status</option>
-              <option value="generated">Generated</option>
-              <option value="fallback">Fallback</option>
-              <option value="sent">Sent</option>
-              <option value="partial">Partial</option>
-            </select>
-          </label>
+        <div className="filter-group">
+          <label htmlFor="filter-status">Status</label>
+          <select
+            id="filter-status"
+            onChange={(event) => setRunStatus(event.target.value)}
+            value={runStatus}
+          >
+            <option value="">Any status</option>
+            <option value="generated">Generated</option>
+            <option value="fallback">Fallback</option>
+            <option value="sent">Sent</option>
+            <option value="partial">Partial</option>
+          </select>
+        </div>
 
-          <label>
-            <span>Trigger mode</span>
-            <select onChange={(event) => setTriggerMode(event.target.value)} value={triggerMode}>
-              <option value="">Any trigger</option>
-              <option value="manual-generate">Manual generate</option>
-              <option value="manual-send">Manual send</option>
-              <option value="scheduled-send">Scheduled send</option>
-            </select>
-          </label>
+        <div className="filter-group">
+          <label htmlFor="filter-trigger">Trigger mode</label>
+          <select
+            id="filter-trigger"
+            onChange={(event) => setTriggerMode(event.target.value)}
+            value={triggerMode}
+          >
+            <option value="">Any trigger</option>
+            <option value="manual-generate">Manual generate</option>
+            <option value="manual-send">Manual send</option>
+            <option value="scheduled-send">Scheduled send</option>
+          </select>
+        </div>
 
-          <label>
-            <span>Date from</span>
-            <input onChange={(event) => setDateFrom(event.target.value)} type="date" value={dateFrom} />
-          </label>
+        <div className="filter-group">
+          <label htmlFor="filter-date-from">Date from</label>
+          <input
+            id="filter-date-from"
+            onChange={(event) => setDateFrom(event.target.value)}
+            type="date"
+            value={dateFrom}
+          />
+        </div>
 
-          <label>
-            <span>Date to</span>
-            <input onChange={(event) => setDateTo(event.target.value)} type="date" value={dateTo} />
-          </label>
+        <div className="filter-group">
+          <label htmlFor="filter-date-to">Date to</label>
+          <input
+            id="filter-date-to"
+            onChange={(event) => setDateTo(event.target.value)}
+            type="date"
+            value={dateTo}
+          />
         </div>
       </div>
 
       {loading ? (
         <div className="newsletter-list">
-          {Array.from({ length: 3 }, (_, index) => (
-            <article className="loading-skeleton" key={index}>
+          {Array.from({ length: 3 }, (_, index) => index + 1).map((skeletonId) => (
+            <article className="loading-skeleton" key={skeletonId}>
               <div className="loading-skeleton-bar" />
               <div className="loading-skeleton-bar" />
               <div className="loading-skeleton-bar" />
@@ -267,56 +289,74 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         </article>
       ) : (
         <div className="data-table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Subject</th>
-                <th>Status</th>
-                <th>Trigger</th>
-                <th>Recipients</th>
-                <th>Date</th>
-                <th className="actions-column">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((run) => (
-                <tr
-                  key={run.id}
-                  className="data-row"
-                  onClick={() => void handleSelectRun(run.id)}
-                  style={{ cursor: "pointer" }}
-                >
-                  <td className="name-cell" data-label="Subject">
-                    <div className="cell-primary">{run.snapshot_subject}</div>
-                    <div className="cell-secondary">{run.provider_name} / {run.model_name}</div>
-                  </td>
-                  <td data-label="Status">
-                    <span className={getStatusBadgeClass(run.run_status)}>
-                      {run.run_status}
-                    </span>
-                  </td>
-                  <td data-label="Trigger">{formatTriggerMode(run.trigger_mode)}</td>
-                  <td data-label="Recipients">{run.recipient_count.toLocaleString()}</td>
-                  <td className="cell-secondary" data-label="Date">
-                    {formatDate(run.created_at)}
-                  </td>
-                  <td className="actions-cell" onClick={(e) => e.stopPropagation()}>
-                    <ActionDropdown actions={getRunActions(run)} />
-                  </td>
+          <div className="data-table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Subject</th>
+                  <th>Status</th>
+                  <th>Trigger</th>
+                  <th>Recipients</th>
+                  <th>Date</th>
+                  <th className="actions-column">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {runs.map((run) => (
+                  <tr
+                    key={run.id}
+                    className="data-row"
+                    onClick={(event) => {
+                      const target = event.target as HTMLElement;
+                      if (target.closest(".actions-cell")) {
+                        return;
+                      }
+                      void handleSelectRun(run.id);
+                    }}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td className="name-cell" data-label="Subject">
+                      <div className="cell-primary">{run.snapshot_subject}</div>
+                      <div className="cell-secondary">{run.provider_name} / {run.model_name}</div>
+                    </td>
+                    <td data-label="Status">
+                      <span className={getStatusBadgeClass(run.run_status)}>
+                        {run.run_status}
+                      </span>
+                    </td>
+                    <td data-label="Trigger">{formatTriggerMode(run.trigger_mode)}</td>
+                    <td data-label="Recipients">{run.recipient_count.toLocaleString()}</td>
+                    <td className="cell-secondary" data-label="Date">
+                      {formatDate(run.created_at)}
+                    </td>
+                    <td className="actions-cell">
+                      <ActionDropdown actions={getRunActions(run)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {selectedRun ? (
         <article className="editor-form">
           <div className="section-header">
-            <h3>{selectedRun.run.snapshot_subject}</h3>
-            <span className={getStatusBadgeClass(selectedRun.run.run_status)}>
-              {selectedRun.run.run_status}
-            </span>
+            <div>
+              <h3>{selectedRun.run.snapshot_subject}</h3>
+              <span className={getStatusBadgeClass(selectedRun.run.run_status)}>
+                {selectedRun.run.run_status}
+              </span>
+            </div>
+            <button
+              aria-label="Close run details"
+              className="secondary-button"
+              onClick={() => setSelectedRun(null)}
+              type="button"
+            >
+              Close
+            </button>
           </div>
 
           <p className="cell-secondary">

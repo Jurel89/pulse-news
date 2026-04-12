@@ -2,6 +2,12 @@ import type { NewsletterSummary, NewsletterDetail, NewsletterInput } from "../fe
 import type { EmailTemplateSummary, EmailTemplateDetail, EmailTemplateInput } from "../features/templates/template-types";
 import type { ProviderSummary, ProviderDetail, ProviderInput, ProviderPreset } from "../features/providers/provider-types";
 import type { ApiKeySummary, ApiKeyDetail, ApiKeyInput } from "../features/api-keys/api-key-types";
+import type {
+  AuditEventListParams,
+  AuditEventListResponse,
+  OperationalEventListParams,
+  OperationalEventListResponse
+} from "../features/audit/audit-types";
 
 export type UserSummary = {
   id: number;
@@ -89,6 +95,11 @@ export type NewsletterGenerationResult = {
   mode: string;
   message: string;
   newsletter: NewsletterDetail;
+};
+
+export type NewsletterRunResult = {
+  generation: NewsletterGenerationResult;
+  send: NewsletterSendResult;
 };
 
 export type FormOptionTemplate = {
@@ -209,6 +220,15 @@ export const api = {
     request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
       method: "POST"
     }),
+  runNewsletter: async (newsletterId: number) => {
+    const generation = await request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
+      method: "POST"
+    });
+    const send = await request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
+      method: "POST"
+    });
+    return { generation, send } satisfies NewsletterRunResult;
+  },
   testSendNewsletter: (newsletterId: number, toEmail: string) =>
     request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/test-send`, {
       method: "POST",
@@ -218,6 +238,10 @@ export const api = {
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
       method: "POST"
     }),
+  listAuditEvents: (params: AuditEventListParams) =>
+    request<AuditEventListResponse>(`/audit${buildQueryString(params)}`),
+  listOperationalEvents: (params: OperationalEventListParams) =>
+    request<OperationalEventListResponse>(`/runs/events${buildQueryString(params)}`),
   listRuns: (params: Record<string, string | undefined>) =>
     request<RunListResponse>(`/runs${buildQueryString(params)}`),
   getRunDetail: (runId: number) =>

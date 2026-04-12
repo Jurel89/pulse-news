@@ -114,30 +114,32 @@ export function ProvidersPage({
 
       {loading ? (
         <div className="data-table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Default Model</th>
-                <th>Updated</th>
-                <th className="actions-column">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: 3 }, (_, index) => (
-                <tr key={index} className="loading-row">
-                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '60px' }} /></td>
+          <div className="data-table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Default Model</th>
+                  <th>Updated</th>
+                  <th className="actions-column">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {Array.from({ length: 3 }, (_, index) => (
+                  <tr key={index} className="loading-row">
+                    <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '60px' }} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : providers.length === 0 ? (
         <article className="empty-state">
@@ -149,45 +151,47 @@ export function ProvidersPage({
         </article>
       ) : (
         <div className="data-table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Default Model</th>
-                <th>Updated</th>
-                <th className="actions-column">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {providers.map((provider) => (
-                <tr key={provider.id} className="data-row">
-                  <td className="name-cell">
-                    <div className="cell-primary">{provider.name}</div>
-                    <div className="cell-secondary">{provider.description || "No description"}</div>
-                  </td>
-                  <td data-label="Type">
-                    <span className="provider-type-badge">
-                      {provider.provider_type}
-                    </span>
-                  </td>
-                  <td data-label="Status">
-                    <span className={`status-badge ${provider.is_enabled ? "status-active" : "status-paused"}`}>
-                      {provider.is_enabled ? "Enabled" : "Disabled"}
-                    </span>
-                  </td>
-                  <td data-label="Model">{provider.default_model || "—"}</td>
-                  <td className="cell-secondary" data-label="Updated">
-                    {new Date(provider.updated_at).toLocaleDateString()}
-                  </td>
-                  <td className="actions-cell">
-                    <ActionDropdown actions={getProviderActions(provider)} />
-                  </td>
+          <div className="data-table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Default Model</th>
+                  <th>Updated</th>
+                  <th className="actions-column">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {providers.map((provider) => (
+                  <tr key={provider.id} className="data-row">
+                    <td className="name-cell">
+                      <div className="cell-primary">{provider.name}</div>
+                      <div className="cell-secondary">{provider.description || "No description"}</div>
+                    </td>
+                    <td data-label="Type">
+                      <span className="provider-type-badge">
+                        {provider.provider_type}
+                      </span>
+                    </td>
+                    <td data-label="Status">
+                      <span className={`status-badge ${provider.is_enabled ? "status-active" : "status-paused"}`}>
+                        {provider.is_enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </td>
+                    <td data-label="Model">{provider.default_model || "—"}</td>
+                    <td className="cell-secondary" data-label="Updated">
+                      {new Date(provider.updated_at).toLocaleDateString()}
+                    </td>
+                    <td className="actions-cell">
+                      <ActionDropdown actions={getProviderActions(provider)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </section>

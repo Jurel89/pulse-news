@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.api_keys import api_keys_router
+from app.api.audit import audit_router
 from app.api.auth import auth_router
 from app.api.email_templates import email_templates_router
 from app.api.newsletters import newsletters_router
@@ -15,6 +16,7 @@ from app.schemas import HealthResponse
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(api_keys_router)
+api_router.include_router(audit_router)
 api_router.include_router(auth_router)
 api_router.include_router(email_templates_router)
 api_router.include_router(newsletters_router)

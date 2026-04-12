@@ -354,6 +354,7 @@ def execute_newsletter_send(
             ],
             attempt_key=run.attempt_key,
             newsletter=newsletter,
+            db_session=db,
         )
     except Exception as exc:
         run.run_status = "failed"
@@ -718,12 +719,19 @@ def test_send_newsletter(
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     rendered = render_newsletter(newsletter)
-    result = send_test_email(
-        settings=get_settings(),
-        rendered=rendered,
-        to_email=payload.to_email,
-        newsletter=newsletter,
-    )
+    try:
+        result = send_test_email(
+            settings=get_settings(),
+            rendered=rendered,
+            to_email=payload.to_email,
+            newsletter=newsletter,
+            db_session=db,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     return NewsletterTestSendResponse(
         status=result.status,
         mode=result.mode,

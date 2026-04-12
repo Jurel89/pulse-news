@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from app.config import Settings
 from app.crypto import decrypt_secret
 from app.email_templates import RenderedNewsletter
 from app.models import Newsletter
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -51,36 +54,266 @@ class ReconciliationEvent:
     provider_id: str | None
 
 
+@dataclass(frozen=True)
+class ResendConfigurationResolution:
+    api_key: str | None
+    from_email: str | None
+    api_key_source: str
+    detail: str
+
+
 RESEND_BATCH_CHUNK_SIZE = 100
 RESEND_BATCH_MAX_ATTEMPTS = 3
 
 
-def _get_resend_api_key(settings: Settings, newsletter: Newsletter | None = None) -> str | None:
-    if newsletter and newsletter.resend_api_key_id:
-        session_generator = None
+def _normalize_config_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _load_resend_api_key_record(*, api_key_id: int | None = None, db_session=None):
+    from sqlalchemy import select
+
+    from app.database import get_session_maker
+    from app.models import ApiKey
+
+    owns_session = db_session is None
+    session = db_session or get_session_maker()()
+
+    try:
+        statement = select(ApiKey)
+        if api_key_id is None:
+            statement = statement.where(
+                ApiKey.provider_type == "resend",
+                ApiKey.is_active.is_(True),
+            ).order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
+        else:
+            statement = statement.where(ApiKey.id == api_key_id)
+        return session.scalar(statement)
+    finally:
+        if owns_session:
+            session.close()
+
+
+def _resolve_resend_configuration(
+    settings: Settings,
+    newsletter: Newsletter | None = None,
+    *,
+    db_session=None,
+) -> ResendConfigurationResolution:
+    detail_parts: list[str] = []
+    from_email = _normalize_config_value(_get_resend_from_email(settings, newsletter))
+
+    if newsletter and newsletter.resend_api_key_id is not None:
         try:
-            from sqlalchemy import select
-
-            from app.deps import get_db_session
-            from app.models import ApiKey
-
-            session_generator = get_db_session()
-            db = next(session_generator)
-            api_key = db.scalar(
-                select(ApiKey).where(
-                    ApiKey.id == newsletter.resend_api_key_id,
-                    ApiKey.is_active.is_(True),
-                    ApiKey.provider_type == "resend",
-                )
+            stored_key = _load_resend_api_key_record(
+                api_key_id=newsletter.resend_api_key_id,
+                db_session=db_session,
             )
-            if api_key and api_key.key_value:
-                return decrypt_secret(api_key.key_value)
-        except Exception:
-            pass
-        finally:
-            if session_generator is not None:
-                session_generator.close()
-    return settings.resend_api_key
+        except Exception as exc:
+            logger.warning(
+                "Failed to load newsletter Resend API key id=%s for newsletter id=%s: %s",
+                newsletter.resend_api_key_id,
+                newsletter.id,
+                exc,
+            )
+            detail_parts.append(
+                "The selected newsletter-specific Resend API key "
+                "could not be loaded from the database."
+            )
+        else:
+            if stored_key is None:
+                logger.warning(
+                    "Newsletter id=%s references missing Resend API key id=%s",
+                    newsletter.id,
+                    newsletter.resend_api_key_id,
+                )
+                detail_parts.append(
+                    "The selected newsletter-specific Resend API key "
+                    f"(id={newsletter.resend_api_key_id}) no longer exists."
+                )
+            elif stored_key.provider_type != "resend":
+                logger.warning(
+                    "Newsletter id=%s references non-Resend API key id=%s provider_type=%s",
+                    newsletter.id,
+                    stored_key.id,
+                    stored_key.provider_type,
+                )
+                detail_parts.append(
+                    "The selected newsletter-specific API key "
+                    f"'{stored_key.name}' (id={stored_key.id}) is for provider "
+                    f"'{stored_key.provider_type}', not 'resend'."
+                )
+            elif not stored_key.is_active:
+                logger.info(
+                    "Newsletter id=%s selected inactive Resend API key id=%s",
+                    newsletter.id,
+                    stored_key.id,
+                )
+                detail_parts.append(
+                    "The selected newsletter-specific Resend API key "
+                    f"'{stored_key.name}' (id={stored_key.id}) is inactive."
+                )
+            else:
+                try:
+                    decrypted_key = _normalize_config_value(decrypt_secret(stored_key.key_value))
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to decrypt newsletter Resend API key id=%s "
+                        "for newsletter id=%s: %s",
+                        stored_key.id,
+                        newsletter.id,
+                        exc,
+                    )
+                    detail_parts.append(
+                        "The selected newsletter-specific Resend API key "
+                        f"'{stored_key.name}' (id={stored_key.id}) could not be "
+                        "decrypted. Re-save the key and try again."
+                    )
+                else:
+                    if decrypted_key:
+                        detail = (
+                            f"Using newsletter-specific Resend API key '{stored_key.name}' "
+                            f"(id={stored_key.id})."
+                        )
+                        if from_email:
+                            detail = f"{detail} Using sender '{from_email}'."
+                        else:
+                            detail = f"{detail} PULSE_NEWS_RESEND_FROM_EMAIL is not set."
+                        logger.debug(
+                            "Using newsletter-specific Resend API key id=%s for newsletter id=%s",
+                            stored_key.id,
+                            newsletter.id,
+                        )
+                        return ResendConfigurationResolution(
+                            api_key=decrypted_key,
+                            from_email=from_email,
+                            api_key_source="newsletter",
+                            detail=detail,
+                        )
+                    detail_parts.append(
+                        "The selected newsletter-specific Resend API key "
+                        f"'{stored_key.name}' (id={stored_key.id}) is empty."
+                    )
+
+    elif newsletter:
+        detail_parts.append("No newsletter-specific Resend API key is selected.")
+
+    env_api_key = _normalize_config_value(settings.resend_api_key)
+    if env_api_key:
+        if detail_parts:
+            logger.info(
+                "Falling back to environment Resend API key for newsletter id=%s: %s",
+                newsletter.id if newsletter else None,
+                " ".join(detail_parts),
+            )
+        else:
+            logger.debug(
+                "Using environment Resend API key fallback for newsletter id=%s",
+                newsletter.id if newsletter else None,
+            )
+        detail = " ".join([*detail_parts, "Using PULSE_NEWS_RESEND_API_KEY fallback."])
+        if from_email:
+            detail = f"{detail} Using sender '{from_email}'."
+        else:
+            detail = f"{detail} PULSE_NEWS_RESEND_FROM_EMAIL is not set."
+        return ResendConfigurationResolution(
+            api_key=env_api_key,
+            from_email=from_email,
+            api_key_source="environment",
+            detail=detail,
+        )
+
+    detail_parts.append("PULSE_NEWS_RESEND_API_KEY is not set.")
+    try:
+        fallback_key = _load_resend_api_key_record(db_session=db_session)
+    except Exception as exc:
+        logger.warning(
+            "Failed to load active Resend API key fallback for newsletter id=%s: %s",
+            newsletter.id if newsletter else None,
+            exc,
+        )
+        detail_parts.append(
+            "An active Resend API key could not be loaded from Settings > API Keys."
+        )
+    else:
+        if fallback_key is None:
+            detail_parts.append("No active Resend API key is configured in Settings > API Keys.")
+        else:
+            try:
+                decrypted_key = _normalize_config_value(decrypt_secret(fallback_key.key_value))
+            except Exception as exc:
+                logger.warning(
+                    "Failed to decrypt fallback Resend API key id=%s for newsletter id=%s: %s",
+                    fallback_key.id,
+                    newsletter.id if newsletter else None,
+                    exc,
+                )
+                detail_parts.append(
+                    "The active Resend API key "
+                    f"'{fallback_key.name}' (id={fallback_key.id}) could not be "
+                    "decrypted. Re-save the key and try again."
+                )
+            else:
+                if decrypted_key:
+                    logger.info(
+                        "Falling back to active database Resend API key id=%s for newsletter id=%s",
+                        fallback_key.id,
+                        newsletter.id if newsletter else None,
+                    )
+                    detail = " ".join(
+                        [
+                            *detail_parts,
+                            f"Using active Resend API key '{fallback_key.name}' "
+                            f"(id={fallback_key.id}) from Settings > API Keys fallback.",
+                        ]
+                    )
+                    if from_email:
+                        detail = f"{detail} Using sender '{from_email}'."
+                    else:
+                        detail = f"{detail} PULSE_NEWS_RESEND_FROM_EMAIL is not set."
+                    return ResendConfigurationResolution(
+                        api_key=decrypted_key,
+                        from_email=from_email,
+                        api_key_source="database",
+                        detail=detail,
+                    )
+                detail_parts.append(
+                    "The active Resend API key "
+                    f"'{fallback_key.name}' (id={fallback_key.id}) is empty."
+                )
+
+    if from_email:
+        detail_parts.append(f"Using sender '{from_email}'.")
+    else:
+        detail_parts.append("PULSE_NEWS_RESEND_FROM_EMAIL is not set.")
+    detail = " ".join(detail_parts)
+    logger.info(
+        "No usable Resend API key resolved for newsletter id=%s: %s",
+        newsletter.id if newsletter else None,
+        detail,
+    )
+    return ResendConfigurationResolution(
+        api_key=None,
+        from_email=from_email,
+        api_key_source="missing",
+        detail=detail,
+    )
+
+
+def _get_resend_api_key(
+    settings: Settings,
+    newsletter: Newsletter | None = None,
+    *,
+    db_session=None,
+) -> str | None:
+    return _resolve_resend_configuration(
+        settings,
+        newsletter,
+        db_session=db_session,
+    ).api_key
 
 
 def _get_resend_from_email(settings: Settings, newsletter: Newsletter | None = None) -> str | None:
@@ -389,27 +622,54 @@ def send_test_email(
     rendered: RenderedNewsletter,
     to_email: str,
     newsletter: Newsletter | None = None,
+    db_session=None,
 ) -> TestSendResult:
-    api_key = _get_resend_api_key(settings, newsletter)
-    from_email = _get_resend_from_email(settings, newsletter)
+    resend_configuration = _resolve_resend_configuration(
+        settings,
+        newsletter,
+        db_session=db_session,
+    )
+    api_key = resend_configuration.api_key
+    from_email = resend_configuration.from_email
 
     if not api_key or not from_email:
+        missing_parts = []
+        if not api_key:
+            missing_parts.append("Resend API key")
+        if not from_email:
+            missing_parts.append("sender email address (PULSE_NEWS_RESEND_FROM_EMAIL)")
+        missing_str = " and ".join(missing_parts)
+
         if settings.environment == "production":
             raise RuntimeError(
-                "Cannot test-send in production without Resend configuration. "
-                "Set PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL "
-                "or configure a Resend API key for this newsletter."
+                f"Cannot test-send in production without {missing_str}. "
+                f"{resend_configuration.detail}"
             )
+        logger.info(
+            "Returning local preview test-send result for %s: missing %s. Detail: %s",
+            to_email,
+            missing_str,
+            resend_configuration.detail,
+        )
         return TestSendResult(
             status="simulated",
             mode="local-preview",
             message=(
-                "Resend is not configured; this is a local preview-only "
-                "result, not a real delivery test."
+                f"Resend is not configured: missing {missing_str}. "
+                f"{resend_configuration.detail} "
+                "To fix this: (1) Add a Resend API key in Settings > API Keys, "
+                "(2) Configure PULSE_NEWS_RESEND_FROM_EMAIL in your environment, or "
+                "(3) Select a Resend API key in the newsletter editor."
             ),
             provider_id=None,
             to_email=to_email,
         )
+
+    logger.info(
+        "Sending Resend test email to %s using %s configuration",
+        to_email,
+        resend_configuration.api_key_source,
+    )
 
     payload = json.dumps(
         {
@@ -433,15 +693,31 @@ def send_test_email(
         with request.urlopen(send_request, timeout=15) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
     except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8")
-        raise RuntimeError(f"Resend test send failed: {detail}") from exc
+        detail = _decode_http_error_detail(exc)
+        logger.warning(
+            "Resend test send HTTP error for %s using %s configuration: %s",
+            to_email,
+            resend_configuration.api_key_source,
+            detail,
+        )
+        raise RuntimeError(
+            f"Resend test send failed. {resend_configuration.detail} Provider response: {detail}"
+        ) from exc
     except error.URLError as exc:
-        raise RuntimeError(f"Resend test send failed: {exc.reason}") from exc
+        logger.warning(
+            "Resend test send connection error for %s using %s configuration: %s",
+            to_email,
+            resend_configuration.api_key_source,
+            exc.reason,
+        )
+        raise RuntimeError(
+            f"Resend test send failed. {resend_configuration.detail} Connection error: {exc.reason}"
+        ) from exc
 
     return TestSendResult(
         status="sent",
         mode="resend",
-        message="Test email sent successfully through Resend.",
+        message=(f"Test email sent successfully through Resend. {resend_configuration.detail}"),
         provider_id=response_payload.get("id"),
         to_email=to_email,
     )
@@ -454,24 +730,49 @@ def send_newsletter_email(
     recipient_targets: list[RecipientDeliveryTarget],
     attempt_key: str | None = None,
     newsletter: Newsletter | None = None,
+    db_session=None,
 ) -> ManualSendResult:
-    api_key = _get_resend_api_key(settings, newsletter)
-    from_email = _get_resend_from_email(settings, newsletter)
+    resend_configuration = _resolve_resend_configuration(
+        settings,
+        newsletter,
+        db_session=db_session,
+    )
+    api_key = resend_configuration.api_key
+    from_email = resend_configuration.from_email
 
     if settings.environment == "production" and (not api_key or not from_email):
+        missing_parts = []
+        if not api_key:
+            missing_parts.append("Resend API key")
+        if not from_email:
+            missing_parts.append("sender email address")
+        missing_str = " and ".join(missing_parts)
         raise RuntimeError(
-            "Cannot send emails in production without Resend configuration. "
-            "Set PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL "
-            "or configure a Resend API key for this newsletter."
+            f"Cannot send emails in production without {missing_str}. {resend_configuration.detail}"
         )
 
     if not api_key or not from_email:
+        missing_parts = []
+        if not api_key:
+            missing_parts.append("Resend API key")
+        if not from_email:
+            missing_parts.append("sender email address (PULSE_NEWS_RESEND_FROM_EMAIL)")
+        missing_str = " and ".join(missing_parts)
+        logger.info(
+            "Falling back to local preview delivery for newsletter id=%s: missing %s. Detail: %s",
+            newsletter.id if newsletter else None,
+            missing_str,
+            resend_configuration.detail,
+        )
         return ManualSendResult(
             status="fallback",
             mode="local-preview",
             message=(
-                "Resend is not configured; returning local preview delivery results "
-                "for all recipients."
+                f"Resend is not configured: missing {missing_str}. "
+                f"{resend_configuration.detail} "
+                "To fix this: (1) Add a Resend API key in Settings > API Keys, "
+                "(2) Configure PULSE_NEWS_RESEND_FROM_EMAIL in your environment, or "
+                "(3) Select a Resend API key in the newsletter editor."
             ),
             recipient_outcomes=[
                 RecipientSendOutcome(
@@ -516,13 +817,18 @@ def send_newsletter_email(
         message = "No recipient emails were available for delivery."
     elif all(item.status == "sent" for item in outcomes):
         overall_status = "sent"
-        message = "Delivered to all active recipients through Resend."
+        message = (
+            f"Delivered to all active recipients through Resend. {resend_configuration.detail}"
+        )
     elif any(item.status == "sent" for item in outcomes):
         overall_status = "partial"
-        message = "Delivered to some active recipients, but one or more deliveries failed."
+        message = (
+            "Delivered to some active recipients, but one or more deliveries failed. "
+            f"{resend_configuration.detail}"
+        )
     else:
         overall_status = "failed"
-        message = "Delivery failed for every active recipient."
+        message = f"Delivery failed for every active recipient. {resend_configuration.detail}"
 
     return ManualSendResult(
         status=overall_status,
@@ -538,6 +844,7 @@ def retrieve_email_status(
     provider_id: str | None,
     current_mode: str | None,
     newsletter: Newsletter | None = None,
+    db_session=None,
 ) -> ReconciliationEvent:
     if current_mode != "resend" or not provider_id:
         return ReconciliationEvent(
@@ -546,11 +853,16 @@ def retrieve_email_status(
             provider_id=provider_id,
         )
 
-    api_key = _get_resend_api_key(settings, newsletter)
+    resend_configuration = _resolve_resend_configuration(
+        settings,
+        newsletter,
+        db_session=db_session,
+    )
+    api_key = resend_configuration.api_key
     if not api_key:
         return ReconciliationEvent(
             event_status="unknown",
-            message="Cannot retrieve status without Resend API key.",
+            message=f"Cannot retrieve status without Resend API key. {resend_configuration.detail}",
             provider_id=provider_id,
         )
 

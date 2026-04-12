@@ -160,3 +160,54 @@ def test_run_dashboard_filters_and_details(client: TestClient):
     refreshed_detail = client.get(f"/api/runs/{send_run_id}")
     assert refreshed_detail.status_code == 200
     assert refreshed_detail.json()["events"]
+
+
+def test_operational_events_endpoint_returns_run_history_and_run_events(client: TestClient):
+    bootstrap_operator(client)
+    newsletter = create_newsletter(client)
+
+    generate_response = client.post(f"/api/newsletters/{newsletter['id']}/generate-draft")
+    assert generate_response.status_code == 200
+
+    send_response = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    assert send_response.status_code == 200
+    send_run = send_response.json()["run"]
+
+    events_response = client.get(
+        "/api/runs/events",
+        params={"search": newsletter["name"]},
+    )
+    assert events_response.status_code == 200
+
+    items = events_response.json()["items"]
+    assert items
+    assert any(item["source"] == "run" for item in items)
+    assert any(item["source"] == "run_event" for item in items)
+    assert any(item["run_id"] == send_run["id"] for item in items)
+
+    run_items = [
+        item for item in items if item["source"] == "run" and item["run_id"] == send_run["id"]
+    ]
+    assert run_items
+    assert run_items[0]["event_type"] == "run-manual-send"
+    assert run_items[0]["status"] == send_run["run_status"]
+    assert run_items[0]["related_entity"].endswith(f"Run #{send_run['id']}")
+
+    generation_events_response = client.get(
+        "/api/runs/events",
+        params={"event_type": "generation"},
+    )
+    assert generation_events_response.status_code == 200
+    generation_items = generation_events_response.json()["items"]
+    assert generation_items
+    assert all(item["source"] == "run_event" for item in generation_items)
+    assert all(item["event_type"] == "generation" for item in generation_items)
+
+    status_events_response = client.get(
+        "/api/runs/events",
+        params={"status": send_run["run_status"]},
+    )
+    assert status_events_response.status_code == 200
+    status_items = status_events_response.json()["items"]
+    assert status_items
+    assert all(item["status"] == send_run["run_status"] for item in status_items)

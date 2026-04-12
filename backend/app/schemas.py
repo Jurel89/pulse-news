@@ -515,3 +515,42 @@ class RunDetailResponse(BaseModel):
 
 class RunReconciliationResponse(BaseModel):
     events: list[NewsletterRunEventSummary]
+
+
+class OperationalEventSummary(BaseModel):
+    id: str
+    source: str
+    source_id: int
+    run_id: int
+    newsletter_id: int
+    newsletter_name: str | None = None
+    newsletter_slug: str | None = None
+    event_type: str
+    status: str
+    message: str
+    related_entity: str
+    trigger_mode: str | None = None
+    recipient_count: int | None = None
+    provider_id: str | None = None
+    created_at: datetime
+
+
+class OperationalEventListResponse(BaseModel):
+    items: list[OperationalEventSummary]
+
+
+class AuditEventSummary(BaseModel):
+    id: int
+    actor_email: str | None = None
+    action: str
+    entity_type: str
+    entity_id: str
+    summary: str
+    payload_json: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AuditEventListResponse(BaseModel):
+    items: list[AuditEventSummary]
