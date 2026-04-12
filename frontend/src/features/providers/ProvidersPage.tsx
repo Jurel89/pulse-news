@@ -181,12 +181,16 @@ export function ProvidersPage({
 
 type ProviderEditorProps = {
   initialProvider: ProviderDetail | null;
+  error?: string | null;
+  onDismissError?: () => void;
   onCancel: () => void;
   onSave: (payload: ProviderInput, providerId?: number) => Promise<void>;
 };
 
 export function ProviderEditor({
   initialProvider,
+  error,
+  onDismissError,
   onCancel,
   onSave
 }: ProviderEditorProps) {
@@ -284,15 +288,6 @@ export function ProviderEditor({
   async function handleSubmit(event: BaseSyntheticEvent) {
     event.preventDefault();
     
-    if (!hasMatchingApiKey && !initialProvider) {
-      const confirmed = window.confirm(
-        `No active API key found for ${form.provider_type}. ` +
-        `You must configure an API key before using this provider. ` +
-        `Do you want to continue saving?`
-      );
-      if (!confirmed) return;
-    }
-    
     setBusy(true);
     try {
       await onSave(form, initialProvider?.id);
@@ -323,6 +318,17 @@ export function ProviderEditor({
           Back to list
         </button>
       </header>
+
+      {error ? (
+        <div className="error-banner">
+          <span>{error}</span>
+          {onDismissError ? (
+            <button className="error-banner-dismiss" onClick={onDismissError} type="button">
+              Dismiss
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <form className="editor-form" onSubmit={handleSubmit}>
         {!initialProvider ? (
