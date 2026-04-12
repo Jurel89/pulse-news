@@ -13,7 +13,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import PROJECT_ROOT, get_settings
-from app.models import ApiKey, Provider
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +59,8 @@ def _project_root_working_directory() -> Iterator[None]:
 
 
 def _repair_invalid_provider_state(session: Session) -> None:
+    from app.models import ApiKey, Provider
+
     providers = session.scalars(select(Provider).where(Provider.is_enabled.is_(True))).all()
     disabled_count = 0
 
