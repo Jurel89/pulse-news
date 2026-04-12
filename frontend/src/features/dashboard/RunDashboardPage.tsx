@@ -104,6 +104,7 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         date_to: dateTo || undefined
       });
       setRuns(payload.items);
+      setSelectedRun(null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load runs.");
     } finally {
