@@ -231,7 +231,7 @@ def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
     newsletter_id = create_response.json()["id"]
     recipient_token = create_response.json()["recipients"][0]["unsubscribe_token"]
 
-    unsubscribe_response = client.get(
+    unsubscribe_response = client.post(
         f"/api/public/unsubscribe/{recipient_token}", follow_redirects=False
     )
     assert unsubscribe_response.status_code == 200
