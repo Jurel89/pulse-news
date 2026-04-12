@@ -120,28 +120,30 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
 
       {loading ? (
         <div className="data-table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Key</th>
-                <th>Default</th>
-                <th>Updated</th>
-                <th className="actions-column">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: 3 }, (_, index) => (
-                <tr key={index} className="loading-row">
-                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '60px' }} /></td>
+          <div className="data-table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Key</th>
+                  <th>Default</th>
+                  <th>Updated</th>
+                  <th className="actions-column">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {Array.from({ length: 3 }, (_, index) => (
+                  <tr key={index} className="loading-row">
+                    <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
+                    <td><div className="loading-skeleton-bar" style={{ width: '60px' }} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : templates.length === 0 ? (
         <article className="empty-state">
@@ -153,46 +155,48 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
         </article>
       ) : (
         <div className="data-table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Key</th>
-                <th>Status</th>
-                <th>Updated</th>
-                <th className="actions-column">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {templates.map((template) => (
-                <tr key={template.id} className="data-row">
-                  <td className="name-cell">
-                    <div className="cell-primary">{template.name}</div>
-                    <div className="cell-secondary">{template.description || "No description"}</div>
-                  </td>
-                  <td data-label="Key">
-                    <code>{template.key}</code>
-                  </td>
-                  <td data-label="Status">
-                    <div className="template-badges">
-                      {template.is_default ? (
-                        <span className="status-badge status-active">Default</span>
-                      ) : null}
-                      {template.is_system ? (
-                        <span className="status-badge">System</span>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="cell-secondary" data-label="Updated">
-                    {new Date(template.updated_at).toLocaleDateString()}
-                  </td>
-                  <td className="actions-cell">
-                    <ActionDropdown actions={getTemplateActions(template)} />
-                  </td>
+          <div className="data-table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Key</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                  <th className="actions-column">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {templates.map((template) => (
+                  <tr key={template.id} className="data-row">
+                    <td className="name-cell">
+                      <div className="cell-primary">{template.name}</div>
+                      <div className="cell-secondary">{template.description || "No description"}</div>
+                    </td>
+                    <td data-label="Key">
+                      <code>{template.key}</code>
+                    </td>
+                    <td data-label="Status">
+                      <div className="template-badges">
+                        {template.is_default ? (
+                          <span className="status-badge status-active">Default</span>
+                        ) : null}
+                        {template.is_system ? (
+                          <span className="status-badge">System</span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="cell-secondary" data-label="Updated">
+                      {new Date(template.updated_at).toLocaleDateString()}
+                    </td>
+                    <td className="actions-cell">
+                      <ActionDropdown actions={getTemplateActions(template)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </section>

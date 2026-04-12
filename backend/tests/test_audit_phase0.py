@@ -344,3 +344,53 @@ def test_api_key_secret_not_stored_in_plaintext(client: TestClient):
 
     assert raw_value != "sk-test-secret-key-abc123xyz", "Secret must be encrypted at rest"
     assert raw_value.startswith("enc:"), "Encrypted values must have enc: prefix"
+
+
+def test_api_key_create_and_update_supports_from_email(client: TestClient):
+    bootstrap_operator(client)
+
+    create_response = client.post(
+        "/api/api-keys",
+        json={
+            "name": "Resend Key",
+            "provider_type": "resend",
+            "key_value": "re-test-key",
+            "from_email": "  sender@example.com  ",
+            "is_active": True,
+        },
+    )
+    assert create_response.status_code == 201
+    created_payload = create_response.json()
+    assert created_payload["from_email"] == "sender@example.com"
+
+    api_key_id = created_payload["id"]
+    update_response = client.put(
+        f"/api/api-keys/{api_key_id}",
+        json={
+            "name": "Resend Key",
+            "provider_type": "resend",
+            "key_value": "re-test-key-updated",
+            "from_email": "",
+            "is_active": True,
+        },
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["from_email"] is None
+
+
+def test_api_key_create_rejects_invalid_from_email(client: TestClient):
+    bootstrap_operator(client)
+
+    response = client.post(
+        "/api/api-keys",
+        json={
+            "name": "Resend Key",
+            "provider_type": "resend",
+            "key_value": "re-test-key",
+            "from_email": "not-an-email",
+            "is_active": True,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "from_email" in response.text

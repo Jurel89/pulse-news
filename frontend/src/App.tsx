@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { AuditLogsPage } from "./features/audit/AuditLogsPage";
 import { RunDashboardPage } from "./features/dashboard/RunDashboardPage";
 import { LoginPage } from "./features/auth/LoginPage";
 import { NewsletterEditorPage } from "./features/newsletters/NewsletterEditorPage";
 import { NewsletterListPage } from "./features/newsletters/NewsletterListPage";
 import { NewsletterPreviewPage } from "./features/newsletters/NewsletterPreviewPage";
-import type { NewsletterSummary, NewsletterDetail, NewsletterInput } from "./features/newsletters/newsletter-types";
+import { toNewsletterInput, type NewsletterSummary, type NewsletterDetail, type NewsletterInput } from "./features/newsletters/newsletter-types";
 import { AccountPage } from "./features/settings/AccountPage";
 import { EmailTemplatesPage, EmailTemplateEditor } from "./features/templates/EmailTemplatesPage";
 import { ProvidersPage, ProviderEditor } from "./features/providers/ProvidersPage";
@@ -16,7 +17,7 @@ import type { ApiKeySummary, ApiKeyDetail, ApiKeyInput } from "./features/api-ke
 import { api } from "./lib/api";
 import { asLoadedSession, initialSessionState, type SessionState } from "./lib/session";
 
-type ActiveView = "dashboard" | "newsletters" | "templates" | "providers" | "apikeys" | "account";
+type ActiveView = "dashboard" | "newsletters" | "templates" | "providers" | "apikeys" | "logs" | "account";
 
 export default function App() {
   const [session, setSession] = useState<SessionState>(initialSessionState);
@@ -42,11 +43,7 @@ export default function App() {
   const [editingApiKey, setEditingApiKey] = useState<ApiKeyDetail | null>(null);
   const [showApiKeyEditor, setShowApiKeyEditor] = useState(false);
 
-  useEffect(() => {
-    void refreshSession();
-  }, []);
-
-  async function refreshSession() {
+  const refreshSession = useCallback(async () => {
     try {
       const nextSession = await api.getSession();
       setSession(asLoadedSession(nextSession));
@@ -54,17 +51,9 @@ export default function App() {
       setError(requestError instanceof Error ? requestError.message : "Unable to reach the backend.");
       setSession({ ...initialSessionState, loading: false });
     }
-  }
+  }, []);
 
-  useEffect(() => {
-    if (!session.authenticated) {
-      setNewsletters([]);
-      return;
-    }
-    void loadNewsletters();
-  }, [session.authenticated]);
-
-  async function loadNewsletters() {
+  const loadNewsletters = useCallback(async () => {
     setNewslettersLoading(true);
     try {
       const nextNewsletters = await api.listNewsletters();
@@ -74,7 +63,19 @@ export default function App() {
     } finally {
       setNewslettersLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    void refreshSession();
+  }, [refreshSession]);
+
+  useEffect(() => {
+    if (!session.authenticated) {
+      setNewsletters([]);
+      return;
+    }
+    void loadNewsletters();
+  }, [loadNewsletters, session.authenticated]);
 
   async function loadTemplates() {
     setTemplatesLoading(true);
@@ -171,6 +172,7 @@ export default function App() {
       { id: "templates" as const, label: "Templates" },
       { id: "providers" as const, label: "Providers" },
       { id: "apikeys" as const, label: "API Keys" },
+      { id: "logs" as const, label: "Logs" },
       { id: "account" as const, label: "Account" }
     ],
     [],
@@ -194,6 +196,19 @@ export default function App() {
   async function handlePauseNewsletter(newsletterId: number) {
     await runAuthAction(async () => {
       const updatedNewsletter = await api.pauseNewsletter(newsletterId);
+      setNewsletters((current) =>
+        current.map((item) => (item.id === updatedNewsletter.id ? updatedNewsletter : item)),
+      );
+    });
+  }
+
+  async function handleResumeNewsletter(newsletterId: number) {
+    await runAuthAction(async () => {
+      const detail = await api.getNewsletter(newsletterId);
+      const updatedNewsletter = await api.updateNewsletter(newsletterId, {
+        ...toNewsletterInput(detail),
+        status: "active"
+      });
       setNewsletters((current) =>
         current.map((item) => (item.id === updatedNewsletter.id ? updatedNewsletter : item)),
       );
@@ -240,6 +255,14 @@ export default function App() {
       await loadNewsletters();
       setEditingNewsletter(result.newsletter);
       setNotice(result.message);
+    });
+  }
+
+  async function handleRunNewsletter(newsletterId: number) {
+    await runAuthAction(async () => {
+      const result = await api.runNewsletter(newsletterId);
+      await loadNewsletters();
+      setNotice(result.send.message);
     });
   }
 
@@ -340,6 +363,7 @@ export default function App() {
         name: apiKey.name,
         provider_type: apiKey.provider_type,
         key_value: null as unknown as string,
+        from_email: apiKey.from_email,
         is_active: active
       });
       await loadApiKeys();
@@ -522,6 +546,9 @@ export default function App() {
           />
         );
 
+      case "logs":
+        return <AuditLogsPage />;
+
       case "newsletters":
         if (previewingNewsletter) {
           return (
@@ -571,6 +598,8 @@ export default function App() {
               setShowEditor(false);
             }}
             onPause={handlePauseNewsletter}
+            onResume={handleResumeNewsletter}
+            onRun={handleRunNewsletter}
             onSchedulePause={handleSchedulePause}
             onScheduleResume={handleScheduleResume}
           />

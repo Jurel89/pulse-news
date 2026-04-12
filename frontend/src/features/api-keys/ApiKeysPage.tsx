@@ -127,6 +127,14 @@ export function ApiKeysPage({
                   <dt>Created</dt>
                   <dd>{new Date(apiKey.created_at).toLocaleDateString()}</dd>
                 </div>
+                {apiKey.provider_type === "resend" ? (
+                  <div>
+                    <dt>Sender Email</dt>
+                    <dd>{apiKey.from_email ? apiKey.from_email : (
+                      <span style={{ color: "#b45309" }}>Not configured — sending disabled</span>
+                    )}</dd>
+                  </div>
+                ) : null}
               </dl>
 
               <div className="card-actions">
@@ -292,6 +300,21 @@ export function ApiKeyEditor({
             placeholder={initialApiKey ? "••••••••••••" : "sk-..."}
           />
         </label>
+
+        {form.provider_type === "resend" ? (
+          <label>
+            <span>Sender Email</span>
+            <input
+              onChange={(event) => updateField("from_email", event.target.value || null)}
+              type="email"
+              value={form.from_email ?? ""}
+              placeholder="newsletter@yourdomain.com"
+            />
+            <small style={{ display: "block", marginTop: "4px", fontSize: "13px", color: "#5c6b78" }}>
+              The verified sender email address from your Resend account. Required for sending newsletters.
+            </small>
+          </label>
+        ) : null}
 
         <label className="checkbox-row">
           <input

@@ -30,6 +30,7 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
 
     assert database_path.exists()
     assert {"api_keys", "email_templates", "providers"}.issubset(inspector.get_table_names())
+    assert "from_email" in {column["name"] for column in inspector.get_columns("api_keys")}
     assert {"provider_id", "template_id", "api_key_id", "resend_api_key_id"}.issubset(
         {column["name"] for column in inspector.get_columns("newsletters")}
     )
@@ -51,4 +52,4 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
             sa.text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "1c2b6170f8d3"
+    assert version == "2a3b4c5d6e7f"

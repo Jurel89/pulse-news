@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.auth import require_authenticated_user
+from app.config import get_settings
 from app.crypto import decrypt_secret, encrypt_secret
 from app.deps import DbSession
 from app.models import ApiKey, AuditEvent, Provider
@@ -18,6 +20,7 @@ from app.schemas import (
 )
 
 api_keys_router = APIRouter(prefix="/api-keys", tags=["api-keys"])
+logger = logging.getLogger(__name__)
 
 
 def create_audit_event(
@@ -61,6 +64,7 @@ def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
         name=api_key.name,
         provider_type=api_key.provider_type,
         masked_key=mask_api_key(decrypted_key_value),
+        from_email=api_key.from_email,
         is_active=api_key.is_active,
         last_used_at=api_key.last_used_at,
         created_at=api_key.created_at,
@@ -112,6 +116,7 @@ def create_api_key(
         name=payload.name,
         provider_type=payload.provider_type,
         key_value=encrypt_secret(payload.key_value),
+        from_email=payload.from_email,
         is_active=payload.is_active,
     )
     db.add(api_key)
@@ -177,6 +182,7 @@ def update_api_key(
 
     api_key.name = payload.name
     api_key.provider_type = payload.provider_type
+    api_key.from_email = payload.from_email
     api_key.is_active = payload.is_active
     if payload.key_value is not None:
         api_key.key_value = encrypt_secret(payload.key_value)
@@ -242,7 +248,25 @@ def delete_api_key(api_key_id: int, request: Request, db: DbSession) -> Response
 def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTestResponse:
     require_authenticated_user(request, db)
     api_key = get_api_key_or_404(db, api_key_id)
-    decrypted_key_value = decrypt_secret(api_key.key_value)
+    try:
+        decrypted_key_value = decrypt_secret(api_key.key_value).strip()
+    except Exception as exc:
+        logger.warning(
+            "Failed to decrypt API key id=%s provider_type=%s during test: %s",
+            api_key.id,
+            api_key.provider_type,
+            exc,
+        )
+        return ApiKeyTestResponse(
+            status="error",
+            message=(
+                "API key could not be decrypted. Re-save this key and try again. "
+                "If the problem continues, create a new key entry."
+            ),
+            provider_type=api_key.provider_type,
+            masked_key="****",
+        )
+
     has_enabled_provider = (
         db.scalar(
             select(Provider).where(
@@ -252,6 +276,16 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
         )
         is not None
     )
+    resend_from_email = api_key.from_email or get_settings().resend_from_email
+    resend_sender = resend_from_email.strip() if resend_from_email else ""
+
+    if not decrypted_key_value:
+        return ApiKeyTestResponse(
+            status="error",
+            message="API key is empty after decryption. Re-save this key and try again.",
+            provider_type=api_key.provider_type,
+            masked_key="****",
+        )
 
     if not api_key.is_active:
         return ApiKeyTestResponse(
@@ -269,9 +303,29 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
             masked_key=mask_api_key(decrypted_key_value),
         )
 
+    if api_key.provider_type == "resend" and not resend_sender:
+        return ApiKeyTestResponse(
+            status="warning",
+            message=(
+                "Resend API key is active and matches an enabled provider, but "
+                "no sender email is configured. Add a Sender Email to this API key "
+                "or set PULSE_NEWS_RESEND_FROM_EMAIL. Newsletter sends will "
+                "fall back to local preview until a sender email is configured."
+            ),
+            provider_type=api_key.provider_type,
+            masked_key=mask_api_key(decrypted_key_value),
+        )
+
     return ApiKeyTestResponse(
         status="ok",
-        message="API key is active and matches an enabled provider configuration.",
+        message=(
+            "API key is active and matches an enabled provider configuration."
+            if api_key.provider_type != "resend"
+            else (
+                "Resend API key is active, matches an enabled provider configuration, "
+                f"and will use sender '{resend_sender}'."
+            )
+        ),
         provider_type=api_key.provider_type,
         masked_key=mask_api_key(decrypted_key_value),
     )

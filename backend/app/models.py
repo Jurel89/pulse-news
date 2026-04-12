@@ -81,6 +81,7 @@ class ApiKey(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     key_value: Mapped[str] = mapped_column(Text(), nullable=False)
+    from_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     newsletters: Mapped[list[Newsletter]] = relationship(
