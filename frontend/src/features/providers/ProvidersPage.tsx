@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type BaseSyntheticEvent } from "react";
 import type { ProviderSummary, ProviderDetail, ProviderInput, ProviderPreset } from "./provider-types";
 import { emptyProviderInput, toProviderInput } from "./provider-types";
 import { api } from "../../lib/api";
+import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 import type { ProviderTestResponse } from "../../lib/api";
 
 type ProvidersPageProps = {
@@ -44,6 +45,48 @@ export function ProvidersPage({
     } finally {
       setTogglingId(null);
     }
+  }
+
+  function getProviderActions(provider: ProviderSummary): ActionItem[] {
+    return [
+      {
+        label: "Edit",
+        onClick: () => onEdit(provider),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11.5 2.5l2 2M2 14l3-1 8.5-8.5-2-2L3 11 2 14z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )
+      },
+      {
+        label: provider.is_enabled ? "Disable" : "Enable",
+        onClick: () => void handleToggle(provider.id, provider.is_enabled),
+        disabled: togglingId === provider.id,
+        variant: provider.is_enabled ? "default" : "primary",
+        icon: provider.is_enabled ? (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M5 8h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M8 5v6M5 8h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        )
+      },
+      {
+        label: "Delete",
+        onClick: () => void handleDelete(provider.id),
+        disabled: deletingId === provider.id,
+        variant: "danger",
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 4h12M12 4v9a1 1 0 01-1 1H5a1 1 0 01-1-1V4M6 2h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        )
+      }
+    ];
   }
 
   return (
@@ -90,7 +133,7 @@ export function ProvidersPage({
                   <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
                   <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
                   <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '60px' }} /></td>
                 </tr>
               ))}
             </tbody>
@@ -124,50 +167,22 @@ export function ProvidersPage({
                     <div className="cell-primary">{provider.name}</div>
                     <div className="cell-secondary">{provider.description || "No description"}</div>
                   </td>
-                  <td>
+                  <td data-label="Type">
                     <span className="provider-type-badge">
                       {provider.provider_type}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <span className={`status-badge ${provider.is_enabled ? "status-active" : "status-paused"}`}>
                       {provider.is_enabled ? "Enabled" : "Disabled"}
                     </span>
                   </td>
-                  <td>{provider.default_model || "—"}</td>
-                  <td className="cell-secondary">
+                  <td data-label="Model">{provider.default_model || "—"}</td>
+                  <td className="cell-secondary" data-label="Updated">
                     {new Date(provider.updated_at).toLocaleDateString()}
                   </td>
                   <td className="actions-cell">
-                    <div className="row-actions">
-                      <button 
-                        className="action-button" 
-                        onClick={() => onEdit(provider)} 
-                        type="button"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="action-button"
-                        onClick={() => void handleToggle(provider.id, provider.is_enabled)}
-                        disabled={togglingId === provider.id}
-                        type="button"
-                      >
-                        {togglingId === provider.id
-                          ? "..."
-                          : provider.is_enabled
-                            ? "Disable"
-                            : "Enable"}
-                      </button>
-                      <button
-                        className="action-button danger"
-                        onClick={() => void handleDelete(provider.id)}
-                        disabled={deletingId === provider.id}
-                        type="button"
-                      >
-                        {deletingId === provider.id ? "..." : "Delete"}
-                      </button>
-                    </div>
+                    <ActionDropdown actions={getProviderActions(provider)} />
                   </td>
                 </tr>
               ))}
