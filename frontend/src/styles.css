@@ -147,8 +147,8 @@
 /* ===== Reduced Motion ===== */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms;
+    transition-duration: 0.01ms;
   }
 }
 
@@ -1379,5 +1379,627 @@ code {
   .data-table th,
   .data-table td {
     padding: var(--sp-3) var(--sp-4);
+  }
+}
+
+/* ===== Action Dropdown ===== */
+.action-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.action-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.action-dropdown-trigger:hover {
+  background: var(--color-surface-alt);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.action-dropdown-trigger:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.action-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  margin-top: var(--sp-2);
+  min-width: 160px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+  padding: var(--sp-1);
+  animation: dropdown-fade-in 120ms ease;
+}
+
+.action-dropdown-menu.align-right {
+  right: 0;
+}
+
+.action-dropdown-menu.align-left {
+  left: 0;
+}
+
+@keyframes dropdown-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.action-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  white-space: nowrap;
+}
+
+.action-dropdown-item:hover:not(:disabled) {
+  background: var(--color-surface-alt);
+}
+
+.action-dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-dropdown-item.danger {
+  color: var(--color-danger);
+}
+
+.action-dropdown-item.danger:hover:not(:disabled) {
+  background: var(--color-danger-light);
+}
+
+.action-dropdown-item.primary {
+  color: var(--color-primary);
+}
+
+.action-dropdown-item.primary:hover:not(:disabled) {
+  background: var(--color-primary-light);
+}
+
+.action-dropdown-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ===== Responsive Data Grid - Card Layout for Mobile ===== */
+@media (max-width: 1024px) {
+  .data-table-container {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .data-table {
+    display: block;
+    min-width: auto;
+  }
+
+  .data-table thead {
+    display: none;
+  }
+
+  .data-table tbody {
+    display: grid;
+    gap: var(--sp-4);
+  }
+
+  .data-table tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--sp-4);
+    padding: var(--sp-5);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow var(--transition-base);
+  }
+
+  .data-table tbody tr:hover {
+    box-shadow: var(--shadow-md);
+  }
+
+  .data-table tbody tr:last-child {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .data-table td {
+    display: block;
+    padding: 0;
+  }
+
+  .data-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--font-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-muted);
+    margin-bottom: var(--sp-1);
+  }
+
+  .data-table .name-cell {
+    grid-column: 1 / -1;
+    min-width: auto;
+  }
+
+  .data-table .name-cell::before {
+    display: none;
+  }
+
+  .data-table .actions-cell {
+    grid-column: 1 / -1;
+    text-align: left;
+    display: flex;
+    justify-content: flex-end;
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--color-border);
+    margin-top: var(--sp-2);
+  }
+
+  .data-table .actions-cell::before {
+    display: none;
+  }
+
+  .row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Card content layout for mobile */
+  .data-row > td:nth-child(1) {
+    grid-column: 1 / -1;
+  }
+
+  .data-row > td:nth-child(2),
+  .data-row > td:nth-child(3),
+  .data-row > td:nth-child(4) {
+    grid-column: span 1;
+  }
+
+  /* Loading state for mobile cards */
+  .data-table tbody tr.loading-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+
+  .loading-row td {
+    display: block;
+    width: 100%;
+  }
+
+  .loading-row td::before {
+    display: none;
+  }
+}
+
+/* ===== Enhanced Layout for Larger Screens ===== */
+@media (min-width: 1280px) {
+  .app-shell {
+    max-width: 1440px;
+    padding: var(--sp-10) var(--sp-8) var(--sp-16);
+  }
+}
+
+@media (min-width: 1536px) {
+  .app-shell {
+    max-width: 1600px;
+    padding: var(--sp-12) var(--sp-10) var(--sp-20);
+  }
+}
+
+/* ===== Navigation Enhancements ===== */
+@media (max-width: 640px) {
+  .nav-pills {
+    justify-content: center;
+    gap: var(--sp-1);
+  }
+
+  .nav-pill {
+    padding: var(--sp-2) var(--sp-3);
+    font-size: var(--font-xs);
+  }
+
+  .topbar {
+    text-align: center;
+  }
+
+  .app-title {
+    font-size: var(--font-xl);
+  }
+}
+
+/* ===== Section Header Mobile ===== */
+@media (max-width: 640px) {
+  .section-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-4);
+  }
+
+  .section-header > div:first-child {
+    text-align: center;
+  }
+
+  .section-header .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ===== Status Badge Enhancements ===== */
+.status-badge-compact {
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--font-xs);
+}
+
+/* ===== Grid Layout for Card Actions ===== */
+@media (max-width: 480px) {
+  .card-actions {
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+
+  .card-actions button {
+    width: 100%;
+  }
+}
+
+/* ===== Newsletter Meta Mobile ===== */
+@media (max-width: 480px) {
+  .newsletter-meta {
+    grid-template-columns: 1fr;
+    gap: var(--sp-2);
+  }
+}
+
+/* ===== Editor Form Mobile ===== */
+@media (max-width: 640px) {
+  .editor-form {
+    padding: var(--sp-5);
+  }
+
+  .editor-form label {
+    gap: var(--sp-1);
+  }
+}
+
+/* ===== Enhanced Hover Effects ===== */
+.data-row {
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.data-row:hover {
+  transform: translateY(-1px);
+}
+
+/* ===== Loading Skeleton Enhancements ===== */
+.loading-row .loading-skeleton-bar {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-alt) 0%,
+    var(--color-border) 50%,
+    var(--color-surface-alt) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ===== Empty State Mobile ===== */
+@media (max-width: 640px) {
+  .empty-state {
+    padding: var(--sp-10) var(--sp-5);
+  }
+
+  .empty-state h3 {
+    font-size: var(--font-lg);
+  }
+
+  .empty-state p {
+    font-size: var(--font-sm);
+  }
+}
+
+/* ===== Enhanced Shadows for Cards ===== */
+.newsletter-card,
+.editor-form,
+.info-card,
+.auth-card,
+.settings-card {
+  transition: box-shadow var(--transition-base), transform var(--transition-base);
+}
+
+.newsletter-card:hover,
+.editor-form:hover,
+.info-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ===== Status Panel Enhancements ===== */
+.status-panel {
+  background: linear-gradient(135deg, var(--color-surface) 0%, var(--color-surface-alt) 100%);
+}
+
+/* ===== Error Banner Mobile ===== */
+@media (max-width: 640px) {
+  .error-banner {
+    flex-direction: column;
+    text-align: center;
+    gap: var(--sp-2);
+  }
+
+  .error-banner-dismiss {
+    width: 100%;
+  }
+}
+
+/* ===== Template Presets Grid Mobile ===== */
+@media (max-width: 640px) {
+  .template-presets-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .template-preset-card {
+    padding: var(--sp-4);
+  }
+}
+
+/* ===== Provider Type Badge Mobile ===== */
+@media (max-width: 480px) {
+  .provider-type-badge {
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--font-xs);
+  }
+}
+
+/* ===== Code Block Mobile ===== */
+@media (max-width: 640px) {
+  code {
+    font-size: var(--font-xs);
+    padding: var(--sp-1);
+  }
+}
+
+/* ===== Template Badges Mobile ===== */
+@media (max-width: 480px) {
+  .template-badges {
+    flex-wrap: wrap;
+  }
+}
+
+/* ===== Schedule Status Enhancements ===== */
+.schedule-active,
+.schedule-paused {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-xs);
+  font-weight: 600;
+}
+
+.schedule-active {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.schedule-paused {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+.schedule-cron {
+  font-family: var(--font-mono);
+  font-size: var(--font-xs);
+  opacity: 0.8;
+}
+
+/* ===== Provider Cell Enhancement ===== */
+.provider-cell .cell-primary {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* ===== Data Table Wider Layout ===== */
+@media (min-width: 1024px) {
+  .data-table-container {
+    border-radius: var(--radius-2xl);
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: var(--sp-5) var(--sp-6);
+  }
+
+  .data-table .name-cell {
+    min-width: 240px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .data-table th,
+  .data-table td {
+    padding: var(--sp-5) var(--sp-8);
+  }
+
+  .data-table .name-cell {
+    min-width: 280px;
+  }
+}
+
+/* ===== Card Grid Enhancements ===== */
+@media (min-width: 768px) {
+  .card-grid {
+    gap: var(--sp-6);
+  }
+
+  .newsletter-list {
+    gap: var(--sp-5);
+  }
+}
+
+/* ===== Live Preview Panel Mobile ===== */
+@media (max-width: 900px) {
+  .live-preview-panel {
+    margin-top: var(--sp-4);
+  }
+
+  .live-preview-frame,
+  .live-preview-placeholder {
+    min-height: 300px;
+  }
+}
+
+/* ===== Form Divider Enhancement ===== */
+.form-divider {
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-border) 20%,
+    var(--color-border) 80%,
+    transparent 100%
+  );
+  margin: var(--sp-6) 0;
+}
+
+/* ===== Test Result Enhancements ===== */
+.test-result {
+  border-radius: var(--radius-xl);
+  transition: transform var(--transition-fast);
+}
+
+.test-result:hover {
+  transform: translateY(-1px);
+}
+
+/* ===== Checkbox Row Enhancement ===== */
+.checkbox-row {
+  padding: var(--sp-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-alt);
+  transition: background var(--transition-fast);
+}
+
+.checkbox-row:hover {
+  background: var(--color-border);
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary);
+}
+
+/* ===== Auth Form Enhancement ===== */
+.auth-form label,
+.editor-form label {
+  transition: color var(--transition-fast);
+}
+
+.auth-form label:focus-within,
+.editor-form label:focus-within {
+  color: var(--color-primary);
+}
+
+/* ===== Info Card Grid ===== */
+.info-card-grid {
+  display: grid;
+  gap: var(--sp-4);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+@media (max-width: 640px) {
+  .info-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Floating Labels Enhancement ===== */
+.field-label-with-help {
+  margin-bottom: var(--sp-2);
+}
+
+.help-text-icon {
+  transition: all var(--transition-fast);
+}
+
+.help-text-tooltip {
+  animation: tooltip-fade-in 150ms ease;
+}
+
+@keyframes tooltip-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
   }
 }
