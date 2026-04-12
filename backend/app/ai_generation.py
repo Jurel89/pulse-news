@@ -26,6 +26,18 @@ class GeneratedDraft:
 
 SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter", "zai", "kimi"}
 
+# Maps our internal provider_type names to the LiteLLM provider prefix.
+# Providers not listed here use their own name as the prefix.
+PROVIDER_TO_LITELLM_PREFIX: dict[str, str] = {
+    "kimi": "moonshot",
+    "google": "gemini",
+}
+
+PRESET_BASE_URLS: dict[str, str] = {
+    "zai": "https://api.z.ai/api/paas/v4/",
+    "kimi": "https://api.moonshot.ai/v1",
+}
+
 
 def _get_newsletter_provider(newsletter: Newsletter):
     from sqlalchemy import select
@@ -66,9 +78,7 @@ def _resolved_model_name(newsletter: Newsletter) -> str:
 def _provider_model_name(newsletter: Newsletter) -> str:
     provider_name = _normalized_provider_name(newsletter)
     model_name = _resolved_model_name(newsletter)
-    if "/" in model_name:
-        return model_name
-    return f"{provider_name}/{model_name}"
+    return _resolve_full_model_name(provider_name, model_name)
 
 
 def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
@@ -90,7 +100,10 @@ def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
                 )
             )
             if api_key and api_key.key_value:
-                return decrypt_secret(api_key.key_value)
+                try:
+                    return decrypt_secret(api_key.key_value)
+                except Exception:
+                    pass
 
         active_provider_key = session.scalar(
             select(ApiKey)
@@ -101,7 +114,10 @@ def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
             .order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
         )
         if active_provider_key and active_provider_key.key_value:
-            return decrypt_secret(active_provider_key.key_value)
+            try:
+                return decrypt_secret(active_provider_key.key_value)
+            except Exception:
+                pass
     finally:
         session.close()
 
@@ -116,7 +132,12 @@ def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
     }
     env_name = env_by_provider.get(provider_name)
     if env_name:
-        return os.getenv(env_name)
+        value = os.getenv(env_name)
+        if value:
+            return value
+    # LiteLLM uses MOONSHOT_API_KEY for the moonshot provider
+    if provider_name == "kimi":
+        return os.getenv("MOONSHOT_API_KEY")
     return None
 
 
@@ -127,32 +148,13 @@ def _has_live_provider_credentials(newsletter: Newsletter) -> bool:
 def _provider_completion_configuration(newsletter: Newsletter) -> dict[str, Any]:
     provider = _get_newsletter_provider(newsletter)
     provider_name = _normalized_provider_name(newsletter)
+    model_name = _resolved_model_name(newsletter)
 
-    PRESET_BASE_URLS = {
-        "zai": "https://api.z.ai/api/paas/v4/",
-        "kimi": "https://api.moonshot.ai/v1",
-    }
+    if provider is not None:
+        _, config = resolve_provider_test_config(provider, model_name=model_name)
+        return config
 
-    config: dict[str, Any] = {}
-
-    preset_url = PRESET_BASE_URLS.get(provider_name)
-    if preset_url:
-        config["api_base"] = preset_url
-
-    if provider is not None and provider.configuration:
-        try:
-            configuration = json.loads(provider.configuration)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Provider configuration must be valid JSON: {exc.msg}.") from exc
-
-        if not isinstance(configuration, dict):
-            raise ValueError("Provider configuration must be a JSON object.")
-
-        for reserved_key in ("api_key", "messages", "model"):
-            configuration.pop(reserved_key, None)
-        config.update(configuration)
-
-    return config
+    return _config_from_provider_type(provider_name, configuration=None)
 
 
 def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
@@ -299,3 +301,131 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         preheader=preheader,
         body_text=body_text,
     )
+
+
+def _strip_model_prefix(raw_model: str, provider_type: str) -> str:
+    litellm_prefix = PROVIDER_TO_LITELLM_PREFIX.get(provider_type, provider_type)
+    prefix_with_slash = f"{litellm_prefix}/"
+    if raw_model.startswith(prefix_with_slash):
+        return raw_model[len(prefix_with_slash) :]
+    return raw_model
+
+
+def _static_catalog_models(provider_type: str) -> list[str]:
+    litellm_prefix = PROVIDER_TO_LITELLM_PREFIX.get(provider_type, provider_type)
+    try:
+        from litellm import models_by_provider
+    except Exception:
+        return []
+
+    raw_models = models_by_provider.get(litellm_prefix, set())
+    return sorted({_strip_model_prefix(m, provider_type) for m in raw_models})
+
+
+def discover_models_for_provider(
+    provider_type: str,
+    *,
+    api_key: str | None = None,
+    configuration: str | None = None,
+) -> list[str]:
+    if api_key:
+        try:
+            from litellm import get_valid_models
+        except Exception:
+            return _static_catalog_models(provider_type)
+
+        litellm_prefix = PROVIDER_TO_LITELLM_PREFIX.get(provider_type, provider_type)
+        try:
+            config = _config_from_provider_type(provider_type, configuration=configuration)
+        except (ValueError, json.JSONDecodeError):
+            config = {}
+
+        try:
+            live_models = get_valid_models(
+                check_provider_endpoint=True,
+                custom_llm_provider=litellm_prefix,
+                api_key=api_key,
+                api_base=config.get("api_base"),
+            )
+        except Exception:
+            return _static_catalog_models(provider_type)
+
+        if live_models:
+            return sorted({_strip_model_prefix(m, provider_type) for m in live_models})
+
+    return _static_catalog_models(provider_type)
+
+
+def validate_provider_model(
+    provider_type: str,
+    model_name: str,
+    api_key: str,
+    *,
+    configuration: str | None = None,
+) -> tuple[bool, str]:
+    try:
+        from litellm import completion
+    except Exception:
+        return False, "LiteLLM is not installed."
+
+    full_model = _resolve_full_model_name(provider_type, model_name)
+    try:
+        completion_kwargs = _config_from_provider_type(provider_type, configuration=configuration)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return False, f"Invalid configuration: {exc}"
+
+    try:
+        completion(
+            model=full_model,
+            messages=[{"role": "user", "content": "Reply with exactly: ok"}],
+            api_key=api_key,
+            max_tokens=3,
+            **completion_kwargs,
+        )
+    except Exception as exc:
+        return False, f"Authentication or connection error: {type(exc).__name__}"
+
+    return True, f"Model {full_model} verified successfully."
+
+
+def _config_from_provider_type(
+    provider_type: str,
+    *,
+    configuration: str | None = None,
+) -> dict[str, Any]:
+    config: dict[str, Any] = {}
+    preset_url = PRESET_BASE_URLS.get(provider_type)
+    if preset_url:
+        config["api_base"] = preset_url
+
+    if configuration:
+        parsed = json.loads(configuration)
+        if not isinstance(parsed, dict):
+            raise ValueError("Provider configuration must be a JSON object.")
+        for reserved_key in ("api_key", "messages", "model", "max_tokens"):
+            parsed.pop(reserved_key, None)
+        if "base_url" in parsed and "api_base" not in parsed:
+            parsed["api_base"] = parsed.pop("base_url")
+        config.update(parsed)
+
+    return config
+
+
+def _resolve_full_model_name(provider_type: str, model_name: str | None) -> str:
+    effective = (model_name or "").strip() or "test"
+    prefix = PROVIDER_TO_LITELLM_PREFIX.get(provider_type, provider_type)
+    if effective.startswith(f"{prefix}/"):
+        return effective
+    return f"{prefix}/{effective}"
+
+
+def resolve_provider_test_config(
+    provider: object,
+    *,
+    model_name: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    provider_type = getattr(provider, "provider_type", "")
+    full_model = _resolve_full_model_name(provider_type, model_name)
+    raw_configuration = getattr(provider, "configuration", None)
+    config = _config_from_provider_type(provider_type, configuration=raw_configuration)
+    return full_model, config
