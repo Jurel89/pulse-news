@@ -1,4 +1,5 @@
 import type { NewsletterSummary } from "./newsletter-types";
+import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 
 type NewsletterListPageProps = {
   items: NewsletterSummary[];
@@ -29,6 +30,93 @@ export function NewsletterListPage({
   onScheduleResume,
   onDelete
 }: NewsletterListPageProps) {
+  function getNewsletterActions(newsletter: NewsletterSummary): ActionItem[] {
+    const actions: ActionItem[] = [
+      {
+        label: "Preview",
+        onClick: () => onPreview(newsletter),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 3C4 3 1 8 1 8s3 5 7 5 7-5 7-5-3-5-7-5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
+          </svg>
+        )
+      },
+      {
+        label: "Edit",
+        onClick: () => onEdit(newsletter),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11.5 2.5l2 2M2 14l3-1 8.5-8.5-2-2L3 11 2 14z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )
+      },
+      {
+        label: "Pause",
+        onClick: () => void onPause(newsletter.id),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="3" width="3" height="10" rx="1" fill="currentColor"/>
+            <rect x="9" y="3" width="3" height="10" rx="1" fill="currentColor"/>
+          </svg>
+        ),
+        hidden: newsletter.status === "archived"
+      }
+    ];
+
+    if (newsletter.schedule_cron) {
+      if (newsletter.schedule_enabled) {
+        actions.push({
+          label: "Pause Schedule",
+          onClick: () => void onSchedulePause(newsletter.id),
+          icon: (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M8 4v4l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          )
+        });
+      } else {
+        actions.push({
+          label: "Resume Schedule",
+          onClick: () => void onScheduleResume(newsletter.id),
+          icon: (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
+              <path d="M6 5l5 3-5 3V5z" fill="currentColor"/>
+            </svg>
+          ),
+          variant: "primary"
+        });
+      }
+    }
+
+    actions.push(
+      {
+        label: "Archive",
+        onClick: () => void onArchive(newsletter.id),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 5h12M4 5v8a1 1 0 001 1h6a1 1 0 001-1V5M6 2h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        ),
+        hidden: newsletter.status === "archived"
+      },
+      {
+        label: "Delete",
+        onClick: () => void onDelete(newsletter.id),
+        variant: "danger",
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 4h12M12 4v9a1 1 0 01-1 1H5a1 1 0 01-1-1V4M6 2h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        )
+      }
+    );
+
+    return actions;
+  }
+
   return (
     <section className="data-grid-section">
       <header className="section-header">
@@ -61,7 +149,7 @@ export function NewsletterListPage({
                 <th>Status</th>
                 <th>Provider</th>
                 <th>Schedule</th>
-                <th>Actions</th>
+                <th className="actions-column">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -71,7 +159,7 @@ export function NewsletterListPage({
                   <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
                   <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
                   <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '200px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '60px' }} /></td>
                 </tr>
               ))}
             </tbody>
@@ -106,18 +194,18 @@ export function NewsletterListPage({
                     <div className="cell-primary">{newsletter.name}</div>
                     <div className="cell-secondary">{newsletter.slug}</div>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <span className={`status-badge status-${newsletter.status}`}>
                       {newsletter.status}
                     </span>
                   </td>
-                  <td className="provider-cell">
+                  <td className="provider-cell" data-label="Provider">
                     <div className="cell-primary">{newsletter.provider_name}</div>
                     <div className="cell-secondary">{newsletter.model_name}</div>
                   </td>
-                  <td>{newsletter.template_key}</td>
-                  <td>{newsletter.audience_name}</td>
-                  <td>
+                  <td data-label="Template">{newsletter.template_key}</td>
+                  <td data-label="Audience">{newsletter.audience_name}</td>
+                  <td data-label="Schedule">
                     {newsletter.schedule_cron ? (
                       <span className={newsletter.schedule_enabled ? 'schedule-active' : 'schedule-paused'}>
                         {newsletter.schedule_enabled ? 'Active' : 'Paused'}
@@ -128,69 +216,7 @@ export function NewsletterListPage({
                     )}
                   </td>
                   <td className="actions-cell">
-                    <div className="row-actions">
-                      <button 
-                        className="action-button" 
-                        onClick={() => onPreview(newsletter)} 
-                        type="button"
-                        title="Preview"
-                      >
-                        Preview
-                      </button>
-                      <button 
-                        className="action-button" 
-                        onClick={() => onEdit(newsletter)} 
-                        type="button"
-                        title="Edit"
-                      >
-                        Edit
-                      </button>
-                      <button 
-                        className="action-button" 
-                        onClick={() => void onPause(newsletter.id)} 
-                        type="button"
-                        title="Pause"
-                      >
-                        Pause
-                      </button>
-                      {newsletter.schedule_cron ? (
-                        newsletter.schedule_enabled ? (
-                          <button
-                            className="action-button"
-                            onClick={() => void onSchedulePause(newsletter.id)}
-                            type="button"
-                            title="Pause Schedule"
-                          >
-                            Pause Schedule
-                          </button>
-                        ) : (
-                          <button
-                            className="action-button"
-                            onClick={() => void onScheduleResume(newsletter.id)}
-                            type="button"
-                            title="Resume Schedule"
-                          >
-                            Resume
-                          </button>
-                        )
-                      ) : null}
-                      <button 
-                        className="action-button secondary" 
-                        onClick={() => void onArchive(newsletter.id)} 
-                        type="button"
-                        title="Archive"
-                      >
-                        Archive
-                      </button>
-                      <button 
-                        className="action-button danger" 
-                        onClick={() => void onDelete(newsletter.id)} 
-                        type="button"
-                        title="Delete"
-                      >
-                        Delete
-                      </button>
-                    </div>
+                    <ActionDropdown actions={getNewsletterActions(newsletter)} />
                   </td>
                 </tr>
               ))}

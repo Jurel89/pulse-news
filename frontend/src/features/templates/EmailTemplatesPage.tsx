@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, type BaseSyntheticEvent } from "react";
 import type { EmailTemplateSummary, EmailTemplateDetail, EmailTemplateInput, TemplatePreset } from "./template-types";
 import { emptyEmailTemplateInput, toEmailTemplateInput } from "./template-types";
 import { api } from "../../lib/api";
+import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 
 type EmailTemplatesPageProps = {
   templates: EmailTemplateSummary[];
@@ -49,6 +50,51 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
     }
   }
 
+  function getTemplateActions(template: EmailTemplateSummary): ActionItem[] {
+    const actions: ActionItem[] = [
+      {
+        label: "Edit",
+        onClick: () => onEdit(template),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11.5 2.5l2 2M2 14l3-1 8.5-8.5-2-2L3 11 2 14z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )
+      }
+    ];
+
+    if (!template.is_default) {
+      actions.push({
+        label: "Set Default",
+        onClick: () => void handleSetDefault(template.id),
+        disabled: settingDefaultId === template.id,
+        variant: "primary",
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )
+      });
+    }
+
+    if (!template.is_system) {
+      actions.push({
+        label: "Delete",
+        onClick: () => void handleDelete(template.id),
+        disabled: deletingId === template.id,
+        variant: "danger",
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 4h12M12 4v9a1 1 0 01-1 1H5a1 1 0 01-1-1V4M6 2h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+        )
+      });
+    }
+
+    return actions;
+  }
+
   return (
     <section className="data-grid-section">
       <header className="section-header">
@@ -91,7 +137,7 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
                   <td><div className="loading-skeleton-bar" style={{ width: '120px' }} /></td>
                   <td><div className="loading-skeleton-bar" style={{ width: '80px' }} /></td>
                   <td><div className="loading-skeleton-bar" style={{ width: '100px' }} /></td>
-                  <td><div className="loading-skeleton-bar" style={{ width: '150px' }} /></td>
+                  <td><div className="loading-skeleton-bar" style={{ width: '60px' }} /></td>
                 </tr>
               ))}
             </tbody>
@@ -124,10 +170,10 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
                     <div className="cell-primary">{template.name}</div>
                     <div className="cell-secondary">{template.description || "No description"}</div>
                   </td>
-                  <td>
+                  <td data-label="Key">
                     <code>{template.key}</code>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <div className="template-badges">
                       {template.is_default ? (
                         <span className="status-badge status-active">Default</span>
@@ -137,39 +183,11 @@ export function EmailTemplatesPage(props: EmailTemplatesPageProps) {
                       ) : null}
                     </div>
                   </td>
-                  <td className="cell-secondary">
+                  <td className="cell-secondary" data-label="Updated">
                     {new Date(template.updated_at).toLocaleDateString()}
                   </td>
                   <td className="actions-cell">
-                    <div className="row-actions">
-                      <button 
-                        className="action-button" 
-                        onClick={() => onEdit(template)} 
-                        type="button"
-                      >
-                        Edit
-                      </button>
-                      {!template.is_default ? (
-                        <button
-                          className="action-button"
-                          onClick={() => void handleSetDefault(template.id)}
-                          disabled={settingDefaultId === template.id}
-                          type="button"
-                        >
-                          {settingDefaultId === template.id ? "..." : "Set Default"}
-                        </button>
-                      ) : null}
-                      {!template.is_system ? (
-                        <button
-                          className="action-button danger"
-                          onClick={() => void handleDelete(template.id)}
-                          disabled={deletingId === template.id}
-                          type="button"
-                        >
-                          {deletingId === template.id ? "..." : "Delete"}
-                        </button>
-                      ) : null}
-                    </div>
+                    <ActionDropdown actions={getTemplateActions(template)} />
                   </td>
                 </tr>
               ))}
