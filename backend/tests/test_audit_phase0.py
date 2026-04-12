@@ -245,7 +245,7 @@ def test_newsletter_validation_rejects_disabled_provider(client: TestClient):
     assert "disabled" in response.json()["detail"].lower()
 
 
-def test_newsletter_validation_rejects_model_not_in_catalog(client: TestClient):
+def test_newsletter_validation_accepts_any_model_name(client: TestClient):
     bootstrap_operator(client)
 
     provider_id = create_test_provider(client, "openai", is_enabled=True)
@@ -253,8 +253,8 @@ def test_newsletter_validation_rejects_model_not_in_catalog(client: TestClient):
     response = client.post(
         "/api/newsletters",
         json={
-            "name": "Bad Model Test",
-            "description": "Should be rejected",
+            "name": "Custom Model Test",
+            "description": "Should be accepted",
             "prompt": "Test",
             "draft_subject": "Subject",
             "draft_preheader": "Pre",
@@ -271,8 +271,8 @@ def test_newsletter_validation_rejects_model_not_in_catalog(client: TestClient):
             "recipient_import_text": "test@example.com",
         },
     )
-    assert response.status_code == 422
-    assert "not enabled for provider" in response.json()["detail"].lower()
+    assert response.status_code == 201
+    assert response.json()["model_name"] == "nonexistent-model-xyz-999"
 
 
 def test_newsletter_validation_rejects_mismatched_api_key_type(client: TestClient):

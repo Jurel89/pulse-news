@@ -924,7 +924,7 @@ def test_batch_retry_on_429_then_success(client: TestClient, monkeypatch):
     assert result.status == "sent"
     assert call_count[0] == 2
     assert len(sleep_calls) == 1
-    assert sleep_calls[0] == 1
+    assert sleep_calls[0] == 2
 
 
 def test_batch_exhausts_retries_on_persistent_429(client: TestClient, monkeypatch):

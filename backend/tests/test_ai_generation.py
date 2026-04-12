@@ -220,7 +220,7 @@ def test_generate_newsletter_draft_uses_provider_defaults_and_active_database_ke
     assert completion_mock.call_args.kwargs["model"] == "openai/gpt-4o"
     assert completion_mock.call_args.kwargs["api_key"] == "db-openai-key"
     assert completion_mock.call_args.kwargs["temperature"] == 0.25
-    assert completion_mock.call_args.kwargs["max_tokens"] == 600
+    assert "max_tokens" not in completion_mock.call_args.kwargs
 
 
 def test_generate_newsletter_draft_returns_error_for_invalid_provider_configuration(

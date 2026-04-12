@@ -134,6 +134,8 @@ export type FormOptions = {
 export type ProviderModelsResponse = {
   models: string[];
   default_model: string | null;
+  verified_model: string | null;
+  verification_message: string | null;
 };
 
 export type ProviderTestResponse = {
@@ -340,6 +342,8 @@ export const api = {
       }),
     getModels: (providerId: number) =>
       request<ProviderModelsResponse>(`/providers/${providerId}/models`),
+    listPresetModels: (providerType: string) =>
+      request<ProviderModelsResponse>(`/providers/presets/${providerType}/models`),
     test: (providerId: number) =>
       request<ProviderTestResponse>(`/providers/${providerId}/test`, {
         method: "POST"
