@@ -162,7 +162,7 @@ def test_run_dashboard_filters_and_details(client: TestClient):
     assert refreshed_detail.json()["events"]
 
 
-def test_operational_events_endpoint_returns_run_history_and_run_events(client: TestClient):
+def test_operational_events_endpoint_defaults_to_run_events_only(client: TestClient):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
 
@@ -181,12 +181,21 @@ def test_operational_events_endpoint_returns_run_history_and_run_events(client: 
 
     items = events_response.json()["items"]
     assert items
-    assert any(item["source"] == "run" for item in items)
-    assert any(item["source"] == "run_event" for item in items)
+    assert all(item["source"] == "run_event" for item in items)
     assert any(item["run_id"] == send_run["id"] for item in items)
 
+    run_feed_response = client.get(
+        "/api/runs/events",
+        params={"search": newsletter["name"], "include_runs": True},
+    )
+    assert run_feed_response.status_code == 200
+    run_feed_items = run_feed_response.json()["items"]
+    assert any(item["source"] == "run" for item in run_feed_items)
+
     run_items = [
-        item for item in items if item["source"] == "run" and item["run_id"] == send_run["id"]
+        item
+        for item in run_feed_items
+        if item["source"] == "run" and item["run_id"] == send_run["id"]
     ]
     assert run_items
     assert run_items[0]["event_type"] == "run-manual-send"
