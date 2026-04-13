@@ -79,6 +79,7 @@ def test_render_newsletter_produces_html_and_plain_text(client: TestClient):
     assert rendered.html.endswith("</html>")
     assert rendered.plain_text == (
         "Template Brief\nSignals and notes for operators\n\nLine one\n\nLine two"
+        "\n\n---\nSent from Pulse-News — https://github.com/Jurel89/pulse-news"
     )
 
 
@@ -113,3 +114,111 @@ def test_rendered_output_contains_expected_subject_and_body_text(client: TestCli
     assert "Signals <and> notes" in rendered.plain_text
     assert "First <line>" in rendered.plain_text
     assert "Second & final" in rendered.plain_text
+
+
+def test_footer_present_in_html(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(build_newsletter())
+    assert "Pulse-News" in rendered.html
+    assert "https://github.com/Jurel89/pulse-news" in rendered.html
+    assert "Pulse-News" in rendered.plain_text
+
+
+def test_markdown_headings_rendered(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(
+        build_newsletter(draft_body_text="## Section Title\n\nParagraph text")
+    )
+    assert "<h2" in rendered.html
+    assert "Section Title</h2>" in rendered.html
+    assert "<p" in rendered.html
+    assert "Paragraph text</p>" in rendered.html
+
+
+def test_markdown_bold_and_italic(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(
+        build_newsletter(draft_body_text="This is **bold** and *italic* text.")
+    )
+    assert "<strong>bold</strong>" in rendered.html
+    assert "<em>italic</em>" in rendered.html
+
+
+def test_markdown_bullet_list(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(
+        build_newsletter(draft_body_text="- Item one\n- Item two\n- Item three")
+    )
+    assert "<ul" in rendered.html
+    assert "<li" in rendered.html
+    assert "Item one</li>" in rendered.html
+    assert "Item three</li>" in rendered.html
+
+
+def test_markdown_code_and_links(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(
+        build_newsletter(draft_body_text="Use `pip install` and visit [docs](https://example.com).")
+    )
+    assert "<code" in rendered.html
+    assert "pip install</code>" in rendered.html
+    assert 'href="https://example.com"' in rendered.html
+
+
+def test_plain_text_not_treated_as_heading(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(
+        build_newsletter(draft_body_text="This has **bold** in the middle of text.")
+    )
+    assert "<h2" not in rendered.html
+    assert "<strong>bold</strong>" in rendered.html
+
+
+def test_standalone_bold_line_is_heading(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(
+        build_newsletter(draft_body_text="**Major Releases**\n\nSome content here.")
+    )
+    assert "<h2" in rendered.html
+    assert "Major Releases</h2>" in rendered.html
+
+
+def test_custom_template_with_body_tag_gets_footer(client: TestClient):
+    import app.email_templates
+
+    template = (
+        "<!doctype html><html><body><h1>{{subject}}</h1><div>{{body_html}}</div></body></html>"
+    )
+    rendered = app.email_templates.render_custom_template(
+        template, "Test Subject", "pre", "<p>Hello</p>", "My Newsletter"
+    )
+    assert "Pulse-News" in rendered
+    assert "https://github.com/Jurel89/pulse-news" in rendered
+
+
+def test_custom_template_with_footer_placeholder_gets_footer(client: TestClient):
+    import app.email_templates
+
+    template = "<html><body><h1>{{subject}}</h1>{{body_html}}{{footer}}</body></html>"
+    rendered = app.email_templates.render_custom_template(
+        template, "Test Subject", "pre", "<p>Hello</p>", "My Newsletter"
+    )
+    assert "Pulse-News" in rendered
+    assert rendered.count("Pulse-News") == 1
+
+
+def test_custom_template_without_body_or_footer_still_gets_footer(client: TestClient):
+    import app.email_templates
+
+    template = "<html><h1>{{subject}}</h1><div>{{body_html}}</div></html>"
+    rendered = app.email_templates.render_custom_template(
+        template, "Test Subject", "pre", "<p>Hello</p>", "My Newsletter"
+    )
+    assert "Pulse-News" in rendered

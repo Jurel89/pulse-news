@@ -87,9 +87,9 @@ PROVIDER_PRESETS = [
     },
     {
         "key": "kimi",
-        "name": "Kimi (Moonshot)",
+        "name": "Kimi",
         "adapter": "openai_compatible",
-        "base_url": "https://api.moonshot.ai/v1",
+        "base_url": "https://api.kimi.com/coding/v1",
         "recommended_models": ["kimi-k2.5", "kimi-k2-turbo-preview"],
         "supports_discovery": True,
     },

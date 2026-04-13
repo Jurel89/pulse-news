@@ -109,6 +109,9 @@ def test_provider_presets_endpoint_returns_presets(client: TestClient):
         assert "adapter" in preset
         assert "recommended_models" in preset
 
+    kimi_preset = next(p for p in presets if p["key"] == "kimi")
+    assert kimi_preset["base_url"] == "https://api.kimi.com/coding/v1"
+
 
 def test_provider_toggle_preserves_configuration(client: TestClient):
     bootstrap_operator(client)
