@@ -380,6 +380,68 @@ def test_generate_newsletter_draft_rejects_unsupported_template_variables(
     assert "unsupported template variables" in result.message
 
 
+def test_generate_newsletter_draft_rejects_non_string_highlights(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="Fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "{"
+            '"subject":"Operator Watch",'
+            '"preheader":"Signals worth scanning",'
+            '"body_markdown":"- Hello world",'
+            '"highlights":[1],'
+            '"source_references":[{"source_id":"src_1","claim":"Hello world"}]'
+            "}"
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert "highlights as an array of strings" in result.message
+
+
+def test_generate_newsletter_draft_rejects_unknown_source_reference_ids(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="Fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "{"
+            '"subject":"Operator Watch",'
+            '"preheader":"Signals worth scanning",'
+            '"body_markdown":"- Hello world",'
+            '"highlights":["Hello world"],'
+            '"source_references":[{"source_id":"src_missing","claim":"Hello world"}]'
+            "}"
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert "referenced a source_id that is not in the collected source bundle" in result.message
+
+
 def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_key(
     client: TestClient,
     monkeypatch,

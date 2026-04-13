@@ -368,6 +368,7 @@ def _parse_structured_generation_output(
     newsletter: Newsletter,
     *,
     content: str,
+    source_bundle: list[Any],
 ) -> GeneratedDraft | None:
     try:
         parsed = json.loads(content)
@@ -401,6 +402,22 @@ def _parse_structured_generation_output(
             status="error",
             mode="litellm",
             message=validation_error,
+            subject=subject,
+            preheader=preheader,
+            body_text=body_text,
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
+        )
+
+    structured_output_error = _validate_structured_output(
+        highlights=highlights,
+        source_references=source_references,
+        source_bundle=source_bundle,
+    )
+    if structured_output_error is not None:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message=structured_output_error,
             subject=subject,
             preheader=preheader,
             body_text=body_text,
@@ -542,7 +559,11 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             return _fallback_generate(newsletter, reason=detail)
         return _error_generate(newsletter, detail)
 
-    structured_result = _parse_structured_generation_output(newsletter, content=content)
+    structured_result = _parse_structured_generation_output(
+        newsletter,
+        content=content,
+        source_bundle=source_bundle,
+    )
     if structured_result is not None:
         structured_result.token_usage_json = token_usage_json
         structured_result.raw_response_hash = raw_response_hash
@@ -576,6 +597,35 @@ def _validate_generated_content(*, subject: str, preheader: str, body_text: str)
         return "Generated output appears to contain malformed link markup."
     if len(re.findall(r"^#+\s", body_text, flags=re.MULTILINE)) == 0 and "- " not in body_text:
         return "Generated output is missing required section structure."
+    return None
+
+
+def _validate_structured_output(
+    *,
+    highlights: Any,
+    source_references: Any,
+    source_bundle: list[Any],
+) -> str | None:
+    if not isinstance(highlights, list) or not all(isinstance(item, str) for item in highlights):
+        return "Structured output must include highlights as an array of strings."
+    if not isinstance(source_references, list):
+        return "Structured output must include source_references as an array."
+
+    valid_source_ids = {getattr(source, "source_id", None) for source in source_bundle}
+    for item in source_references:
+        if not isinstance(item, dict):
+            return "Each source_references entry must be an object."
+        source_id = item.get("source_id")
+        claim = item.get("claim")
+        if not isinstance(source_id, str) or not source_id:
+            return "Each source_references entry must include a non-empty source_id."
+        if source_id not in valid_source_ids:
+            return (
+                "Structured output referenced a source_id that is not in the collected "
+                "source bundle."
+            )
+        if not isinstance(claim, str) or not claim.strip():
+            return "Each source_references entry must include a non-empty claim."
     return None
 
 
