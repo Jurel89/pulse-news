@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import secrets
-import uuid
 from zoneinfo import available_timezones
 
 from apscheduler.triggers.cron import CronTrigger
@@ -18,6 +17,7 @@ from app.crypto import decrypt_secret
 from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
 from app.email_templates import render_newsletter_content
+from app.idempotency import build_delivery_attempt_key
 from app.models import (
     ApiKey,
     AuditEvent,
@@ -113,6 +113,18 @@ def get_newsletter_or_404(db: DbSession, newsletter_id: int) -> Newsletter:
     if newsletter is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Newsletter not found.")
     return newsletter
+
+
+def get_revision_or_404(db: DbSession, newsletter: Newsletter, revision_id: int) -> DraftRevision:
+    revision = db.scalar(
+        select(DraftRevision).where(
+            DraftRevision.id == revision_id,
+            DraftRevision.newsletter_id == newsletter.id,
+        )
+    )
+    if revision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found.")
+    return revision
 
 
 def _next_revision_number(newsletter: Newsletter) -> int:
@@ -425,6 +437,21 @@ def add_run_event(
     )
 
 
+def _newsletter_send_response_from_run(run: NewsletterRun) -> NewsletterSendResponse:
+    try:
+        recipient_outcomes = json.loads(run.delivery_outcomes or "[]")
+    except json.JSONDecodeError:
+        recipient_outcomes = []
+
+    return NewsletterSendResponse(
+        status=run.run_status,
+        mode=run.result_mode or "unknown",
+        message=run.result_message or "Returning existing run result.",
+        run=NewsletterRunSummary.model_validate(run),
+        recipient_outcomes=recipient_outcomes,
+    )
+
+
 def execute_newsletter_send(
     db: DbSession,
     newsletter: Newsletter,
@@ -448,6 +475,17 @@ def execute_newsletter_send(
             detail="Cannot send: no active recipients.",
         )
 
+    attempt_key = build_delivery_attempt_key(
+        newsletter_id=newsletter.id,
+        revision_id=resolved_revision.id,
+        trigger_mode=trigger_mode,
+        recipient_emails=active_recipient_emails,
+    )
+
+    existing_run = db.scalar(select(NewsletterRun).where(NewsletterRun.attempt_key == attempt_key))
+    if existing_run is not None:
+        return _newsletter_send_response_from_run(existing_run), existing_run
+
     run = NewsletterRun(
         newsletter_id=newsletter.id,
         revision_id=resolved_revision.id,
@@ -468,7 +506,7 @@ def execute_newsletter_send(
         snapshot_delivery_topic=newsletter.delivery_topic,
         snapshot_status_at_run=newsletter.status,
         delivery_outcomes="[]",
-        attempt_key=str(uuid.uuid4()),
+        attempt_key=attempt_key,
     )
     db.add(run)
     db.flush()
@@ -865,6 +903,34 @@ def preview_newsletter(
     )
 
 
+@newsletters_router.get(
+    "/{newsletter_id}/revisions/{revision_id}/preview",
+    response_model=NewsletterPreviewResponse,
+)
+def preview_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterPreviewResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
+    return NewsletterPreviewResponse(
+        subject=rendered.subject,
+        preheader=rendered.preheader,
+        html=rendered.html,
+        plain_text=rendered.plain_text,
+        template_key=rendered.template_key,
+    )
+
+
 @newsletters_router.post("/{newsletter_id}/test-send", response_model=NewsletterTestSendResponse)
 def test_send_newsletter(
     newsletter_id: int,
@@ -937,6 +1003,75 @@ def test_send_newsletter(
     )
     db.commit()
 
+    return NewsletterTestSendResponse(
+        status=result.status,
+        mode=result.mode,
+        message=result.message,
+        provider_id=result.provider_id,
+        to_email=result.to_email,
+    )
+
+
+@newsletters_router.post(
+    "/{newsletter_id}/revisions/{revision_id}/test-send",
+    response_model=NewsletterTestSendResponse,
+)
+def test_send_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    payload: NewsletterTestSendRequest,
+    request: Request,
+    db: DbSession,
+) -> NewsletterTestSendResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
+    run = create_newsletter_run(
+        newsletter,
+        revision,
+        run_type="test_send",
+        trigger_mode="test-send",
+        run_status="sending",
+        recipient_emails=[payload.to_email],
+    )
+    db.add(run)
+    db.flush()
+    try:
+        result = send_test_email(
+            settings=get_settings(),
+            rendered=rendered,
+            to_email=payload.to_email,
+            newsletter=newsletter,
+            db_session=db,
+        )
+    except RuntimeError as exc:
+        run.run_status = "failed"
+        run.result_mode = "resend"
+        run.result_message = str(exc)
+        run.completed_at = utc_now()
+        add_run_event(db, run, event_type="delivery", event_status="failed", message=str(exc))
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    run.run_status = result.status
+    run.result_mode = result.mode
+    run.result_message = result.message
+    run.completed_at = utc_now()
+    add_run_event(
+        db,
+        run,
+        event_type="delivery",
+        event_status=result.status,
+        message=result.message,
+        provider_id=result.provider_id,
+    )
+    db.commit()
     return NewsletterTestSendResponse(
         status=result.status,
         mode=result.mode,
@@ -1127,6 +1262,28 @@ def send_newsletter(
         db,
         newsletter,
         revision=_approved_revision(newsletter),
+        trigger_mode="manual-send",
+    )
+    return response
+
+
+@newsletters_router.post(
+    "/{newsletter_id}/revisions/{revision_id}/send",
+    response_model=NewsletterSendResponse,
+)
+def send_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterSendResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    response, _run = execute_newsletter_send(
+        db,
+        newsletter,
+        revision=revision,
         trigger_mode="manual-send",
     )
     return response

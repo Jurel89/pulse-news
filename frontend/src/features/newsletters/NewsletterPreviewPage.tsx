@@ -25,18 +25,37 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
   const [revisions, setRevisions] = useState<DraftRevisionSummary[]>([]);
   const [approvedRevisionId, setApprovedRevisionId] = useState<number | null>(newsletter.approved_revision_id);
   const [draftHeadRevisionId, setDraftHeadRevisionId] = useState<number | null>(newsletter.draft_head_revision_id);
+  const [selectedRevisionId, setSelectedRevisionId] = useState<number | null>(newsletter.approved_revision_id ?? newsletter.draft_head_revision_id);
 
   const loadRevisionState = useCallback(async () => {
-    const [nextPreview, nextRevisions] = await Promise.all([
-      api.previewNewsletter(newsletter.id),
-      api.listNewsletterRevisions(newsletter.id),
-    ]);
-    setPreview(nextPreview);
+    const nextRevisions = await api.listNewsletterRevisions(newsletter.id);
     setRevisions(nextRevisions.items);
     const approved = nextRevisions.items.find((revision) => revision.state === "approved") ?? null;
     setApprovedRevisionId(approved?.id ?? null);
-    setDraftHeadRevisionId(nextRevisions.items[0]?.id ?? null);
+    const nextDraftHeadRevisionId = nextRevisions.items[0]?.id ?? null;
+    setDraftHeadRevisionId(nextDraftHeadRevisionId);
+    const nextSelectedRevisionId = approved?.id ?? nextDraftHeadRevisionId;
+    setSelectedRevisionId((current) => current ?? nextSelectedRevisionId);
+
+    const nextPreview = nextSelectedRevisionId
+      ? await api.previewNewsletterRevision(newsletter.id, nextSelectedRevisionId)
+      : await api.previewNewsletter(newsletter.id);
+    setPreview(nextPreview);
   }, [newsletter.id]);
+
+  async function handleSelectRevision(revisionId: number) {
+    setBusy(true);
+    setError(null);
+    try {
+      const nextPreview = await api.previewNewsletterRevision(newsletter.id, revisionId);
+      setSelectedRevisionId(revisionId);
+      setPreview(nextPreview);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to preview revision.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     async function loadPreview() {
@@ -56,7 +75,10 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
     setTestSendResult(null);
     setManualSendResult(null);
     try {
-      const result = await api.testSendNewsletter(newsletter.id, testAddress);
+      const targetRevisionId = selectedRevisionId ?? draftHeadRevisionId;
+      const result = targetRevisionId
+        ? await api.testSendNewsletterRevision(newsletter.id, targetRevisionId, testAddress)
+        : await api.testSendNewsletter(newsletter.id, testAddress);
       setTestSendResult(result);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send test email.");
@@ -84,7 +106,10 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
     setTestSendResult(null);
     setManualSendResult(null);
     try {
-      const result = await api.sendNewsletter(newsletter.id);
+      const targetRevisionId = selectedRevisionId ?? approvedRevisionId;
+      const result = targetRevisionId
+        ? await api.sendNewsletterRevision(newsletter.id, targetRevisionId)
+        : await api.sendNewsletter(newsletter.id);
       setManualSendResult(result);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send newsletter.");
@@ -154,18 +179,29 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
                     <p className="newsletter-description">
                       Origin: {revision.origin} · {isApproved ? "Approved" : "Not approved"}
                       {isDraftHead ? " · Current draft" : ""}
+                      {revision.id === selectedRevisionId ? " · Previewing" : ""}
                     </p>
                     <p className="newsletter-description">{revision.preheader || "No preheader"}</p>
-                    {!isApproved ? (
+                    <div className="form-actions">
                       <button
                         className="secondary-button"
                         disabled={busy}
-                        onClick={() => void handleApproveRevision(revision.id)}
+                        onClick={() => void handleSelectRevision(revision.id)}
                         type="button"
                       >
-                        Approve revision
+                        Preview revision
                       </button>
-                    ) : null}
+                      {!isApproved ? (
+                        <button
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={() => void handleApproveRevision(revision.id)}
+                          type="button"
+                        >
+                          Approve revision
+                        </button>
+                      ) : null}
+                    </div>
                   </article>
                 );
               })}

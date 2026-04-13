@@ -75,6 +75,7 @@ def sync_newsletter_schedule(newsletter: Newsletter) -> None:
             args=[newsletter.id],
             replace_existing=True,
             coalesce=True,
+            max_instances=1,
             misfire_grace_time=300,
         )
         return
@@ -119,8 +120,10 @@ def reconcile_scheduler_jobs() -> None:
 def start_scheduler() -> None:
     scheduler = get_scheduler()
     if not scheduler.running:
-        scheduler.start()
+        scheduler.start(paused=True)
     reconcile_scheduler_jobs()
+    if scheduler.state == 2:  # paused
+        scheduler.resume()
 
 
 def shutdown_scheduler() -> None:

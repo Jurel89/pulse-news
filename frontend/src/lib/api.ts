@@ -243,6 +243,8 @@ export const api = {
     request<NewsletterDetail>(`/newsletters/${newsletterId}`),
   previewNewsletter: (newsletterId: number) =>
     request<NewsletterPreview>(`/newsletters/${newsletterId}/preview`),
+  previewNewsletterRevision: (newsletterId: number, revisionId: number) =>
+    request<NewsletterPreview>(`/newsletters/${newsletterId}/revisions/${revisionId}/preview`),
   generateNewsletter: (newsletterId: number) =>
     request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
       method: "POST"
@@ -259,8 +261,17 @@ export const api = {
       method: "POST",
       jsonBody: { to_email: toEmail }
     }),
+  testSendNewsletterRevision: (newsletterId: number, revisionId: number, toEmail: string) =>
+    request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/test-send`, {
+      method: "POST",
+      jsonBody: { to_email: toEmail }
+    }),
   sendNewsletter: (newsletterId: number) =>
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
+      method: "POST"
+    }),
+  sendNewsletterRevision: (newsletterId: number, revisionId: number) =>
+    request<NewsletterSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/send`, {
       method: "POST"
     }),
   listAuditEvents: (params: AuditEventListParams) =>

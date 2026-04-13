@@ -162,6 +162,22 @@ def test_run_dashboard_filters_and_details(client: TestClient):
     assert refreshed_detail.json()["events"]
 
 
+def test_duplicate_manual_send_reuses_existing_run(client: TestClient):
+    bootstrap_operator(client)
+    newsletter = create_newsletter(client)
+
+    first_send = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    assert first_send.status_code == 200
+    first_run = first_send.json()["run"]
+
+    second_send = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    assert second_send.status_code == 200
+    second_run = second_send.json()["run"]
+
+    assert second_run["id"] == first_run["id"]
+    assert second_run["revision_id"] == first_run["revision_id"]
+
+
 def test_operational_events_endpoint_defaults_to_run_events_only(client: TestClient):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
