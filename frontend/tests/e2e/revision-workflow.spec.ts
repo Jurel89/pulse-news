@@ -44,6 +44,16 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
       }),
     });
 
+  });
+
+  await page.reload();
+  if (await page.getByRole('heading', { name: /log in to pulse news/i }).count()) {
+    await page.getByLabel('Email').fill('operator@example.com');
+    await page.getByLabel('Password').fill('super-secret-password');
+    await page.getByRole('button', { name: /log in/i }).click();
+  }
+
+  await page.evaluate(async () => {
     const createNewsletterResponse = await fetch('/api/newsletters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -86,13 +96,6 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
       body: JSON.stringify({ revision_id: generation.revision_id, idempotency_key: 'playwright-send-1' }),
     });
   });
-
-  await page.reload();
-  if (await page.getByRole('heading', { name: /log in to pulse news/i }).count()) {
-    await page.getByLabel('Email').fill('operator@example.com');
-    await page.getByLabel('Password').fill('super-secret-password');
-    await page.getByRole('button', { name: /log in/i }).click();
-  }
 
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await expect(page.getByRole('heading', { name: /run dashboard/i })).toBeVisible();
