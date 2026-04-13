@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from html import unescape
+from urllib import request
 
 from app.models import Newsletter
 
 URL_RE = re.compile(r"https?://[^\s]+")
+HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 @dataclass(frozen=True)
@@ -30,13 +33,7 @@ def build_source_bundle(newsletter: Newsletter) -> list[SourceItem]:
             deduped_urls.append(url)
 
     source_items = [
-        SourceItem(
-            source_id=f"src_{index + 1}",
-            url=url,
-            title=url,
-            summary=f"Operator-provided source URL for {newsletter.name}",
-            source_type="operator_url",
-        )
+        _fetch_source_item(newsletter, url=url, index=index + 1)
         for index, url in enumerate(deduped_urls)
     ]
 
@@ -55,6 +52,32 @@ def build_source_bundle(newsletter: Newsletter) -> list[SourceItem]:
             source_type="operator_context",
         )
     ]
+
+
+def _fetch_source_item(newsletter: Newsletter, *, url: str, index: int) -> SourceItem:
+    try:
+        req = request.Request(url, headers={"User-Agent": "Pulse-News/1.0"})
+        with request.urlopen(req, timeout=5) as response:
+            raw_content = response.read(120_000).decode("utf-8", errors="ignore")
+    except Exception as exc:  # pragma: no cover - network availability varies
+        return SourceItem(
+            source_id=f"src_{index}",
+            url=url,
+            title=url,
+            summary=f"Unable to fetch source content directly: {type(exc).__name__}",
+            source_type="operator_url_unfetched",
+        )
+
+    cleaned = unescape(HTML_TAG_RE.sub(" ", raw_content))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    summary = cleaned[:320] if cleaned else f"Fetched source content for {newsletter.name}"
+    return SourceItem(
+        source_id=f"src_{index}",
+        url=url,
+        title=url,
+        summary=summary,
+        source_type="operator_url_fetched",
+    )
 
 
 def serialize_source_bundle(source_items: list[SourceItem]) -> str:

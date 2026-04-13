@@ -141,6 +141,8 @@ class NewsletterSummary(BaseModel):
     template_key: str
     api_key_id: int | None = None
     resend_api_key_id: int | None = None
+    generation_profile_id: int | None = None
+    delivery_profile_id: int | None = None
     approved_revision_id: int | None = None
     draft_head_revision_id: int | None = None
     audience_name: str
@@ -180,6 +182,8 @@ class NewsletterCreateRequest(BaseModel):
     template_key: str
     api_key_id: int | None = None
     resend_api_key_id: int | None = None
+    generation_profile_id: int | None = None
+    delivery_profile_id: int | None = None
     audience_name: str
     delivery_topic: str
     timezone: str

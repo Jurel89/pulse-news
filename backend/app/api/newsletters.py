@@ -21,8 +21,10 @@ from app.idempotency import build_delivery_attempt_key
 from app.models import (
     ApiKey,
     AuditEvent,
+    DeliveryProfile,
     DraftRevision,
     EmailTemplate,
+    GenerationProfile,
     Newsletter,
     NewsletterRecipient,
     NewsletterRun,
@@ -250,6 +252,8 @@ def _summary_payload(newsletter: Newsletter) -> dict:
         "template_key": newsletter.template_key,
         "api_key_id": newsletter.api_key_id,
         "resend_api_key_id": newsletter.resend_api_key_id,
+        "generation_profile_id": newsletter.generation_profile_id,
+        "delivery_profile_id": newsletter.delivery_profile_id,
         "approved_revision_id": newsletter.approved_revision.id
         if newsletter.approved_revision
         else None,
@@ -645,6 +649,8 @@ def create_newsletter(
         template_key=payload.template_key,
         api_key_id=payload.api_key_id,
         resend_api_key_id=payload.resend_api_key_id,
+        generation_profile_id=payload.generation_profile_id,
+        delivery_profile_id=payload.delivery_profile_id,
         audience_name=payload.audience_name,
         delivery_topic=payload.delivery_topic,
         timezone=payload.timezone,
@@ -749,11 +755,44 @@ def get_form_options(request: Request, db: DbSession) -> dict:
         for k in api_keys
     ]
 
+    generation_profiles = db.scalars(
+        select(GenerationProfile)
+        .where(GenerationProfile.is_enabled.is_(True))
+        .order_by(GenerationProfile.name)
+    ).all()
+    delivery_profiles = db.scalars(
+        select(DeliveryProfile)
+        .where(DeliveryProfile.is_enabled.is_(True))
+        .order_by(DeliveryProfile.name)
+    ).all()
+
     return {
         "templates": template_options,
         "providers": provider_options,
         "models": models,
         "api_keys": api_key_options,
+        "generation_profiles": [
+            {
+                "id": profile.id,
+                "name": profile.name,
+                "provider_id": profile.provider_id,
+                "model_name": profile.model_name,
+                "api_key_binding_mode": profile.api_key_binding_mode,
+                "api_key_id": profile.api_key_id,
+            }
+            for profile in generation_profiles
+        ],
+        "delivery_profiles": [
+            {
+                "id": profile.id,
+                "name": profile.name,
+                "provider_type": profile.provider_type,
+                "api_key_binding_mode": profile.api_key_binding_mode,
+                "api_key_id": profile.api_key_id,
+                "from_email": profile.from_email,
+            }
+            for profile in delivery_profiles
+        ],
         "timezones": sorted(available_timezones()),
     }
 
@@ -864,6 +903,26 @@ def _validate_newsletter_entities(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Resend API key must have provider_type 'resend'.",
+            )
+
+    if payload.generation_profile_id is not None:
+        generation_profile = db.scalar(
+            select(GenerationProfile).where(GenerationProfile.id == payload.generation_profile_id)
+        )
+        if generation_profile is None or not generation_profile.is_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Generation profile is missing or disabled.",
+            )
+
+    if payload.delivery_profile_id is not None:
+        delivery_profile = db.scalar(
+            select(DeliveryProfile).where(DeliveryProfile.id == payload.delivery_profile_id)
+        )
+        if delivery_profile is None or not delivery_profile.is_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Delivery profile is missing or disabled.",
             )
 
     _ensure_template_exists(db, payload.template_key)
@@ -1327,6 +1386,8 @@ def update_newsletter(
     newsletter.template_key = payload.template_key
     newsletter.api_key_id = payload.api_key_id
     newsletter.resend_api_key_id = payload.resend_api_key_id
+    newsletter.generation_profile_id = payload.generation_profile_id
+    newsletter.delivery_profile_id = payload.delivery_profile_id
     newsletter.audience_name = payload.audience_name
     newsletter.delivery_topic = payload.delivery_topic
     newsletter.timezone = payload.timezone

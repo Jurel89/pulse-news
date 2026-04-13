@@ -41,6 +41,8 @@ const fieldHelpText: Record<string, string> = {
   provider_name: "AI provider for content generation (requires matching API key)",
   api_key_id: "Optional active AI API key to pin for this newsletter's generation requests",
   resend_api_key_id: "Resend API key used for email delivery. Make sure the key has a Sender Email configured in Settings > API Keys.",
+  generation_profile_id: "Optional generation profile that defines provider, model, and binding mode explicitly.",
+  delivery_profile_id: "Optional delivery profile that defines Resend binding mode and sender explicitly.",
   model_name: "Specific AI model to use for generating content",
   template_key: "Email template design that determines the visual layout",
   timezone: "Timezone for interpreting the schedule cron expression",
@@ -98,6 +100,14 @@ function getTimezoneOptions(formOptions: FormOptions | null): SelectOption[] {
     value: timezone,
     label: timezone.replace(/_/g, " ")
   }));
+}
+
+function getGenerationProfiles(formOptions: FormOptions | null) {
+  return formOptions?.generation_profiles ?? [];
+}
+
+function getDeliveryProfiles(formOptions: FormOptions | null) {
+  return formOptions?.delivery_profiles ?? [];
 }
 
 export function NewsletterEditorPage({
@@ -177,6 +187,8 @@ export function NewsletterEditorPage({
   );
 
   const timezoneOptions = useMemo(() => getTimezoneOptions(formOptions), [formOptions]);
+  const generationProfiles = useMemo(() => getGenerationProfiles(formOptions), [formOptions]);
+  const deliveryProfiles = useMemo(() => getDeliveryProfiles(formOptions), [formOptions]);
   const providerSelectDisabled = loadingOptions || providerOptions.length === 0;
   const modelSelectDisabled = loadingOptions || form.provider_id === null || availableModels.length === 0;
   const templateSelectDisabled = loadingOptions || availableTemplates.length === 0;
@@ -374,10 +386,43 @@ export function NewsletterEditorPage({
 
           <div className="form-grid">
             <label>
+              <FieldLabel label="Generation Profile" helpText={fieldHelpText.generation_profile_id} />
+              <select
+                onChange={(event) => updateField("generation_profile_id", event.target.value ? Number(event.target.value) : null)}
+                value={form.generation_profile_id === null ? "" : String(form.generation_profile_id)}
+              >
+                <option value="">No generation profile selected</option>
+                {generationProfiles.map((profile) => (
+                  <option key={profile.id} value={String(profile.id)}>
+                    {`${profile.name} · ${profile.api_key_binding_mode}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <FieldLabel label="Delivery Profile" helpText={fieldHelpText.delivery_profile_id} />
+              <select
+                onChange={(event) => updateField("delivery_profile_id", event.target.value ? Number(event.target.value) : null)}
+                value={form.delivery_profile_id === null ? "" : String(form.delivery_profile_id)}
+              >
+                <option value="">No delivery profile selected</option>
+                {deliveryProfiles.map((profile) => (
+                  <option key={profile.id} value={String(profile.id)}>
+                    {`${profile.name} · ${profile.api_key_binding_mode}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="form-grid">
+            <label>
               <FieldLabel label="AI API Key" helpText={fieldHelpText.api_key_id} />
               <select
                 onChange={(event) => updateField("api_key_id", event.target.value ? Number(event.target.value) : null)}
                 value={form.api_key_id === null ? "" : String(form.api_key_id)}
+                disabled={form.generation_profile_id !== null}
               >
                 <option value="">
                   {availableApiKeys.length > 0 ? "No pinned key selected (fail closed)" : "No matching API keys available"}
@@ -400,6 +445,7 @@ export function NewsletterEditorPage({
               <select
                 onChange={(event) => updateField("resend_api_key_id", event.target.value ? Number(event.target.value) : null)}
                 value={form.resend_api_key_id === null ? "" : String(form.resend_api_key_id)}
+                disabled={form.delivery_profile_id !== null}
               >
                 <option value="">
                   {availableResendApiKeys.length > 0

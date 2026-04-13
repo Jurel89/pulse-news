@@ -147,11 +147,31 @@ export type FormOptionApiKey = {
   from_email: string | null;
 };
 
+export type FormOptionGenerationProfile = {
+  id: number;
+  name: string;
+  provider_id: number | null;
+  model_name: string;
+  api_key_binding_mode: string;
+  api_key_id: number | null;
+};
+
+export type FormOptionDeliveryProfile = {
+  id: number;
+  name: string;
+  provider_type: string;
+  api_key_binding_mode: string;
+  api_key_id: number | null;
+  from_email: string | null;
+};
+
 export type FormOptions = {
   templates: FormOptionTemplate[];
   providers: FormOptionProvider[];
   models: Record<string, string[]>;
   api_keys: FormOptionApiKey[];
+  generation_profiles: FormOptionGenerationProfile[];
+  delivery_profiles: FormOptionDeliveryProfile[];
   timezones: string[];
 };
 

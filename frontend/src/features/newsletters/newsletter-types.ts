@@ -11,6 +11,8 @@ export type NewsletterSummary = {
   provider_name: string;
   api_key_id: number | null;
   resend_api_key_id: number | null;
+  generation_profile_id: number | null;
+  delivery_profile_id: number | null;
   approved_revision_id: number | null;
   draft_head_revision_id: number | null;
   model_name: string;
@@ -51,6 +53,8 @@ export type NewsletterInput = {
   provider_name: string;
   api_key_id: number | null;
   resend_api_key_id: number | null;
+  generation_profile_id: number | null;
+  delivery_profile_id: number | null;
   model_name: string;
   template_key: string;
   audience_name: string;
@@ -74,6 +78,8 @@ export const emptyNewsletterInput: NewsletterInput = {
   provider_name: "",
   api_key_id: null,
   resend_api_key_id: null,
+  generation_profile_id: null,
+  delivery_profile_id: null,
   model_name: "",
   template_key: "",
   audience_name: "",
@@ -98,6 +104,8 @@ export function toNewsletterInput(detail: NewsletterDetail): NewsletterInput {
     provider_name: detail.provider_name,
     api_key_id: detail.api_key_id ?? null,
     resend_api_key_id: detail.resend_api_key_id ?? null,
+    generation_profile_id: detail.generation_profile_id ?? null,
+    delivery_profile_id: detail.delivery_profile_id ?? null,
     model_name: detail.model_name,
     template_key: detail.template_key,
     audience_name: detail.audience_name,
