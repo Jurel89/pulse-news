@@ -143,7 +143,10 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
     assert result.body_text == "- Fundraising signals\n- Ops playbook updates"
     completion_mock.assert_called_once()
     assert completion_mock.call_args.kwargs["model"] == "openai/gpt-4o-mini"
-    assert "Prompt instructions:" in completion_mock.call_args.kwargs["messages"][0]["content"]
+    prompt_text = completion_mock.call_args.kwargs["messages"][0]["content"]
+    assert "Prompt instructions:" in prompt_text
+    assert "Style/template constraints:" in prompt_text
+    assert "Time window:" in prompt_text
 
 
 def test_generate_newsletter_draft_returns_error_when_litellm_raises_by_default(
@@ -336,6 +339,35 @@ def test_generate_newsletter_draft_rejects_subjects_longer_than_limit(
 
     assert result.status == "error"
     assert "120 character limit" in result.message
+
+
+def test_generate_newsletter_draft_rejects_unsupported_template_variables(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="Fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "{"
+            '"subject":"Operator Watch",'
+            '"preheader":"Signals worth scanning",'
+            '"body_markdown":"- Hello %recipient_name%"'
+            "}"
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert "unsupported template variables" in result.message
 
 
 def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_key(

@@ -465,6 +465,14 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             f"Description: {newsletter.description or 'None'}",
             f"Audience label: {newsletter.audience_name}",
             (
+                f"Style/template constraints: template_key={newsletter.template_key}; keep the "
+                "voice concise, operator-facing, and suitable for plain-text email sections."
+            ),
+            (
+                "Time window: focus on the time period implied by the collected source URLs and "
+                "the current operator prompt."
+            ),
+            (
                 "Previous approved revision:\n"
                 f"Subject: {newsletter.approved_revision.subject}\n"
                 f"Preheader: {newsletter.approved_revision.preheader or ''}\n"
@@ -554,6 +562,8 @@ def _validate_generated_content(*, subject: str, preheader: str, body_text: str)
         return "Generated output is missing the body content."
     if "{{" in body_text or "}}" in body_text or "[[" in body_text or "]]" in body_text:
         return "Generated output contains unresolved placeholder markup."
+    if "%recipient_" in body_text or "%unsubscribe_" in body_text:
+        return "Generated output contains unsupported template variables."
     if body_text.count("[") != body_text.count("]") or body_text.count("(") != body_text.count(")"):
         return "Generated output appears to contain malformed link markup."
     if len(re.findall(r"^#+\s", body_text, flags=re.MULTILINE)) == 0 and "- " not in body_text:
