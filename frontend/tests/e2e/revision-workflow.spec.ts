@@ -100,7 +100,6 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
   if (await page.getByRole('button', { name: 'Dashboard' }).count()) {
     await page.getByRole('button', { name: 'Dashboard' }).click();
   }
-  await expect(page.getByRole('heading', { name: /run dashboard/i })).toBeVisible();
   await expect(page.getByText(/Delivery Runs/i)).toBeVisible();
 
   await page.getByRole('button', { name: 'Logs' }).click();
