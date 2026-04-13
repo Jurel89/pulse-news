@@ -176,7 +176,7 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
         json={
             "name": "Draft Test",
             "description": "Testing draft generation",
-            "prompt": "Write a brief about testing.",
+            "prompt": "Write a brief about testing using https://example.com/source.",
             "draft_subject": "Draft Test Subject",
             "draft_preheader": "Draft preheader",
             "draft_body_text": "Initial body",
@@ -213,6 +213,68 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     fetched_newsletter = get_response.json()
     assert fetched_newsletter["draft_head_revision_id"] == result["revision_id"]
     assert fetched_newsletter["approved_revision_id"] != result["revision_id"]
+
+    revisions_response = client.get(f"/api/newsletters/{newsletter_id}/revisions")
+    assert revisions_response.status_code == 200
+    latest_revision = revisions_response.json()["items"][0]
+    assert latest_revision["id"] == result["revision_id"]
+    assert "https://example.com/source" in (latest_revision["source_bundle_snapshot_json"] or "")
+
+
+def test_revision_history_and_approval_flow(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Approval Test",
+            "description": "Testing revision approval",
+            "prompt": "Write a brief about approvals.",
+            "draft_subject": "Approval Subject",
+            "draft_preheader": "Approval preheader",
+            "draft_body_text": "Initial approved body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "testers",
+            "delivery_topic": "approval-test",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "approver@example.com",
+        },
+    )
+    assert create_response.status_code == 201
+    created = create_response.json()
+
+    generate_response = client.post(f"/api/newsletters/{created['id']}/generate-draft")
+    assert generate_response.status_code == 200
+    generated_revision_id = generate_response.json()["revision_id"]
+
+    revisions_response = client.get(f"/api/newsletters/{created['id']}/revisions")
+    assert revisions_response.status_code == 200
+    revisions = revisions_response.json()["items"]
+    assert len(revisions) == 2
+    assert revisions[0]["id"] == generated_revision_id
+    assert revisions[0]["state"] == "candidate"
+    assert revisions[1]["state"] == "approved"
+
+    approve_response = client.post(
+        f"/api/newsletters/{created['id']}/revisions/{generated_revision_id}/approve"
+    )
+    assert approve_response.status_code == 200
+    approved_payload = approve_response.json()
+    assert approved_payload["revision"]["id"] == generated_revision_id
+    assert approved_payload["revision"]["state"] == "approved"
+    assert approved_payload["newsletter"]["approved_revision_id"] == generated_revision_id
+    assert approved_payload["newsletter"]["draft_head_revision_id"] == generated_revision_id
+
+    revisions_after = client.get(f"/api/newsletters/{created['id']}/revisions")
+    assert revisions_after.status_code == 200
+    revisions_by_id = {item["id"]: item for item in revisions_after.json()["items"]}
+    assert revisions_by_id[generated_revision_id]["state"] == "approved"
+    assert revisions_by_id[created["approved_revision_id"]]["state"] == "superseded"
 
 
 def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):

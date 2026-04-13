@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   api,
+  type DraftRevisionSummary,
   type NewsletterPreview,
   type NewsletterSendResult,
   type NewsletterTestSendResult
@@ -21,19 +22,33 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
   const [testAddress, setTestAddress] = useState("qa@example.com");
   const [testSendResult, setTestSendResult] = useState<NewsletterTestSendResult | null>(null);
   const [manualSendResult, setManualSendResult] = useState<NewsletterSendResult | null>(null);
+  const [revisions, setRevisions] = useState<DraftRevisionSummary[]>([]);
+  const [approvedRevisionId, setApprovedRevisionId] = useState<number | null>(newsletter.approved_revision_id);
+  const [draftHeadRevisionId, setDraftHeadRevisionId] = useState<number | null>(newsletter.draft_head_revision_id);
+
+  const loadRevisionState = useCallback(async () => {
+    const [nextPreview, nextRevisions] = await Promise.all([
+      api.previewNewsletter(newsletter.id),
+      api.listNewsletterRevisions(newsletter.id),
+    ]);
+    setPreview(nextPreview);
+    setRevisions(nextRevisions.items);
+    const approved = nextRevisions.items.find((revision) => revision.state === "approved") ?? null;
+    setApprovedRevisionId(approved?.id ?? null);
+    setDraftHeadRevisionId(nextRevisions.items[0]?.id ?? null);
+  }, [newsletter.id]);
 
   useEffect(() => {
     async function loadPreview() {
       try {
-        const nextPreview = await api.previewNewsletter(newsletter.id);
-        setPreview(nextPreview);
+        await loadRevisionState();
       } catch (requestError) {
         setError(requestError instanceof Error ? requestError.message : "Unable to load preview.");
       }
     }
 
     void loadPreview();
-  }, [newsletter.id]);
+  }, [loadRevisionState]);
 
   async function handleTestSend() {
     setBusy(true);
@@ -45,6 +60,19 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
       setTestSendResult(result);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send test email.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleApproveRevision(revisionId: number) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.approveNewsletterRevision(newsletter.id, revisionId);
+      await loadRevisionState();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to approve revision.");
     } finally {
       setBusy(false);
     }
@@ -72,7 +100,7 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
           <p className="eyebrow">Preview</p>
           <h2 className="section-title">{newsletter.name}</h2>
           <p className="cell-secondary">
-            Approved revision #{newsletter.approved_revision_id ?? "—"} · Draft revision #{newsletter.draft_head_revision_id ?? "—"}
+            Approved revision #{approvedRevisionId ?? "—"} · Draft revision #{draftHeadRevisionId ?? "—"}
           </p>
         </div>
         <button className="secondary-button" onClick={onBack} type="button">
@@ -98,6 +126,49 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
                 <span className="status-label">Preheader</span>
                 <strong>{preview.preheader || "No preheader"}</strong>
               </div>
+            </div>
+          </div>
+
+          <div className="status-panel">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">Revisions</p>
+                <h3 className="section-title">Approved and candidate drafts</h3>
+              </div>
+            </div>
+            <div className="newsletter-list">
+              {revisions.map((revision) => {
+                const isApproved = revision.id === approvedRevisionId;
+                const isDraftHead = revision.id === draftHeadRevisionId;
+                return (
+                  <article className="newsletter-card" key={revision.id}>
+                    <div className="section-header">
+                      <div>
+                        <strong>Revision #{revision.version_number}</strong>
+                        <p className="newsletter-description">{revision.subject}</p>
+                      </div>
+                      <span className={`status-badge status-${revision.state}`}>
+                        {revision.state}
+                      </span>
+                    </div>
+                    <p className="newsletter-description">
+                      Origin: {revision.origin} · {isApproved ? "Approved" : "Not approved"}
+                      {isDraftHead ? " · Current draft" : ""}
+                    </p>
+                    <p className="newsletter-description">{revision.preheader || "No preheader"}</p>
+                    {!isApproved ? (
+                      <button
+                        className="secondary-button"
+                        disabled={busy}
+                        onClick={() => void handleApproveRevision(revision.id)}
+                        type="button"
+                      >
+                        Approve revision
+                      </button>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           </div>
 

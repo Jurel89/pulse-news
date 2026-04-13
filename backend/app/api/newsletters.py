@@ -31,6 +31,9 @@ from app.models import (
     utc_now,
 )
 from app.schemas import (
+    DraftRevisionApproveResponse,
+    DraftRevisionListResponse,
+    DraftRevisionSummary,
     NewsletterCreateRequest,
     NewsletterDetail,
     NewsletterGenerationResponse,
@@ -42,6 +45,7 @@ from app.schemas import (
     NewsletterTestSendResponse,
     NewsletterUpdateRequest,
 )
+from app.source_pipeline.service import build_source_bundle, serialize_source_bundle
 
 newsletters_router = APIRouter(prefix="/newsletters", tags=["newsletters"])
 
@@ -126,6 +130,7 @@ def _create_revision(
     preheader: str | None,
     body_text: str,
     prompt_snapshot: str | None,
+    source_bundle_snapshot_json: str | None = None,
     generation_run_id: int | None = None,
 ) -> DraftRevision:
     revision = DraftRevision(
@@ -137,6 +142,7 @@ def _create_revision(
         preheader=preheader,
         body_text=body_text,
         prompt_snapshot=prompt_snapshot,
+        source_bundle_snapshot_json=source_bundle_snapshot_json,
         generation_run_id=generation_run_id,
     )
     return revision
@@ -182,6 +188,32 @@ def _draft_revision(newsletter: Newsletter) -> DraftRevision | None:
 def _approved_revision(newsletter: Newsletter) -> DraftRevision | None:
     _ensure_revision_projection(newsletter)
     return newsletter.approved_revision
+
+
+def _ordered_revisions(newsletter: Newsletter) -> list[DraftRevision]:
+    return sorted(newsletter.revisions, key=lambda revision: revision.version_number, reverse=True)
+
+
+def _approve_revision(newsletter: Newsletter, revision: DraftRevision) -> DraftRevision:
+    if revision.newsletter_id != newsletter.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Revision not found for this newsletter.",
+        )
+
+    for candidate in newsletter.revisions:
+        if candidate.id == revision.id:
+            candidate.state = "approved"
+            continue
+        if candidate.state == "approved":
+            candidate.state = "superseded"
+
+    newsletter.approved_revision = revision
+    newsletter.draft_head_revision = revision
+    newsletter.draft_subject = revision.subject
+    newsletter.draft_preheader = revision.preheader
+    newsletter.draft_body_text = revision.body_text
+    return revision
 
 
 def _summary_payload(newsletter: Newsletter) -> dict:
@@ -926,6 +958,7 @@ def generate_draft(
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     generated = generate_newsletter_draft(newsletter)
+    source_bundle_snapshot_json = serialize_source_bundle(build_source_bundle(newsletter))
     revision = _create_revision(
         newsletter,
         state="candidate",
@@ -934,6 +967,7 @@ def generate_draft(
         preheader=generated.preheader,
         body_text=generated.body_text,
         prompt_snapshot=newsletter.prompt,
+        source_bundle_snapshot_json=source_bundle_snapshot_json,
     )
     newsletter.draft_head_revision = revision
     run = create_newsletter_run(
@@ -973,6 +1007,55 @@ def generate_draft(
         revision_id=revision.id,
         newsletter=serialize_newsletter_detail(newsletter),
         run=NewsletterRunSummary.model_validate(run),
+    )
+
+
+@newsletters_router.get(
+    "/{newsletter_id}/revisions",
+    response_model=DraftRevisionListResponse,
+)
+def list_newsletter_revisions(
+    newsletter_id: int,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionListResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    _ensure_revision_projection(newsletter)
+    db.flush()
+    return DraftRevisionListResponse(
+        items=[
+            DraftRevisionSummary.model_validate(revision)
+            for revision in _ordered_revisions(newsletter)
+        ]
+    )
+
+
+@newsletters_router.post(
+    "/{newsletter_id}/revisions/{revision_id}/approve",
+    response_model=DraftRevisionApproveResponse,
+)
+def approve_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionApproveResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = db.scalar(select(DraftRevision).where(DraftRevision.id == revision_id))
+    if revision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found.")
+
+    approved = _approve_revision(newsletter, revision)
+    db.add(newsletter)
+    db.add(approved)
+    db.commit()
+    db.refresh(newsletter)
+    db.refresh(approved)
+    return DraftRevisionApproveResponse(
+        revision=DraftRevisionSummary.model_validate(approved),
+        newsletter=serialize_newsletter_detail(newsletter),
     )
 
 

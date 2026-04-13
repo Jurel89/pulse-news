@@ -101,6 +101,29 @@ export type NewsletterGenerationResult = {
   run: NewsletterSendResult["run"];
 };
 
+export type DraftRevisionSummary = {
+  id: number;
+  newsletter_id: number;
+  version_number: number;
+  state: string;
+  origin: string;
+  subject: string;
+  preheader: string | null;
+  body_text: string;
+  generation_run_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DraftRevisionListResponse = {
+  items: DraftRevisionSummary[];
+};
+
+export type DraftRevisionApproveResponse = {
+  revision: DraftRevisionSummary;
+  newsletter: NewsletterDetail;
+};
+
 
 
 export type FormOptionTemplate = {
@@ -222,6 +245,12 @@ export const api = {
     request<NewsletterPreview>(`/newsletters/${newsletterId}/preview`),
   generateNewsletter: (newsletterId: number) =>
     request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
+      method: "POST"
+    }),
+  listNewsletterRevisions: (newsletterId: number) =>
+    request<DraftRevisionListResponse>(`/newsletters/${newsletterId}/revisions`),
+  approveNewsletterRevision: (newsletterId: number, revisionId: number) =>
+    request<DraftRevisionApproveResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}/approve`, {
       method: "POST"
     }),
 

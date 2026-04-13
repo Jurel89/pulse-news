@@ -242,6 +242,32 @@ class NewsletterDetail(NewsletterSummary):
     recipient_import_text: str
 
 
+class DraftRevisionSummary(BaseModel):
+    id: int
+    newsletter_id: int
+    version_number: int
+    state: str
+    origin: str
+    subject: str
+    preheader: str | None = None
+    body_text: str
+    source_bundle_snapshot_json: str | None = None
+    generation_run_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DraftRevisionListResponse(BaseModel):
+    items: list[DraftRevisionSummary]
+
+
+class DraftRevisionApproveResponse(BaseModel):
+    revision: DraftRevisionSummary
+    newsletter: NewsletterDetail
+
+
 class EmailTemplateSummary(BaseModel):
     id: int
     name: str
