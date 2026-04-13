@@ -128,6 +128,17 @@ class Newsletter(TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    approved_revision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("draft_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    draft_head_revision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("draft_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     audience_name: Mapped[str] = mapped_column(
         String(255),
         default="default-audience",
@@ -158,9 +169,50 @@ class Newsletter(TimestampMixin, Base):
         back_populates="newsletter",
         cascade="all, delete-orphan",
     )
+    revisions: Mapped[list[DraftRevision]] = relationship(
+        back_populates="newsletter",
+        cascade="all, delete-orphan",
+        foreign_keys="DraftRevision.newsletter_id",
+    )
+    approved_revision: Mapped[DraftRevision | None] = relationship(
+        foreign_keys=[approved_revision_id],
+        post_update=True,
+    )
+    draft_head_revision: Mapped[DraftRevision | None] = relationship(
+        foreign_keys=[draft_head_revision_id],
+        post_update=True,
+    )
     runs: Mapped[list[NewsletterRun]] = relationship(
         back_populates="newsletter",
         cascade="all",
+    )
+
+
+class DraftRevision(TimestampMixin, Base):
+    __tablename__ = "draft_revisions"
+    __table_args__ = (
+        UniqueConstraint("newsletter_id", "version_number", name="uq_draft_revision_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    newsletter_id: Mapped[int] = mapped_column(
+        ForeignKey("newsletters.id"), nullable=False, index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="candidate", index=True)
+    origin: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    subject: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    preheader: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    body_text: Mapped[str] = mapped_column(Text(), nullable=False, default="")
+    prompt_snapshot: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    generation_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("newsletter_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    newsletter: Mapped[Newsletter] = relationship(
+        back_populates="revisions",
+        foreign_keys=[newsletter_id],
     )
 
 
@@ -199,6 +251,14 @@ class NewsletterRun(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    revision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("draft_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    run_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="delivery", index=True
+    )
     trigger_mode: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     run_status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -231,6 +291,7 @@ class NewsletterRun(TimestampMixin, Base):
     snapshot_delivery_topic: Mapped[str | None] = mapped_column(String(255), nullable=True)
     snapshot_status_at_run: Mapped[str | None] = mapped_column(String(32), nullable=True)
     newsletter: Mapped[Newsletter] = relationship(back_populates="runs")
+    revision: Mapped[DraftRevision | None] = relationship(foreign_keys=[revision_id])
     events: Mapped[list[NewsletterRunEvent]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",

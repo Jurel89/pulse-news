@@ -141,6 +141,8 @@ class NewsletterSummary(BaseModel):
     template_key: str
     api_key_id: int | None = None
     resend_api_key_id: int | None = None
+    approved_revision_id: int | None = None
+    draft_head_revision_id: int | None = None
     audience_name: str
     delivery_topic: str
     timezone: str
@@ -472,6 +474,8 @@ class NewsletterTestSendResponse(BaseModel):
 class NewsletterRunSummary(BaseModel):
     id: int
     newsletter_id: int
+    revision_id: int | None = None
+    run_type: str | None = None
     trigger_mode: str
     run_status: str
     provider_name: str
@@ -506,6 +510,7 @@ class NewsletterGenerationResponse(BaseModel):
     status: str
     mode: str
     message: str
+    revision_id: int | None = None
     newsletter: NewsletterDetail
     run: NewsletterRunSummary
 

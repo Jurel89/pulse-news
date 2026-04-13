@@ -29,10 +29,21 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
     inspector = sa.inspect(app.database.get_engine())
 
     assert database_path.exists()
-    assert {"api_keys", "email_templates", "providers"}.issubset(inspector.get_table_names())
+    assert {"api_keys", "draft_revisions", "email_templates", "providers"}.issubset(
+        inspector.get_table_names()
+    )
     assert "from_email" in {column["name"] for column in inspector.get_columns("api_keys")}
-    assert {"provider_id", "template_id", "api_key_id", "resend_api_key_id"}.issubset(
-        {column["name"] for column in inspector.get_columns("newsletters")}
+    assert {
+        "provider_id",
+        "template_id",
+        "api_key_id",
+        "resend_api_key_id",
+        "approved_revision_id",
+        "draft_head_revision_id",
+        "version",
+    }.issubset({column["name"] for column in inspector.get_columns("newsletters")})
+    assert {"revision_id", "run_type"}.issubset(
+        {column["name"] for column in inspector.get_columns("newsletter_runs")}
     )
 
     foreign_keys = {fk["name"]: fk for fk in inspector.get_foreign_keys("newsletters")}
@@ -41,15 +52,23 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
         "fk_newsletters_template_id",
         "fk_newsletters_api_key_id",
         "fk_newsletters_resend_api_key_id",
+        "fk_newsletters_approved_revision_id",
+        "fk_newsletters_draft_head_revision_id",
     }
     assert foreign_keys["fk_newsletters_provider_id"]["referred_table"] == "providers"
     assert foreign_keys["fk_newsletters_template_id"]["referred_table"] == "email_templates"
     assert foreign_keys["fk_newsletters_api_key_id"]["referred_table"] == "api_keys"
     assert foreign_keys["fk_newsletters_resend_api_key_id"]["referred_table"] == "api_keys"
+    assert (
+        foreign_keys["fk_newsletters_approved_revision_id"]["referred_table"] == "draft_revisions"
+    )
+    assert (
+        foreign_keys["fk_newsletters_draft_head_revision_id"]["referred_table"] == "draft_revisions"
+    )
 
     with app.database.get_engine().connect() as connection:
         version = connection.execute(
             sa.text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "2a3b4c5d6e7f"
+    assert version == "3b4c5d6e7f80"
