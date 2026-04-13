@@ -73,6 +73,7 @@ test('create newsletter through the UI', async ({ page }) => {
   await page.waitForLoadState('networkidle');
   await expect(page.getByRole('button', { name: /new newsletter/i })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: /new newsletter/i }).click();
+  await expect(page.locator('form, .editor-form').first()).toBeVisible({ timeout: 15000 });
   await expect(page.getByLabel('Name')).toBeVisible({ timeout: 15000 });
   await page.getByLabel('Name').fill('UI Created Newsletter');
   await page.getByLabel('Description').fill('Created through the UI');
