@@ -104,3 +104,47 @@ jobs:
 
       - name: Run frontend typecheck
         run: npx tsc --noEmit
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install chromium
+
+      - name: Start Pulse News stack
+        run: |
+          PULSE_NEWS_ENVIRONMENT=development \
+          PULSE_NEWS_SECRET_KEY=ci-secret \
+          PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION=true \
+          PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true \
+          PORT=9876 make up
+
+      - name: Wait for Pulse News health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9876/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs --no-color --tail 200
+          exit 1
+
+      - name: Run Playwright smoke test
+        working-directory: frontend
+        run: npx playwright test

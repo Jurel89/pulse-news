@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -53,7 +54,12 @@ def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
                 SEND_ALLOWED_STATUSES,
             )
             return
-        execute_newsletter_send(session, newsletter, trigger_mode="scheduled-send")
+        execute_newsletter_send(
+            session,
+            newsletter,
+            trigger_mode="scheduled-send",
+            fire_scope=datetime.now(UTC).replace(second=0, microsecond=0).isoformat(),
+        )
     finally:
         session.close()
 
@@ -75,6 +81,7 @@ def sync_newsletter_schedule(newsletter: Newsletter) -> None:
             args=[newsletter.id],
             replace_existing=True,
             coalesce=True,
+            max_instances=1,
             misfire_grace_time=300,
         )
         return
@@ -119,8 +126,10 @@ def reconcile_scheduler_jobs() -> None:
 def start_scheduler() -> None:
     scheduler = get_scheduler()
     if not scheduler.running:
-        scheduler.start()
+        scheduler.start(paused=True)
     reconcile_scheduler_jobs()
+    if scheduler.state == 2:  # paused
+        scheduler.resume()
 
 
 def shutdown_scheduler() -> None:

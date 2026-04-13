@@ -26,6 +26,19 @@ def normalize_draft_content(newsletter: Newsletter) -> tuple[str, str, str]:
     return subject, preheader, body
 
 
+def normalize_revision_content(
+    newsletter: Newsletter,
+    *,
+    subject: str,
+    preheader: str | None,
+    body: str,
+) -> tuple[str, str, str]:
+    normalized_subject = subject.strip() or newsletter.name
+    normalized_preheader = (preheader or newsletter.description or "").strip()
+    normalized_body = body.strip() or newsletter.description or ""
+    return normalized_subject, normalized_preheader, normalized_body
+
+
 def render_plain_text(subject: str, preheader: str, body: str) -> str:
     sections = [subject]
     if preheader:
@@ -231,12 +244,28 @@ def render_custom_template(
 
 
 def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
+    subject, preheader, body = normalize_draft_content(newsletter)
+    return render_newsletter_content(newsletter, subject=subject, preheader=preheader, body=body)
+
+
+def render_newsletter_content(
+    newsletter: Newsletter,
+    *,
+    subject: str,
+    preheader: str | None,
+    body: str,
+) -> RenderedNewsletter:
     from sqlalchemy import select
 
     from app.deps import get_db_session
     from app.models import EmailTemplate
 
-    subject, preheader, body = normalize_draft_content(newsletter)
+    subject, preheader, body = normalize_revision_content(
+        newsletter,
+        subject=subject,
+        preheader=preheader,
+        body=body,
+    )
     body_html = _markdown_body_to_html(body)
 
     template_key = newsletter.template_key or "signal"

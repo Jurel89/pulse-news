@@ -132,7 +132,10 @@ def test_run_dashboard_filters_and_details(client: TestClient):
     generate_response = client.post(f"/api/newsletters/{newsletter['id']}/generate-draft")
     assert generate_response.status_code == 200
 
-    send_response = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    send_response = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
     assert send_response.status_code == 200
     send_run_id = send_response.json()["run"]["id"]
 
@@ -162,14 +165,69 @@ def test_run_dashboard_filters_and_details(client: TestClient):
     assert refreshed_detail.json()["events"]
 
 
-def test_operational_events_endpoint_returns_run_history_and_run_events(client: TestClient):
+def test_duplicate_manual_send_reuses_existing_run(client: TestClient):
+    bootstrap_operator(client)
+    newsletter = create_newsletter(client)
+
+    first_send = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
+    assert first_send.status_code == 200
+    first_run = first_send.json()["run"]
+
+    second_send = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
+    assert second_send.status_code == 200
+    second_run = second_send.json()["run"]
+
+    assert second_run["id"] == first_run["id"]
+    assert second_run["revision_id"] == first_run["revision_id"]
+
+
+def test_duplicate_scheduled_send_uses_fire_scope(client: TestClient):
+    import app.database
+    from app.api.newsletters import execute_newsletter_send
+    from app.models import Newsletter
+
+    bootstrap_operator(client)
+    newsletter_payload = create_newsletter(client)
+
+    session = app.database.get_session_maker()()
+    try:
+        newsletter = session.get(Newsletter, newsletter_payload["id"])
+        assert newsletter is not None
+        first_response, first_run = execute_newsletter_send(
+            session,
+            newsletter,
+            trigger_mode="scheduled-send",
+            fire_scope="2026-04-13T10:00:00+00:00",
+        )
+        second_response, second_run = execute_newsletter_send(
+            session,
+            newsletter,
+            trigger_mode="scheduled-send",
+            fire_scope="2026-04-20T10:00:00+00:00",
+        )
+        assert first_response.run.id != second_response.run.id
+        assert first_run.attempt_key != second_run.attempt_key
+    finally:
+        session.close()
+
+
+def test_operational_events_endpoint_defaults_to_run_events_only(client: TestClient):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
 
     generate_response = client.post(f"/api/newsletters/{newsletter['id']}/generate-draft")
     assert generate_response.status_code == 200
 
-    send_response = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    send_response = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
     assert send_response.status_code == 200
     send_run = send_response.json()["run"]
 
@@ -181,12 +239,21 @@ def test_operational_events_endpoint_returns_run_history_and_run_events(client: 
 
     items = events_response.json()["items"]
     assert items
-    assert any(item["source"] == "run" for item in items)
-    assert any(item["source"] == "run_event" for item in items)
+    assert all(item["source"] == "run_event" for item in items)
     assert any(item["run_id"] == send_run["id"] for item in items)
 
+    run_feed_response = client.get(
+        "/api/runs/events",
+        params={"search": newsletter["name"], "include_runs": True},
+    )
+    assert run_feed_response.status_code == 200
+    run_feed_items = run_feed_response.json()["items"]
+    assert any(item["source"] == "run" for item in run_feed_items)
+
     run_items = [
-        item for item in items if item["source"] == "run" and item["run_id"] == send_run["id"]
+        item
+        for item in run_feed_items
+        if item["source"] == "run" and item["run_id"] == send_run["id"]
     ]
     assert run_items
     assert run_items[0]["event_type"] == "run-manual-send"

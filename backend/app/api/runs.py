@@ -80,6 +80,8 @@ def list_runs(
     request: Request,
     db: DbSession,
     newsletter_id: int | None = None,
+    revision_id: int | None = None,
+    run_type: str | None = None,
     run_status: str | None = None,
     trigger_mode: str | None = None,
     date_from: date | None = None,
@@ -89,6 +91,10 @@ def list_runs(
     statement = select(NewsletterRun).order_by(NewsletterRun.created_at.desc())
     if newsletter_id is not None:
         statement = statement.where(NewsletterRun.newsletter_id == newsletter_id)
+    if revision_id is not None:
+        statement = statement.where(NewsletterRun.revision_id == revision_id)
+    if run_type is not None:
+        statement = statement.where(NewsletterRun.run_type == run_type)
     if run_status is not None:
         statement = statement.where(NewsletterRun.run_status == run_status)
     if trigger_mode is not None:
@@ -117,6 +123,7 @@ def list_run_operational_events(
     date_from: date | None = None,
     date_to: date | None = None,
     limit: int = 100,
+    include_runs: bool = False,
 ) -> OperationalEventListResponse:
     require_authenticated_user(request, db)
 
@@ -125,7 +132,6 @@ def list_run_operational_events(
     normalized_search = _normalize_filter_value(search)
     normalized_limit = min(max(limit, 1), 200)
 
-    include_runs = True
     include_run_events = True
 
     run_statement = select(NewsletterRun).order_by(NewsletterRun.created_at.desc())
@@ -148,6 +154,7 @@ def list_run_operational_events(
     if normalized_event_type is not None:
         if normalized_event_type.startswith("run-"):
             include_run_events = False
+            include_runs = True
             run_statement = run_statement.where(
                 NewsletterRun.trigger_mode == normalized_event_type.removeprefix("run-")
             )

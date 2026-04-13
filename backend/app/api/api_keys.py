@@ -313,8 +313,9 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
                 message=(
                     "Resend API key is active, but no sender email is configured. "
                     "Add a Sender Email to this API key or set PULSE_NEWS_RESEND_FROM_EMAIL. "
-                    "Newsletter sends will fall back to local preview until a sender email "
-                    "is configured."
+                    "Newsletter sends fail closed by default unless you explicitly enable "
+                    "non-production simulation with "
+                    "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true."
                 ),
                 provider_type=api_key.provider_type,
                 masked_key=mask_api_key(decrypted_key_value),

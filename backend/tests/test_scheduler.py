@@ -109,6 +109,7 @@ def test_sync_newsletter_schedule_adds_and_removes_jobs(client: TestClient):
     assert scheduled_job is not None
     assert scheduled_job.id == job_id
     assert scheduled_job.args == (newsletter.id,)
+    assert scheduled_job.max_instances == 1
 
     session = app.database.get_session_maker()()
     try:

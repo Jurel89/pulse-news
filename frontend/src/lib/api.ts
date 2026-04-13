@@ -52,6 +52,9 @@ export type NewsletterSendResult = {
   run: {
     id: number;
     newsletter_id: number;
+    revision_id: number | null;
+    run_type: string | null;
+    snapshot_newsletter_name: string | null;
     trigger_mode: string;
     run_status: string;
     provider_name: string;
@@ -65,6 +68,8 @@ export type NewsletterSendResult = {
   delivery_outcomes: string;
   result_mode: string | null;
   result_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
   };
@@ -94,13 +99,40 @@ export type NewsletterGenerationResult = {
   status: string;
   mode: string;
   message: string;
+  revision_id?: number | null;
+  newsletter: NewsletterDetail;
+  run: NewsletterSendResult["run"];
+};
+
+export type DraftRevisionSummary = {
+  id: number;
+  newsletter_id: number;
+  version_number: number;
+  state: string;
+  origin: string;
+  created_by_email: string | null;
+  subject: string;
+  preheader: string | null;
+  body_text: string;
+  generation_run_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DraftRevisionListResponse = {
+  items: DraftRevisionSummary[];
+};
+
+export type DraftRevisionApproveResponse = {
+  revision: DraftRevisionSummary;
   newsletter: NewsletterDetail;
 };
 
-export type NewsletterRunResult = {
-  generation: NewsletterGenerationResult;
-  send: NewsletterSendResult;
+export type DraftRevisionDetailResponse = {
+  revision: DraftRevisionSummary;
 };
+
+
 
 export type FormOptionTemplate = {
   key: string;
@@ -123,11 +155,31 @@ export type FormOptionApiKey = {
   from_email: string | null;
 };
 
+export type FormOptionGenerationProfile = {
+  id: number;
+  name: string;
+  provider_id: number | null;
+  model_name: string;
+  api_key_binding_mode: string;
+  api_key_id: number | null;
+};
+
+export type FormOptionDeliveryProfile = {
+  id: number;
+  name: string;
+  provider_type: string;
+  api_key_binding_mode: string;
+  api_key_id: number | null;
+  from_email: string | null;
+};
+
 export type FormOptions = {
   templates: FormOptionTemplate[];
   providers: FormOptionProvider[];
   models: Record<string, string[]>;
   api_keys: FormOptionApiKey[];
+  generation_profiles: FormOptionGenerationProfile[];
+  delivery_profiles: FormOptionDeliveryProfile[];
   timezones: string[];
 };
 
@@ -217,29 +269,54 @@ export const api = {
   listNewsletters: () => request<NewsletterSummary[]>("/newsletters"),
   getNewsletter: (newsletterId: number) =>
     request<NewsletterDetail>(`/newsletters/${newsletterId}`),
-  previewNewsletter: (newsletterId: number) =>
-    request<NewsletterPreview>(`/newsletters/${newsletterId}/preview`),
+  previewNewsletter: (newsletterId: number, revisionId: number) =>
+    request<NewsletterPreview>(`/newsletters/${newsletterId}/preview?revision_id=${revisionId}`),
+  previewNewsletterRevision: (newsletterId: number, revisionId: number) =>
+    request<NewsletterPreview>(`/newsletters/${newsletterId}/revisions/${revisionId}/preview`),
   generateNewsletter: (newsletterId: number) =>
     request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
       method: "POST"
     }),
-  runNewsletter: async (newsletterId: number) => {
-    const generation = await request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
+  listNewsletterRevisions: (newsletterId: number) =>
+    request<DraftRevisionListResponse>(`/newsletters/${newsletterId}/revisions`),
+  getNewsletterRevision: (newsletterId: number, revisionId: number) =>
+    request<DraftRevisionDetailResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}`),
+  updateNewsletterRevision: (
+    newsletterId: number,
+    revisionId: number,
+    payload: Pick<DraftRevisionSummary, "subject" | "preheader" | "body_text">
+  ) =>
+    request<DraftRevisionDetailResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}`, {
+      method: "PATCH",
+      jsonBody: payload,
+    }),
+  approveNewsletterRevision: (newsletterId: number, revisionId: number) =>
+    request<DraftRevisionApproveResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}/approve`, {
       method: "POST"
-    });
-    const send = await request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
-      method: "POST"
-    });
-    return { generation, send } satisfies NewsletterRunResult;
-  },
-  testSendNewsletter: (newsletterId: number, toEmail: string) =>
+    }),
+
+  testSendNewsletter: (newsletterId: number, revisionId: number, toEmail: string) =>
     request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/test-send`, {
+      method: "POST",
+      jsonBody: { to_email: toEmail, revision_id: revisionId }
+    }),
+  testSendNewsletterRevision: (newsletterId: number, revisionId: number, toEmail: string) =>
+    request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/test-send`, {
       method: "POST",
       jsonBody: { to_email: toEmail }
     }),
-  sendNewsletter: (newsletterId: number) =>
+  sendNewsletter: (newsletterId: number, revisionId: number, idempotencyKey?: string) =>
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
-      method: "POST"
+      method: "POST",
+      jsonBody: {
+        revision_id: revisionId,
+        ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+      },
+    }),
+  sendNewsletterRevision: (newsletterId: number, revisionId: number, idempotencyKey?: string) =>
+    request<NewsletterSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/send`, {
+      method: "POST",
+      jsonBody: idempotencyKey ? { idempotency_key: idempotencyKey } : undefined,
     }),
   listAuditEvents: (params: AuditEventListParams) =>
     request<AuditEventListResponse>(`/audit${buildQueryString(params)}`),

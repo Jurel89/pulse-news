@@ -114,6 +114,10 @@ def test_newsletter_crud_flow(client: TestClient):
     assert created_newsletter["status"] == "active"
     assert len(created_newsletter["recipients"]) == 3
     assert created_newsletter["draft_subject"] == "Daily Brief: AI infrastructure headlines"
+    assert created_newsletter["approved_revision_id"] is not None
+    assert (
+        created_newsletter["draft_head_revision_id"] == created_newsletter["approved_revision_id"]
+    )
 
     list_response = client.get("/api/newsletters")
     assert list_response.status_code == 200
@@ -172,7 +176,7 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
         json={
             "name": "Draft Test",
             "description": "Testing draft generation",
-            "prompt": "Write a brief about testing.",
+            "prompt": "Write a brief about testing using https://example.com/source.",
             "draft_subject": "Draft Test Subject",
             "draft_preheader": "Draft preheader",
             "draft_body_text": "Initial body",
@@ -199,7 +203,206 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     assert "message" in result
     assert "newsletter" in result
     assert "run" in result
+    assert result["revision_id"] is not None
     assert result["newsletter"]["id"] == newsletter_id
+    assert result["newsletter"]["draft_head_revision_id"] == result["revision_id"]
+    assert result["newsletter"]["approved_revision_id"] != result["revision_id"]
+    assert result["run"]["revision_id"] == result["revision_id"]
+
+    get_response = client.get(f"/api/newsletters/{newsletter_id}")
+    assert get_response.status_code == 200
+    fetched_newsletter = get_response.json()
+    assert fetched_newsletter["draft_head_revision_id"] == result["revision_id"]
+    assert fetched_newsletter["approved_revision_id"] != result["revision_id"]
+
+    revisions_response = client.get(f"/api/newsletters/{newsletter_id}/revisions")
+    assert revisions_response.status_code == 200
+    latest_revision = revisions_response.json()["items"][0]
+    assert latest_revision["id"] == result["revision_id"]
+    assert "https://example.com/source" in (latest_revision["source_bundle_snapshot_json"] or "")
+    if result["mode"] == "litellm":
+        assert latest_revision["highlights_json"] is not None
+        assert latest_revision["source_references_json"] is not None
+    assert latest_revision["provider_snapshot_json"] is not None
+    assert "openai/" in latest_revision["provider_snapshot_json"]
+    if result["mode"] == "litellm":
+        assert latest_revision["raw_response_hash"] is not None
+
+
+def test_revision_history_and_approval_flow(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Approval Test",
+            "description": "Testing revision approval",
+            "prompt": "Write a brief about approvals.",
+            "draft_subject": "Approval Subject",
+            "draft_preheader": "Approval preheader",
+            "draft_body_text": "Initial approved body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "testers",
+            "delivery_topic": "approval-test",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "approver@example.com",
+        },
+    )
+    assert create_response.status_code == 201
+    created = create_response.json()
+
+    generate_response = client.post(f"/api/newsletters/{created['id']}/generate-draft")
+    assert generate_response.status_code == 200
+    generated_revision_id = generate_response.json()["revision_id"]
+
+    revisions_response = client.get(f"/api/newsletters/{created['id']}/revisions")
+    assert revisions_response.status_code == 200
+    revisions = revisions_response.json()["items"]
+    assert len(revisions) == 2
+    assert revisions[0]["id"] == generated_revision_id
+    assert revisions[0]["state"] == "candidate"
+    assert revisions[1]["state"] == "approved"
+
+    approve_response = client.post(
+        f"/api/newsletters/{created['id']}/revisions/{generated_revision_id}/approve"
+    )
+    assert approve_response.status_code == 200
+    approved_payload = approve_response.json()
+    assert approved_payload["revision"]["id"] == generated_revision_id
+    assert approved_payload["revision"]["state"] == "approved"
+    assert approved_payload["newsletter"]["approved_revision_id"] == generated_revision_id
+    assert approved_payload["newsletter"]["draft_head_revision_id"] == generated_revision_id
+
+    revisions_after = client.get(f"/api/newsletters/{created['id']}/revisions")
+    assert revisions_after.status_code == 200
+    revisions_by_id = {item["id"]: item for item in revisions_after.json()["items"]}
+    assert revisions_by_id[generated_revision_id]["state"] == "approved"
+    assert revisions_by_id[created["approved_revision_id"]]["state"] == "superseded"
+
+
+def test_candidate_revision_cannot_be_sent_until_approved(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Candidate Send Test",
+            "description": "Candidate approval enforcement",
+            "prompt": "Write a brief about approvals.",
+            "draft_subject": "Approved Subject",
+            "draft_preheader": "Approved preheader",
+            "draft_body_text": "Initial approved body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "testers",
+            "delivery_topic": "candidate-send",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "approver@example.com",
+        },
+    )
+    newsletter_id = create_response.json()["id"]
+    generated_revision_id = client.post(f"/api/newsletters/{newsletter_id}/generate-draft").json()[
+        "revision_id"
+    ]
+
+    send_response = client.post(
+        f"/api/newsletters/{newsletter_id}/revisions/{generated_revision_id}/send"
+    )
+    assert send_response.status_code == 409
+    assert "Only the approved revision can be sent" in send_response.json()["detail"]
+
+
+def test_updating_job_does_not_mutate_candidate_revision(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Candidate Version Test",
+            "description": "Draft mutation test",
+            "prompt": "Write a brief about versions.",
+            "draft_subject": "Initial subject",
+            "draft_preheader": "Initial preheader",
+            "draft_body_text": "Initial body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "testers",
+            "delivery_topic": "candidate-version",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "approver@example.com",
+        },
+    )
+    detail = create_response.json()
+    newsletter_id = detail["id"]
+    first_candidate_revision_id = client.post(
+        f"/api/newsletters/{newsletter_id}/generate-draft"
+    ).json()["revision_id"]
+
+    detail_response = client.get(f"/api/newsletters/{newsletter_id}")
+    detail_payload = detail_response.json()
+    detail_payload["name"] = "Updated job name"
+    detail_payload["notes"] = "Updated job notes"
+    update_response = client.put(f"/api/newsletters/{newsletter_id}", json=detail_payload)
+    assert update_response.status_code == 200
+
+    revisions = client.get(f"/api/newsletters/{newsletter_id}/revisions").json()["items"]
+    assert revisions[0]["id"] == first_candidate_revision_id
+    assert revisions[0]["state"] == "candidate"
+
+
+def test_updating_revision_uses_dedicated_revision_endpoint(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Revision Edit Test",
+            "description": "Revision endpoint test",
+            "prompt": "Write a brief about revision edits.",
+            "draft_subject": "Initial subject",
+            "draft_preheader": "Initial preheader",
+            "draft_body_text": "Initial body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "testers",
+            "delivery_topic": "revision-edit",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "approver@example.com",
+        },
+    )
+    newsletter_id = create_response.json()["id"]
+    first_candidate_revision_id = client.post(
+        f"/api/newsletters/{newsletter_id}/generate-draft"
+    ).json()["revision_id"]
+
+    update_revision_response = client.patch(
+        f"/api/newsletters/{newsletter_id}/revisions/{first_candidate_revision_id}",
+        json={
+            "subject": "Updated candidate subject",
+            "preheader": "Updated candidate preheader",
+            "body_text": "Updated candidate body",
+        },
+    )
+    assert update_revision_response.status_code == 200
+    updated_revision = update_revision_response.json()["revision"]
+    assert updated_revision["id"] == first_candidate_revision_id
+    assert updated_revision["subject"] == "Updated candidate subject"
+    assert updated_revision["body_text"] == "Updated candidate body"
 
 
 def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):

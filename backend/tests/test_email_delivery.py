@@ -133,7 +133,7 @@ def test_get_resend_api_key_uses_newsletter_resend_key_instead_of_ai_key(client:
     assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-newsletter-key"
 
 
-def test_get_resend_api_key_uses_active_database_fallback_when_environment_key_missing(
+def test_get_resend_api_key_returns_none_without_newsletter_selection_or_environment_key(
     client: TestClient,
 ):
     import app.database
@@ -176,13 +176,15 @@ def test_get_resend_api_key_uses_active_database_fallback_when_environment_key_m
 
     settings = make_settings()
 
-    assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-database-key"
+    assert app.email_delivery._get_resend_api_key(settings, newsletter) is None
 
 
-def test_get_resend_api_key_prefers_complete_env_key_over_database_fallback(client: TestClient):
+def test_get_resend_api_key_uses_complete_environment_configuration_when_no_key_is_pinned(
+    client: TestClient,
+):
     import app.database
     import app.email_delivery
-    from app.models import ApiKey, Newsletter
+    from app.models import ApiKey, DeliveryProfile, Newsletter
 
     session = app.database.get_session_maker()()
     try:
@@ -213,6 +215,15 @@ def test_get_resend_api_key_prefers_complete_env_key_over_database_fallback(clie
             status="active",
         )
         session.add(newsletter)
+        session.flush()
+        delivery_profile = DeliveryProfile(
+            name="System Default Delivery",
+            provider_type="resend",
+            api_key_binding_mode="system_default",
+        )
+        session.add(delivery_profile)
+        session.flush()
+        newsletter.delivery_profile_id = delivery_profile.id
         session.commit()
         session.refresh(newsletter)
     finally:
@@ -223,7 +234,9 @@ def test_get_resend_api_key_prefers_complete_env_key_over_database_fallback(clie
     assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-env-key"
 
 
-def test_get_resend_api_key_skips_env_key_without_sender_email(client: TestClient):
+def test_get_resend_api_key_requires_sender_email_without_falling_back_to_database_key(
+    client: TestClient,
+):
     import app.database
     import app.email_delivery
     from app.models import ApiKey, Newsletter
@@ -263,13 +276,50 @@ def test_get_resend_api_key_skips_env_key_without_sender_email(client: TestClien
     finally:
         session.close()
 
-    # Env API key set but no sender email — should fall through to DB key with from_email
+    # Env API key set but no sender email — should fail closed instead of falling through.
     settings = make_settings(resend_api_key="re-env-key")
 
-    assert app.email_delivery._get_resend_api_key(settings, newsletter) == "re-database-key"
+    assert app.email_delivery._get_resend_api_key(settings, newsletter) is None
 
 
-def test_send_test_email_returns_local_preview_when_resend_is_not_configured(
+def test_get_resend_api_key_fails_closed_without_pinned_key_or_system_default_profile(
+    client: TestClient,
+):
+    import app.database
+    import app.email_delivery
+    from app.models import Newsletter
+
+    session = app.database.get_session_maker()()
+    try:
+        newsletter = Newsletter(
+            name="Delivery Brief",
+            slug="delivery-brief-no-default",
+            description="No resend default",
+            prompt="Generate a delivery brief.",
+            draft_subject="Delivery Brief",
+            draft_preheader="Delivery test",
+            draft_body_text="Body copy",
+            provider_name="openai",
+            model_name="gpt-4o-mini",
+            template_key="signal",
+            audience_name="ops",
+            delivery_topic="delivery-brief",
+            timezone="UTC",
+            schedule_enabled=False,
+            status="active",
+        )
+        session.add(newsletter)
+        session.commit()
+        session.refresh(newsletter)
+    finally:
+        session.close()
+
+    settings = make_settings(resend_api_key="re-env-key", resend_from_email="sender@example.com")
+
+    assert app.email_delivery._get_resend_api_key(settings, newsletter) is None
+
+
+def test_send_test_email_returns_error_when_resend_is_not_configured_by_default(
     client: TestClient,
     monkeypatch,
 ):
@@ -286,11 +336,37 @@ def test_send_test_email_returns_local_preview_when_resend_is_not_configured(
         to_email="qa@example.com",
     )
 
-    assert result.status == "simulated"
-    assert result.mode == "local-preview"
+    assert result.status == "error"
+    assert result.mode == "none"
     assert result.provider_id is None
     assert result.to_email == "qa@example.com"
-    assert "not configured" in result.message.lower() or "local" in result.message.lower()
+    assert "blocked" in result.message.lower()
+    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
+    urlopen.assert_not_called()
+
+
+def test_send_test_email_returns_explicit_local_preview_when_simulation_is_enabled(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.email_delivery
+
+    settings = make_settings(allow_simulated_email_delivery=True)
+    rendered = build_rendered_newsletter()
+    urlopen = Mock()
+    monkeypatch.setattr(app.email_delivery.request, "urlopen", urlopen)
+
+    result = app.email_delivery.send_test_email(
+        settings=settings,
+        rendered=rendered,
+        to_email="qa@example.com",
+    )
+
+    assert result.status == "simulated"
+    assert result.mode == "local-preview"
+    assert (
+        "simulation is enabled via PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
+    )
     urlopen.assert_not_called()
 
 
@@ -328,7 +404,7 @@ def test_send_test_email_raises_runtime_error_when_resend_returns_http_error(
     urlopen.assert_called_once()
 
 
-def test_send_test_email_falls_back_to_environment_key_with_debug_message(
+def test_send_test_email_fails_closed_when_pinned_key_is_inactive_even_if_environment_key_exists(
     client: TestClient,
     monkeypatch,
 ):
@@ -376,23 +452,8 @@ def test_send_test_email_falls_back_to_environment_key_with_debug_message(
         resend_from_email="news@example.com",
     )
 
-    class ResponseStub:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return b'{"id":"email_123"}'
-
-    captured_request = {}
-
-    def fake_urlopen(request_obj, timeout):
-        captured_request["authorization"] = request_obj.get_header("Authorization")
-        return ResponseStub()
-
-    monkeypatch.setattr(app.email_delivery.request, "urlopen", fake_urlopen)
+    urlopen = Mock()
+    monkeypatch.setattr(app.email_delivery.request, "urlopen", urlopen)
 
     result = app.email_delivery.send_test_email(
         settings=settings,
@@ -401,11 +462,12 @@ def test_send_test_email_falls_back_to_environment_key_with_debug_message(
         newsletter=newsletter,
     )
 
-    assert result.status == "sent"
-    assert captured_request["authorization"] == "Bearer re-env-key"
+    assert result.status == "error"
+    assert result.mode == "none"
     assert "is inactive" in result.message
-    assert "Using PULSE_NEWS_RESEND_API_KEY fallback." in result.message
+    assert "newsletter-specific Resend API key" in result.message
     assert "Using sender 'news@example.com'." in result.message
+    urlopen.assert_not_called()
 
 
 def test_send_test_email_reports_newsletter_key_decryption_failures(
@@ -465,10 +527,14 @@ def test_send_test_email_reports_newsletter_key_decryption_failures(
         newsletter=newsletter,
     )
 
-    assert result.status == "simulated"
+    assert result.status == "error"
+    assert result.mode == "none"
     assert "could not be decrypted" in result.message
-    assert "PULSE_NEWS_RESEND_API_KEY is not set." in result.message
-    assert "No sender email configured" in result.message
+    assert (
+        "No sender email is configured for the selected newsletter-specific Resend key"
+        in result.message
+    )
+    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
     urlopen.assert_not_called()
 
 
@@ -626,7 +692,7 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
     import app.config
     import app.database
     import app.email_delivery
-    from app.models import Newsletter
+    from app.models import DeliveryProfile, DraftRevision, Newsletter
 
     bootstrap_operator(client)
     monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re-env-key")
@@ -653,8 +719,32 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
             status="active",
         )
         session.add(newsletter)
+        session.flush()
+        revision = DraftRevision(
+            newsletter_id=newsletter.id,
+            version_number=1,
+            state="approved",
+            origin="imported",
+            subject=newsletter.draft_subject,
+            preheader=newsletter.draft_preheader,
+            body_text=newsletter.draft_body_text,
+            prompt_snapshot=newsletter.prompt,
+        )
+        session.add(revision)
+        session.flush()
+        newsletter.approved_revision_id = revision.id
+        newsletter.draft_head_revision_id = revision.id
+        delivery_profile = DeliveryProfile(
+            name="System Default Delivery",
+            provider_type="resend",
+            api_key_binding_mode="system_default",
+        )
+        session.add(delivery_profile)
+        session.flush()
+        newsletter.delivery_profile_id = delivery_profile.id
         session.commit()
         newsletter_id = newsletter.id
+        approved_revision_id = newsletter.approved_revision_id
     finally:
         session.close()
 
@@ -669,14 +759,14 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
 
     response = client.post(
         f"/api/newsletters/{newsletter_id}/test-send",
-        json={"to_email": "qa@example.com"},
+        json={"to_email": "qa@example.com", "revision_id": approved_revision_id},
     )
 
     assert response.status_code == 502
     assert 'Provider response: {"message":"invalid sender"}' in response.json()["detail"]
 
 
-def test_send_newsletter_email_returns_local_preview_outcomes_when_resend_is_not_configured(
+def test_send_newsletter_email_returns_failed_outcomes_when_resend_is_not_configured_by_default(
     client: TestClient,
     monkeypatch,
 ):
@@ -696,14 +786,15 @@ def test_send_newsletter_email_returns_local_preview_outcomes_when_resend_is_not
         ],
     )
 
-    assert result.status == "fallback"
-    assert result.mode == "local-preview"
+    assert result.status == "failed"
+    assert result.mode == "none"
     assert len(result.recipient_outcomes) == 2
     assert [outcome.email for outcome in result.recipient_outcomes] == [
         "first@example.com",
         "second@example.com",
     ]
-    assert all(outcome.status == "simulated" for outcome in result.recipient_outcomes)
+    assert all(outcome.status == "failed" for outcome in result.recipient_outcomes)
+    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
     urlopen.assert_not_called()
 
 
@@ -760,7 +851,7 @@ def test_send_newsletter_email_simulated_mode_returns_all_outcomes_for_large_bat
 ):
     import app.email_delivery
 
-    settings = make_settings()
+    settings = make_settings(allow_simulated_email_delivery=True)
     rendered = build_rendered_newsletter()
     recipient_targets = [
         app.email_delivery.RecipientDeliveryTarget(email=f"user{index}@example.com")
@@ -779,6 +870,7 @@ def test_send_newsletter_email_simulated_mode_returns_all_outcomes_for_large_bat
     assert result.recipient_outcomes[0].email == "user0@example.com"
     assert result.recipient_outcomes[-1].email == "user119@example.com"
     assert all(outcome.status == "simulated" for outcome in result.recipient_outcomes)
+    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
 
 
 def test_batch_sends_to_multiple_recipients_via_batch_endpoint(client: TestClient, monkeypatch):

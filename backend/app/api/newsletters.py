@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import secrets
-import uuid
 from zoneinfo import available_timezones
 
 from apscheduler.triggers.cron import CronTrigger
@@ -17,11 +16,15 @@ from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
-from app.email_templates import render_newsletter
+from app.email_templates import render_newsletter_content
+from app.idempotency import build_delivery_attempt_key
 from app.models import (
     ApiKey,
     AuditEvent,
+    DeliveryProfile,
+    DraftRevision,
     EmailTemplate,
+    GenerationProfile,
     Newsletter,
     NewsletterRecipient,
     NewsletterRun,
@@ -30,17 +33,24 @@ from app.models import (
     utc_now,
 )
 from app.schemas import (
+    DraftRevisionApproveResponse,
+    DraftRevisionDetailResponse,
+    DraftRevisionListResponse,
+    DraftRevisionSummary,
+    DraftRevisionUpdateRequest,
     NewsletterCreateRequest,
     NewsletterDetail,
     NewsletterGenerationResponse,
+    NewsletterJobUpdateRequest,
     NewsletterPreviewResponse,
     NewsletterRunSummary,
+    NewsletterSendRequest,
     NewsletterSendResponse,
     NewsletterSummary,
     NewsletterTestSendRequest,
     NewsletterTestSendResponse,
-    NewsletterUpdateRequest,
 )
+from app.source_pipeline.service import build_source_bundle, serialize_source_bundle
 
 newsletters_router = APIRouter(prefix="/newsletters", tags=["newsletters"])
 
@@ -108,6 +118,171 @@ def get_newsletter_or_404(db: DbSession, newsletter_id: int) -> Newsletter:
     if newsletter is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Newsletter not found.")
     return newsletter
+
+
+def get_revision_or_404(db: DbSession, newsletter: Newsletter, revision_id: int) -> DraftRevision:
+    revision = db.scalar(
+        select(DraftRevision).where(
+            DraftRevision.id == revision_id,
+            DraftRevision.newsletter_id == newsletter.id,
+        )
+    )
+    if revision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found.")
+    return revision
+
+
+def _next_revision_number(newsletter: Newsletter) -> int:
+    if not newsletter.revisions:
+        return 1
+    return max(revision.version_number for revision in newsletter.revisions) + 1
+
+
+def _create_revision(
+    newsletter: Newsletter,
+    *,
+    state: str,
+    origin: str,
+    created_by_email: str | None,
+    subject: str,
+    preheader: str | None,
+    body_text: str,
+    prompt_snapshot: str | None,
+    source_bundle_snapshot_json: str | None = None,
+    highlights_json: str | None = None,
+    source_references_json: str | None = None,
+    provider_snapshot_json: str | None = None,
+    token_usage_json: str | None = None,
+    raw_response_hash: str | None = None,
+    generation_run_id: int | None = None,
+) -> DraftRevision:
+    revision = DraftRevision(
+        newsletter=newsletter,
+        version_number=_next_revision_number(newsletter),
+        state=state,
+        origin=origin,
+        created_by_email=created_by_email,
+        subject=subject,
+        preheader=preheader,
+        body_text=body_text,
+        prompt_snapshot=prompt_snapshot,
+        source_bundle_snapshot_json=source_bundle_snapshot_json,
+        highlights_json=highlights_json,
+        source_references_json=source_references_json,
+        provider_snapshot_json=provider_snapshot_json,
+        token_usage_json=token_usage_json,
+        raw_response_hash=raw_response_hash,
+        generation_run_id=generation_run_id,
+    )
+    return revision
+
+
+def _ensure_revision_projection(newsletter: Newsletter) -> DraftRevision | None:
+    if newsletter.draft_head_revision is not None:
+        return newsletter.draft_head_revision
+
+    if newsletter.approved_revision is not None:
+        newsletter.draft_head_revision = newsletter.approved_revision
+        return newsletter.draft_head_revision
+
+    if newsletter.revisions:
+        sorted_revisions = sorted(
+            newsletter.revisions, key=lambda revision: revision.version_number
+        )
+        newsletter.approved_revision = next(
+            (revision for revision in reversed(sorted_revisions) if revision.state == "approved"),
+            sorted_revisions[0],
+        )
+        newsletter.draft_head_revision = sorted_revisions[-1]
+        return newsletter.draft_head_revision
+
+    imported_revision = _create_revision(
+        newsletter,
+        state="approved",
+        origin="imported",
+        created_by_email=None,
+        subject=newsletter.draft_subject,
+        preheader=newsletter.draft_preheader,
+        body_text=newsletter.draft_body_text,
+        prompt_snapshot=newsletter.prompt,
+    )
+    newsletter.approved_revision = imported_revision
+    newsletter.draft_head_revision = imported_revision
+    return imported_revision
+
+
+def _draft_revision(newsletter: Newsletter) -> DraftRevision | None:
+    return _ensure_revision_projection(newsletter)
+
+
+def _approved_revision(newsletter: Newsletter) -> DraftRevision | None:
+    _ensure_revision_projection(newsletter)
+    return newsletter.approved_revision
+
+
+def _ordered_revisions(newsletter: Newsletter) -> list[DraftRevision]:
+    return sorted(newsletter.revisions, key=lambda revision: revision.version_number, reverse=True)
+
+
+def _approve_revision(newsletter: Newsletter, revision: DraftRevision) -> DraftRevision:
+    if revision.newsletter_id != newsletter.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Revision not found for this newsletter.",
+        )
+
+    for candidate in newsletter.revisions:
+        if candidate.id == revision.id:
+            candidate.state = "approved"
+            continue
+        if candidate.state == "approved":
+            candidate.state = "superseded"
+
+    newsletter.approved_revision = revision
+    newsletter.draft_head_revision = revision
+    newsletter.draft_subject = revision.subject
+    newsletter.draft_preheader = revision.preheader
+    newsletter.draft_body_text = revision.body_text
+    return revision
+
+
+def _summary_payload(newsletter: Newsletter) -> dict:
+    draft_revision = _draft_revision(newsletter)
+    return {
+        "id": newsletter.id,
+        "name": newsletter.name,
+        "slug": newsletter.slug,
+        "description": newsletter.description,
+        "prompt": newsletter.prompt,
+        "draft_subject": draft_revision.subject if draft_revision else newsletter.draft_subject,
+        "draft_preheader": draft_revision.preheader
+        if draft_revision
+        else newsletter.draft_preheader,
+        "draft_body_text": draft_revision.body_text
+        if draft_revision
+        else newsletter.draft_body_text,
+        "provider_id": newsletter.provider_id,
+        "provider_name": newsletter.provider_name,
+        "model_name": newsletter.model_name,
+        "template_key": newsletter.template_key,
+        "api_key_id": newsletter.api_key_id,
+        "resend_api_key_id": newsletter.resend_api_key_id,
+        "generation_profile_id": newsletter.generation_profile_id,
+        "delivery_profile_id": newsletter.delivery_profile_id,
+        "approved_revision_id": newsletter.approved_revision.id
+        if newsletter.approved_revision
+        else None,
+        "draft_head_revision_id": draft_revision.id if draft_revision else None,
+        "audience_name": newsletter.audience_name,
+        "delivery_topic": newsletter.delivery_topic,
+        "timezone": newsletter.timezone,
+        "schedule_cron": newsletter.schedule_cron,
+        "schedule_enabled": newsletter.schedule_enabled,
+        "status": newsletter.status,
+        "notes": newsletter.notes,
+        "created_at": newsletter.created_at,
+        "updated_at": newsletter.updated_at,
+    }
 
 
 def ensure_unique_slug(db: DbSession, *, desired_slug: str, current_id: int | None = None) -> str:
@@ -181,7 +356,7 @@ def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
         and recipient.status == "subscribed"
     ]
     return NewsletterDetail(
-        **NewsletterSummary.model_validate(newsletter).model_dump(),
+        **_summary_payload(newsletter),
         recipients=[
             {
                 "id": recipient.id,
@@ -227,7 +402,9 @@ def validate_schedule_configuration(newsletter: Newsletter) -> None:
 
 def create_newsletter_run(
     newsletter: Newsletter,
+    revision: DraftRevision,
     *,
+    run_type: str,
     trigger_mode: str,
     run_status: str,
     result_mode: str | None = None,
@@ -237,15 +414,17 @@ def create_newsletter_run(
     snapshot_recipient_emails = recipient_emails or get_active_recipient_emails(newsletter)
     return NewsletterRun(
         newsletter_id=newsletter.id,
+        revision_id=revision.id,
+        run_type=run_type,
         trigger_mode=trigger_mode,
         run_status=run_status,
         provider_name=newsletter.provider_name,
         model_name=newsletter.model_name,
         template_key=newsletter.template_key,
         recipient_count=len(snapshot_recipient_emails),
-        snapshot_subject=newsletter.draft_subject,
-        snapshot_preheader=newsletter.draft_preheader,
-        snapshot_body_text=newsletter.draft_body_text,
+        snapshot_subject=revision.subject,
+        snapshot_preheader=revision.preheader,
+        snapshot_body_text=revision.body_text,
         snapshot_recipient_emails=json.dumps(snapshot_recipient_emails),
         delivery_outcomes="[]",
         result_mode=result_mode,
@@ -278,13 +457,37 @@ def add_run_event(
     )
 
 
+def _newsletter_send_response_from_run(run: NewsletterRun) -> NewsletterSendResponse:
+    try:
+        recipient_outcomes = json.loads(run.delivery_outcomes or "[]")
+    except json.JSONDecodeError:
+        recipient_outcomes = []
+
+    return NewsletterSendResponse(
+        status=run.run_status,
+        mode=run.result_mode or "unknown",
+        message=run.result_message or "Returning existing run result.",
+        run=NewsletterRunSummary.model_validate(run),
+        recipient_outcomes=recipient_outcomes,
+    )
+
+
 def execute_newsletter_send(
     db: DbSession,
     newsletter: Newsletter,
     *,
+    revision: DraftRevision | None = None,
     trigger_mode: str,
+    idempotency_key: str | None = None,
+    fire_scope: str | None = None,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
     validate_send_allowed(newsletter)
+    resolved_revision = revision or _approved_revision(newsletter)
+    if resolved_revision is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot send newsletter without an approved revision.",
+        )
 
     active_recipients = get_active_recipients(newsletter)
     active_recipient_emails = [recipient.email for recipient in active_recipients]
@@ -294,17 +497,31 @@ def execute_newsletter_send(
             detail="Cannot send: no active recipients.",
         )
 
+    attempt_key = idempotency_key or build_delivery_attempt_key(
+        newsletter_id=newsletter.id,
+        revision_id=resolved_revision.id,
+        trigger_mode=trigger_mode,
+        recipient_emails=active_recipient_emails,
+        fire_scope=fire_scope,
+    )
+
+    existing_run = db.scalar(select(NewsletterRun).where(NewsletterRun.attempt_key == attempt_key))
+    if existing_run is not None:
+        return _newsletter_send_response_from_run(existing_run), existing_run
+
     run = NewsletterRun(
         newsletter_id=newsletter.id,
+        revision_id=resolved_revision.id,
+        run_type="delivery",
         trigger_mode=trigger_mode,
         run_status="pending",
         provider_name=newsletter.provider_name,
         model_name=newsletter.model_name,
         template_key=newsletter.template_key,
         recipient_count=len(active_recipient_emails),
-        snapshot_subject=newsletter.draft_subject,
-        snapshot_preheader=newsletter.draft_preheader,
-        snapshot_body_text=newsletter.draft_body_text,
+        snapshot_subject=resolved_revision.subject,
+        snapshot_preheader=resolved_revision.preheader,
+        snapshot_body_text=resolved_revision.body_text,
         snapshot_recipient_emails=json.dumps(active_recipient_emails),
         snapshot_prompt=newsletter.prompt,
         snapshot_newsletter_name=newsletter.name,
@@ -312,21 +529,23 @@ def execute_newsletter_send(
         snapshot_delivery_topic=newsletter.delivery_topic,
         snapshot_status_at_run=newsletter.status,
         delivery_outcomes="[]",
-        attempt_key=str(uuid.uuid4()),
+        attempt_key=attempt_key,
     )
     db.add(run)
     db.flush()
 
     try:
-        from app.email_templates import normalize_draft_content
-
-        _subject, _preheader, _body = normalize_draft_content(newsletter)
-        if not _body.strip():
+        if not resolved_revision.body_text.strip():
             raise ValueError(
                 "Newsletter has no content to send. "
                 "Add body text or generate a draft before sending."
             )
-        rendered = render_newsletter(newsletter)
+        rendered = render_newsletter_content(
+            newsletter,
+            subject=resolved_revision.subject,
+            preheader=resolved_revision.preheader,
+            body=resolved_revision.body_text,
+        )
         run.rendered_subject = rendered.subject
         run.rendered_preheader = rendered.preheader
         run.rendered_html = rendered.html
@@ -415,7 +634,12 @@ def list_newsletters(request: Request, db: DbSession) -> list[NewsletterSummary]
         .where(Newsletter.deleted_at.is_(None))
         .order_by(Newsletter.updated_at.desc())
     ).all()
-    return [NewsletterSummary.model_validate(newsletter) for newsletter in newsletters]
+    for newsletter in newsletters:
+        _ensure_revision_projection(newsletter)
+    db.flush()
+    return [
+        NewsletterSummary.model_validate(_summary_payload(newsletter)) for newsletter in newsletters
+    ]
 
 
 @newsletters_router.post("", response_model=NewsletterDetail, status_code=status.HTTP_201_CREATED)
@@ -440,6 +664,8 @@ def create_newsletter(
         template_key=payload.template_key,
         api_key_id=payload.api_key_id,
         resend_api_key_id=payload.resend_api_key_id,
+        generation_profile_id=payload.generation_profile_id,
+        delivery_profile_id=payload.delivery_profile_id,
         audience_name=payload.audience_name,
         delivery_topic=payload.delivery_topic,
         timezone=payload.timezone,
@@ -448,6 +674,18 @@ def create_newsletter(
         status=payload.status,
         notes=payload.notes,
     )
+    initial_revision = _create_revision(
+        newsletter,
+        state="approved",
+        origin="imported",
+        created_by_email=user.email,
+        subject=payload.draft_subject,
+        preheader=payload.draft_preheader,
+        body_text=payload.draft_body_text,
+        prompt_snapshot=payload.prompt,
+    )
+    newsletter.approved_revision = initial_revision
+    newsletter.draft_head_revision = initial_revision
     upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
 
     try:
@@ -533,11 +771,44 @@ def get_form_options(request: Request, db: DbSession) -> dict:
         for k in api_keys
     ]
 
+    generation_profiles = db.scalars(
+        select(GenerationProfile)
+        .where(GenerationProfile.is_enabled.is_(True))
+        .order_by(GenerationProfile.name)
+    ).all()
+    delivery_profiles = db.scalars(
+        select(DeliveryProfile)
+        .where(DeliveryProfile.is_enabled.is_(True))
+        .order_by(DeliveryProfile.name)
+    ).all()
+
     return {
         "templates": template_options,
         "providers": provider_options,
         "models": models,
         "api_keys": api_key_options,
+        "generation_profiles": [
+            {
+                "id": profile.id,
+                "name": profile.name,
+                "provider_id": profile.provider_id,
+                "model_name": profile.model_name,
+                "api_key_binding_mode": profile.api_key_binding_mode,
+                "api_key_id": profile.api_key_id,
+            }
+            for profile in generation_profiles
+        ],
+        "delivery_profiles": [
+            {
+                "id": profile.id,
+                "name": profile.name,
+                "provider_type": profile.provider_type,
+                "api_key_binding_mode": profile.api_key_binding_mode,
+                "api_key_id": profile.api_key_id,
+                "from_email": profile.from_email,
+            }
+            for profile in delivery_profiles
+        ],
         "timezones": sorted(available_timezones()),
     }
 
@@ -650,6 +921,26 @@ def _validate_newsletter_entities(
                 detail="Resend API key must have provider_type 'resend'.",
             )
 
+    if payload.generation_profile_id is not None:
+        generation_profile = db.scalar(
+            select(GenerationProfile).where(GenerationProfile.id == payload.generation_profile_id)
+        )
+        if generation_profile is None or not generation_profile.is_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Generation profile is missing or disabled.",
+            )
+
+    if payload.delivery_profile_id is not None:
+        delivery_profile = db.scalar(
+            select(DeliveryProfile).where(DeliveryProfile.id == payload.delivery_profile_id)
+        )
+        if delivery_profile is None or not delivery_profile.is_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Delivery profile is missing or disabled.",
+            )
+
     _ensure_template_exists(db, payload.template_key)
     return provider, api_key, resend_key
 
@@ -658,18 +949,63 @@ def _validate_newsletter_entities(
 def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> NewsletterDetail:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
+    _ensure_revision_projection(newsletter)
+    db.flush()
     return serialize_newsletter_detail(newsletter)
 
 
 @newsletters_router.get("/{newsletter_id}/preview", response_model=NewsletterPreviewResponse)
 def preview_newsletter(
     newsletter_id: int,
+    revision_id: int | None,
     request: Request,
     db: DbSession,
 ) -> NewsletterPreviewResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    rendered = render_newsletter(newsletter)
+    if revision_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "revision_id is required. Use an explicit revision preview endpoint or "
+                "provide a revision_id."
+            ),
+        )
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
+    return NewsletterPreviewResponse(
+        subject=rendered.subject,
+        preheader=rendered.preheader,
+        html=rendered.html,
+        plain_text=rendered.plain_text,
+        template_key=rendered.template_key,
+    )
+
+
+@newsletters_router.get(
+    "/{newsletter_id}/revisions/{revision_id}/preview",
+    response_model=NewsletterPreviewResponse,
+)
+def preview_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+) -> NewsletterPreviewResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
     return NewsletterPreviewResponse(
         subject=rendered.subject,
         preheader=rendered.preheader,
@@ -688,10 +1024,26 @@ def test_send_newsletter(
 ) -> NewsletterTestSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    rendered = render_newsletter(newsletter)
+    if payload.revision_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "revision_id is required. Use an explicit revision test-send endpoint or "
+                "provide a revision_id."
+            ),
+        )
+    revision = get_revision_or_404(db, newsletter, payload.revision_id)
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
 
     run = create_newsletter_run(
         newsletter,
+        revision,
+        run_type="test_send",
         trigger_mode="test-send",
         run_status="sending",
         recipient_emails=[payload.to_email],
@@ -749,6 +1101,75 @@ def test_send_newsletter(
 
 
 @newsletters_router.post(
+    "/{newsletter_id}/revisions/{revision_id}/test-send",
+    response_model=NewsletterTestSendResponse,
+)
+def test_send_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    payload: NewsletterTestSendRequest,
+    request: Request,
+    db: DbSession,
+) -> NewsletterTestSendResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
+    run = create_newsletter_run(
+        newsletter,
+        revision,
+        run_type="test_send",
+        trigger_mode="test-send",
+        run_status="sending",
+        recipient_emails=[payload.to_email],
+    )
+    db.add(run)
+    db.flush()
+    try:
+        result = send_test_email(
+            settings=get_settings(),
+            rendered=rendered,
+            to_email=payload.to_email,
+            newsletter=newsletter,
+            db_session=db,
+        )
+    except RuntimeError as exc:
+        run.run_status = "failed"
+        run.result_mode = "resend"
+        run.result_message = str(exc)
+        run.completed_at = utc_now()
+        add_run_event(db, run, event_type="delivery", event_status="failed", message=str(exc))
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    run.run_status = result.status
+    run.result_mode = result.mode
+    run.result_message = result.message
+    run.completed_at = utc_now()
+    add_run_event(
+        db,
+        run,
+        event_type="delivery",
+        event_status=result.status,
+        message=result.message,
+        provider_id=result.provider_id,
+    )
+    db.commit()
+    return NewsletterTestSendResponse(
+        status=result.status,
+        mode=result.mode,
+        message=result.message,
+        provider_id=result.provider_id,
+        to_email=result.to_email,
+    )
+
+
+@newsletters_router.post(
     "/{newsletter_id}/generate-draft",
     response_model=NewsletterGenerationResponse,
 )
@@ -757,14 +1178,33 @@ def generate_draft(
     request: Request,
     db: DbSession,
 ) -> NewsletterGenerationResponse:
-    require_authenticated_user(request, db)
+    user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     generated = generate_newsletter_draft(newsletter)
-    newsletter.draft_subject = generated.subject
-    newsletter.draft_preheader = generated.preheader
-    newsletter.draft_body_text = generated.body_text
+    source_bundle_snapshot_json = serialize_source_bundle(build_source_bundle(newsletter))
+    revision = _create_revision(
+        newsletter,
+        state="candidate",
+        origin="llm" if generated.status in {"generated", "fallback"} else "manual",
+        created_by_email=user.email,
+        subject=generated.subject,
+        preheader=generated.preheader,
+        body_text=generated.body_text,
+        prompt_snapshot=newsletter.prompt,
+        source_bundle_snapshot_json=source_bundle_snapshot_json,
+        highlights_json=generated.highlights_json,
+        source_references_json=generated.source_references_json,
+        provider_snapshot_json=generated.provider_snapshot_json,
+        token_usage_json=generated.token_usage_json,
+        raw_response_hash=generated.raw_response_hash,
+    )
+    newsletter.draft_head_revision = revision
+    db.add(revision)
+    db.flush()
     run = create_newsletter_run(
         newsletter,
+        revision,
+        run_type="generation",
         trigger_mode="manual-generate",
         run_status=generated.status,
         result_mode=generated.mode,
@@ -773,6 +1213,7 @@ def generate_draft(
     db.add(newsletter)
     db.add(run)
     db.flush()
+    revision.generation_run_id = run.id
     add_run_event(
         db,
         run,
@@ -793,9 +1234,103 @@ def generate_draft(
         status=generated.status,
         mode=generated.mode,
         message=generated.message,
+        revision_id=revision.id,
         newsletter=serialize_newsletter_detail(newsletter),
         run=NewsletterRunSummary.model_validate(run),
     )
+
+
+@newsletters_router.get(
+    "/{newsletter_id}/revisions",
+    response_model=DraftRevisionListResponse,
+)
+def list_newsletter_revisions(
+    newsletter_id: int,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionListResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    _ensure_revision_projection(newsletter)
+    db.flush()
+    return DraftRevisionListResponse(
+        items=[
+            DraftRevisionSummary.model_validate(revision)
+            for revision in _ordered_revisions(newsletter)
+        ]
+    )
+
+
+@newsletters_router.post(
+    "/{newsletter_id}/revisions/{revision_id}/approve",
+    response_model=DraftRevisionApproveResponse,
+)
+def approve_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionApproveResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = db.scalar(select(DraftRevision).where(DraftRevision.id == revision_id))
+    if revision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found.")
+
+    approved = _approve_revision(newsletter, revision)
+    db.add(newsletter)
+    db.add(approved)
+    db.commit()
+    db.refresh(newsletter)
+    db.refresh(approved)
+    return DraftRevisionApproveResponse(
+        revision=DraftRevisionSummary.model_validate(approved),
+        newsletter=serialize_newsletter_detail(newsletter),
+    )
+
+
+@newsletters_router.get(
+    "/{newsletter_id}/revisions/{revision_id}",
+    response_model=DraftRevisionDetailResponse,
+)
+def get_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionDetailResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    return DraftRevisionDetailResponse(revision=DraftRevisionSummary.model_validate(revision))
+
+
+@newsletters_router.patch(
+    "/{newsletter_id}/revisions/{revision_id}",
+    response_model=DraftRevisionDetailResponse,
+)
+def update_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    payload: DraftRevisionUpdateRequest,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionDetailResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    if revision.state == "approved":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Approved revisions are immutable. Create or approve a new candidate instead.",
+        )
+    revision.subject = payload.subject.strip()
+    revision.preheader = payload.preheader.strip() if payload.preheader else None
+    revision.body_text = payload.body_text.strip()
+    db.add(revision)
+    db.commit()
+    db.refresh(revision)
+    return DraftRevisionDetailResponse(revision=DraftRevisionSummary.model_validate(revision))
 
 
 @newsletters_router.post("/{newsletter_id}/schedule/resume", response_model=NewsletterDetail)
@@ -859,17 +1394,67 @@ def send_newsletter(
     newsletter_id: int,
     request: Request,
     db: DbSession,
+    payload: NewsletterSendRequest | None = None,
 ) -> NewsletterSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    response, _run = execute_newsletter_send(db, newsletter, trigger_mode="manual-send")
+    if payload is None or payload.revision_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "revision_id is required. Use an explicit revision send endpoint or provide "
+                "a revision_id."
+            ),
+        )
+    revision = get_revision_or_404(db, newsletter, payload.revision_id)
+    if revision.id != (newsletter.approved_revision_id or 0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only the approved revision can be sent. Approve the revision first.",
+        )
+    response, _run = execute_newsletter_send(
+        db,
+        newsletter,
+        revision=revision,
+        trigger_mode="manual-send",
+        idempotency_key=payload.idempotency_key,
+    )
+    return response
+
+
+@newsletters_router.post(
+    "/{newsletter_id}/revisions/{revision_id}/send",
+    response_model=NewsletterSendResponse,
+)
+def send_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+    payload: NewsletterSendRequest | None = None,
+) -> NewsletterSendResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    if revision.id != (newsletter.approved_revision_id or 0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only the approved revision can be sent. Approve the revision first.",
+        )
+    response, _run = execute_newsletter_send(
+        db,
+        newsletter,
+        revision=revision,
+        trigger_mode="manual-send",
+        idempotency_key=payload.idempotency_key if payload else None,
+    )
     return response
 
 
 @newsletters_router.put("/{newsletter_id}", response_model=NewsletterDetail)
 def update_newsletter(
     newsletter_id: int,
-    payload: NewsletterUpdateRequest,
+    payload: NewsletterJobUpdateRequest,
     request: Request,
     db: DbSession,
 ) -> NewsletterDetail:
@@ -885,15 +1470,14 @@ def update_newsletter(
     )
     newsletter.description = payload.description
     newsletter.prompt = payload.prompt
-    newsletter.draft_subject = payload.draft_subject
-    newsletter.draft_preheader = payload.draft_preheader
-    newsletter.draft_body_text = payload.draft_body_text
     newsletter.provider_id = payload.provider_id
     newsletter.provider_name = payload.provider_name
     newsletter.model_name = payload.model_name
     newsletter.template_key = payload.template_key
     newsletter.api_key_id = payload.api_key_id
     newsletter.resend_api_key_id = payload.resend_api_key_id
+    newsletter.generation_profile_id = payload.generation_profile_id
+    newsletter.delivery_profile_id = payload.delivery_profile_id
     newsletter.audience_name = payload.audience_name
     newsletter.delivery_topic = payload.delivery_topic
     newsletter.timezone = payload.timezone
@@ -901,6 +1485,7 @@ def update_newsletter(
     newsletter.schedule_enabled = payload.schedule_enabled
     newsletter.status = payload.status
     newsletter.notes = payload.notes
+
     upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
 
     try:

@@ -41,6 +41,8 @@ const fieldHelpText: Record<string, string> = {
   provider_name: "AI provider for content generation (requires matching API key)",
   api_key_id: "Optional active AI API key to pin for this newsletter's generation requests",
   resend_api_key_id: "Resend API key used for email delivery. Make sure the key has a Sender Email configured in Settings > API Keys.",
+  generation_profile_id: "Optional generation profile that defines provider, model, and binding mode explicitly.",
+  delivery_profile_id: "Optional delivery profile that defines Resend binding mode and sender explicitly.",
   model_name: "Specific AI model to use for generating content",
   template_key: "Email template design that determines the visual layout",
   timezone: "Timezone for interpreting the schedule cron expression",
@@ -100,6 +102,14 @@ function getTimezoneOptions(formOptions: FormOptions | null): SelectOption[] {
   }));
 }
 
+function getGenerationProfiles(formOptions: FormOptions | null) {
+  return formOptions?.generation_profiles ?? [];
+}
+
+function getDeliveryProfiles(formOptions: FormOptions | null) {
+  return formOptions?.delivery_profiles ?? [];
+}
+
 export function NewsletterEditorPage({
   busy,
   initialNewsletter,
@@ -110,6 +120,9 @@ export function NewsletterEditorPage({
   const [form, setForm] = useState<NewsletterInput>(
     initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput
   );
+  const [savedForm, setSavedForm] = useState<NewsletterInput | null>(
+    initialNewsletter ? toNewsletterInput(initialNewsletter) : null
+  );
   const [formOptions, setFormOptions] = useState<FormOptions | null>(null);
   const [formOptionsError, setFormOptionsError] = useState<string | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -119,8 +132,15 @@ export function NewsletterEditorPage({
     [initialNewsletter]
   );
 
+  const isDirty = useMemo(() => {
+    if (!savedForm) return false;
+    return JSON.stringify(form) !== JSON.stringify(savedForm);
+  }, [form, savedForm]);
+
   useEffect(() => {
-    setForm(initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput);
+    const nextForm = initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput;
+    setForm(nextForm);
+    setSavedForm(initialNewsletter ? nextForm : null);
   }, [initialNewsletter]);
 
   useEffect(() => {
@@ -167,34 +187,24 @@ export function NewsletterEditorPage({
   );
 
   const timezoneOptions = useMemo(() => getTimezoneOptions(formOptions), [formOptions]);
+  const generationProfiles = useMemo(() => getGenerationProfiles(formOptions), [formOptions]);
+  const deliveryProfiles = useMemo(() => getDeliveryProfiles(formOptions), [formOptions]);
   const providerSelectDisabled = loadingOptions || providerOptions.length === 0;
   const modelSelectDisabled = loadingOptions || form.provider_id === null || availableModels.length === 0;
   const templateSelectDisabled = loadingOptions || availableTemplates.length === 0;
   const timezoneSelectDisabled = loadingOptions || timezoneOptions.length === 0;
 
-  useEffect(() => {
-    setForm((current) => {
-      const next = { ...current };
-      let changed = false;
+  const missingApiKeyOption = useMemo(() => {
+    if (form.api_key_id == null) return null;
+    if (availableApiKeys.some((k) => k.id === form.api_key_id)) return null;
+    return { id: form.api_key_id, label: `Key #${form.api_key_id} (not available or inactive)` };
+  }, [form.api_key_id, availableApiKeys]);
 
-      const apiKeys = getAvailableApiKeys(next.provider_name, formOptions);
-      if (next.api_key_id !== null && !apiKeys.some((apiKey) => apiKey.id === next.api_key_id)) {
-        next.api_key_id = null;
-        changed = true;
-      }
-
-      const resendApiKeys = getAvailableResendApiKeys(formOptions);
-      if (
-        next.resend_api_key_id !== null
-        && !resendApiKeys.some((apiKey) => apiKey.id === next.resend_api_key_id)
-      ) {
-        next.resend_api_key_id = null;
-        changed = true;
-      }
-
-      return changed ? next : current;
-    });
-  }, [form.provider_name, formOptions]);
+  const missingResendKeyOption = useMemo(() => {
+    if (form.resend_api_key_id == null) return null;
+    if (availableResendApiKeys.some((k) => k.id === form.resend_api_key_id)) return null;
+    return { id: form.resend_api_key_id, label: `Key #${form.resend_api_key_id} (not available or inactive)` };
+  }, [form.resend_api_key_id, availableResendApiKeys]);
 
   function updateProvider(providerValue: string) {
     setForm((current) => {
@@ -301,32 +311,40 @@ export function NewsletterEditorPage({
             />
           </label>
 
-          <div className="form-grid">
-            <label>
-              <FieldLabel label="Draft Subject" helpText={fieldHelpText.draft_subject} />
-              <input
-                onChange={(event) => updateField("draft_subject", event.target.value)}
-                value={form.draft_subject}
-              />
-            </label>
+          {initialNewsletter ? (
+            <p className="form-notice">
+              Draft subject, preheader, and body are managed in the revision preview screen.
+            </p>
+          ) : (
+            <>
+              <div className="form-grid">
+                <label>
+                  <FieldLabel label="Draft Subject" helpText={fieldHelpText.draft_subject} />
+                  <input
+                    onChange={(event) => updateField("draft_subject", event.target.value)}
+                    value={form.draft_subject}
+                  />
+                </label>
 
-            <label>
-              <FieldLabel label="Draft Preheader" helpText={fieldHelpText.draft_preheader} />
-              <input
-                onChange={(event) => updateField("draft_preheader", event.target.value)}
-                value={form.draft_preheader}
-              />
-            </label>
-          </div>
+                <label>
+                  <FieldLabel label="Draft Preheader" helpText={fieldHelpText.draft_preheader} />
+                  <input
+                    onChange={(event) => updateField("draft_preheader", event.target.value)}
+                    value={form.draft_preheader}
+                  />
+                </label>
+              </div>
 
-          <label>
-            <FieldLabel label="Draft Body" helpText={fieldHelpText.draft_body_text} />
-            <textarea
-              onChange={(event) => updateField("draft_body_text", event.target.value)}
-              rows={8}
-              value={form.draft_body_text}
-            />
-          </label>
+              <label>
+                <FieldLabel label="Draft Body" helpText={fieldHelpText.draft_body_text} />
+                <textarea
+                  onChange={(event) => updateField("draft_body_text", event.target.value)}
+                  rows={8}
+                  value={form.draft_body_text}
+                />
+              </label>
+            </>
+          )}
         </div>
 
         <div className="form-section">
@@ -376,14 +394,52 @@ export function NewsletterEditorPage({
 
           <div className="form-grid">
             <label>
+              <FieldLabel label="Generation Profile" helpText={fieldHelpText.generation_profile_id} />
+              <select
+                onChange={(event) => updateField("generation_profile_id", event.target.value ? Number(event.target.value) : null)}
+                value={form.generation_profile_id === null ? "" : String(form.generation_profile_id)}
+              >
+                <option value="">No generation profile selected</option>
+                {generationProfiles.map((profile) => (
+                  <option key={profile.id} value={String(profile.id)}>
+                    {`${profile.name} · ${profile.api_key_binding_mode}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <FieldLabel label="Delivery Profile" helpText={fieldHelpText.delivery_profile_id} />
+              <select
+                onChange={(event) => updateField("delivery_profile_id", event.target.value ? Number(event.target.value) : null)}
+                value={form.delivery_profile_id === null ? "" : String(form.delivery_profile_id)}
+              >
+                <option value="">No delivery profile selected</option>
+                {deliveryProfiles.map((profile) => (
+                  <option key={profile.id} value={String(profile.id)}>
+                    {`${profile.name} · ${profile.api_key_binding_mode}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="form-grid">
+            <label>
               <FieldLabel label="AI API Key" helpText={fieldHelpText.api_key_id} />
               <select
                 onChange={(event) => updateField("api_key_id", event.target.value ? Number(event.target.value) : null)}
                 value={form.api_key_id === null ? "" : String(form.api_key_id)}
+                disabled={form.generation_profile_id !== null}
               >
                 <option value="">
-                  {availableApiKeys.length > 0 ? "Use any matching active API key" : "No matching API keys available"}
+                  {availableApiKeys.length > 0 ? "No pinned key selected (fail closed)" : "No matching API keys available"}
                 </option>
+                {missingApiKeyOption ? (
+                  <option disabled value={String(missingApiKeyOption.id)}>
+                    {missingApiKeyOption.label}
+                  </option>
+                ) : null}
                 {availableApiKeys.map((apiKey) => (
                   <option key={apiKey.id} value={String(apiKey.id)}>
                     {`${apiKey.name} (${apiKey.masked_key})`}
@@ -397,12 +453,18 @@ export function NewsletterEditorPage({
               <select
                 onChange={(event) => updateField("resend_api_key_id", event.target.value ? Number(event.target.value) : null)}
                 value={form.resend_api_key_id === null ? "" : String(form.resend_api_key_id)}
+                disabled={form.delivery_profile_id !== null}
               >
                 <option value="">
                   {availableResendApiKeys.length > 0
-                    ? "Use any active Resend API key"
+                    ? "No pinned Resend key selected (fail closed)"
                     : "No active Resend API keys — add one in Settings > API Keys"}
                 </option>
+                {missingResendKeyOption ? (
+                  <option disabled value={String(missingResendKeyOption.id)}>
+                    {missingResendKeyOption.label}
+                  </option>
+                ) : null}
                 {availableResendApiKeys.map((apiKey) => (
                   <option key={apiKey.id} value={String(apiKey.id)}>
                     {apiKey.from_email
@@ -527,11 +589,12 @@ export function NewsletterEditorPage({
           {initialNewsletter ? (
             <button
               className="secondary-button"
-              disabled={busy}
+              disabled={busy || isDirty}
               onClick={() => void onGenerate?.(initialNewsletter.id)}
+              title={isDirty ? "Save changes before generating" : undefined}
               type="button"
             >
-              {busy ? "Working..." : "Generate Draft"}
+              {busy ? "Working..." : isDirty ? "Save to Enable Generate" : "Generate Draft"}
             </button>
           ) : null}
         </div>
@@ -545,21 +608,21 @@ function HelpText({ text }: { text: string }) {
 
   return (
     <span className="help-text-wrapper">
-      <span
+      <button
         className="help-text-icon"
+        type="button"
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
         onClick={() => setShowTooltip(!showTooltip)}
-        role="button"
-        tabIndex={0}
         aria-label="Show help"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+          <title>Help</title>
           <circle cx="12" cy="12" r="10" />
           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
-      </span>
+      </button>
       {showTooltip ? (
         <span className="help-text-tooltip">
           {text}

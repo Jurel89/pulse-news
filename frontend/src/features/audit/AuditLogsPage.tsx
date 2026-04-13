@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "../../lib/api";
 import type { AuditEvent, OperationalEvent } from "./audit-types";
@@ -119,7 +119,7 @@ export function AuditLogsPage() {
       });
 
       setAuditEvents(payload.items);
-      setSelectedAuditEvent((current) => payload.items.find((event) => event.id === current?.id) ?? payload.items[0] ?? null);
+      setSelectedAuditEvent((current) => payload.items.find((event) => event.id === current?.id) ?? null);
     } catch (requestError) {
       setAuditError(requestError instanceof Error ? requestError.message : "Unable to load audit events.");
     } finally {
@@ -141,7 +141,7 @@ export function AuditLogsPage() {
       });
 
       setOperationalEvents(payload.items);
-      setSelectedOperationalEvent((current) => payload.items.find((event) => event.id === current?.id) ?? payload.items[0] ?? null);
+      setSelectedOperationalEvent((current) => payload.items.find((event) => event.id === current?.id) ?? null);
     } catch (requestError) {
       setOperationalError(requestError instanceof Error ? requestError.message : "Unable to load operational events.");
     } finally {
@@ -322,89 +322,93 @@ export function AuditLogsPage() {
                   </thead>
                   <tbody>
                     {auditEvents.map((event) => (
-                      <tr
-                        key={event.id}
-                        className="data-row"
-                        onClick={() => setSelectedAuditEvent(event)}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <td className="cell-secondary" data-label="Timestamp">
-                          {formatDateTime(event.created_at)}
-                        </td>
-                        <td data-label="Action">
-                          <span className={getStatusBadgeClass(event.action)}>{formatLabel(event.action)}</span>
-                        </td>
-                        <td className="name-cell" data-label="Actor">
-                          <div className="cell-primary">{event.actor_email ?? "System"}</div>
-                          <div className="cell-secondary">Event #{event.id}</div>
-                        </td>
-                        <td data-label="Entity">
-                          <div className="cell-primary">{formatLabel(event.entity_type)}</div>
-                          <div className="cell-secondary">{event.entity_id}</div>
-                        </td>
-                        <td className="name-cell" data-label="Summary">
-                          <div className="cell-primary">{event.summary}</div>
-                        </td>
-                      </tr>
+                      <Fragment key={event.id}>
+                        <tr
+                          className={`data-row ${selectedAuditEvent?.id === event.id ? "expanded" : ""}`}
+                          onClick={() => setSelectedAuditEvent((current) => current?.id === event.id ? null : event)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td className="cell-secondary" data-label="Timestamp">
+                            {formatDateTime(event.created_at)}
+                          </td>
+                          <td data-label="Action">
+                            <span className={getStatusBadgeClass(event.action)}>{formatLabel(event.action)}</span>
+                          </td>
+                          <td className="name-cell" data-label="Actor">
+                            <div className="cell-primary">{event.actor_email ?? "System"}</div>
+                            <div className="cell-secondary">Event #{event.id}</div>
+                          </td>
+                          <td data-label="Entity">
+                            <div className="cell-primary">{formatLabel(event.entity_type)}</div>
+                            <div className="cell-secondary">{event.entity_id}</div>
+                          </td>
+                          <td className="name-cell" data-label="Summary">
+                            <div className="cell-primary">{event.summary}</div>
+                          </td>
+                        </tr>
+                        {selectedAuditEvent?.id === event.id ? (
+                          <tr className="detail-row">
+                            <td className="detail-cell" colSpan={5}>
+                              <article className="inline-detail-panel">
+                                <div className="section-header">
+                                  <div>
+                                    <h3>{event.summary}</h3>
+                                    <span className={getStatusBadgeClass(event.action)}>
+                                      {formatLabel(event.action)}
+                                    </span>
+                                  </div>
+                                  <button
+                                    aria-label="Close audit event details"
+                                    className="secondary-button"
+                                    onClick={() => setSelectedAuditEvent(null)}
+                                    type="button"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+
+                                <p className="cell-secondary">{formatAuditEntity(event)}</p>
+
+                                <hr className="form-divider" />
+
+                                <div className="newsletter-meta">
+                                  <div>
+                                    <dt>Timestamp</dt>
+                                    <dd>{formatDateTime(event.created_at)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Actor</dt>
+                                    <dd>{event.actor_email ?? "System"}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Entity</dt>
+                                    <dd>{formatAuditEntity(event)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Event ID</dt>
+                                    <dd>{event.id}</dd>
+                                  </div>
+                                </div>
+
+                                <hr className="form-divider" />
+
+                                <div>
+                                  <h4>Payload</h4>
+                                  <div className="plain-preview">
+                                    <pre>{formatPayload(event.payload_json)}</pre>
+                                  </div>
+                                </div>
+                              </article>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
-
-          {selectedAuditEvent ? (
-            <article className="editor-form">
-              <div className="section-header">
-                <div>
-                  <h3>{selectedAuditEvent.summary}</h3>
-                  <span className={getStatusBadgeClass(selectedAuditEvent.action)}>
-                    {formatLabel(selectedAuditEvent.action)}
-                  </span>
-                </div>
-                <button
-                  aria-label="Close audit event details"
-                  className="secondary-button"
-                  onClick={() => setSelectedAuditEvent(null)}
-                  type="button"
-                >
-                  Close
-                </button>
-              </div>
-
-              <p className="cell-secondary">{formatAuditEntity(selectedAuditEvent)}</p>
-
-              <hr className="form-divider" />
-
-              <div className="newsletter-meta">
-                <div>
-                  <dt>Timestamp</dt>
-                  <dd>{formatDateTime(selectedAuditEvent.created_at)}</dd>
-                </div>
-                <div>
-                  <dt>Actor</dt>
-                  <dd>{selectedAuditEvent.actor_email ?? "System"}</dd>
-                </div>
-                <div>
-                  <dt>Entity</dt>
-                  <dd>{formatAuditEntity(selectedAuditEvent)}</dd>
-                </div>
-                <div>
-                  <dt>Event ID</dt>
-                  <dd>{selectedAuditEvent.id}</dd>
-                </div>
-              </div>
-
-              <hr className="form-divider" />
-
-              <div>
-                <h4>Payload</h4>
-                <div className="plain-preview">
-                  <pre>{formatPayload(selectedAuditEvent.payload_json)}</pre>
-                </div>
-              </div>
-            </article>
-          ) : null}
         </>
       ) : (
         <>
@@ -513,129 +517,127 @@ export function AuditLogsPage() {
                   </thead>
                   <tbody>
                     {operationalEvents.map((event) => (
-                      <tr
-                        key={event.id}
-                        className="data-row"
-                        onClick={() => setSelectedOperationalEvent(event)}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <td className="cell-secondary" data-label="Timestamp">
-                          {formatDateTime(event.created_at)}
-                        </td>
-                        <td data-label="Event Type">
-                          <span className={getStatusBadgeClass(event.event_type)}>{formatLabel(event.event_type)}</span>
-                        </td>
-                        <td data-label="Status">
-                          <span className={getStatusBadgeClass(event.status)}>{formatLabel(event.status)}</span>
-                        </td>
-                        <td className="name-cell" data-label="Related Entity">
-                          <div className="cell-primary">
-                            {event.newsletter_name ?? event.newsletter_slug ?? `Newsletter #${event.newsletter_id}`}
-                          </div>
-                          <div className="cell-secondary">Run #{event.run_id} · {formatLabel(event.source)}</div>
-                        </td>
-                        <td className="name-cell" data-label="Message">
-                          <div className="cell-primary">{event.message}</div>
-                          <div className="cell-secondary">
-                            {event.provider_id
-                              ? `Provider ID: ${event.provider_id}`
-                              : event.trigger_mode
-                                ? formatLabel(event.trigger_mode)
-                                : "Operational event"}
-                          </div>
-                        </td>
-                      </tr>
+                      <Fragment key={event.id}>
+                        <tr
+                          className={`data-row ${selectedOperationalEvent?.id === event.id ? "expanded" : ""}`}
+                          onClick={() => setSelectedOperationalEvent((current) => current?.id === event.id ? null : event)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td className="cell-secondary" data-label="Timestamp">
+                            {formatDateTime(event.created_at)}
+                          </td>
+                          <td data-label="Event Type">
+                            <span className={getStatusBadgeClass(event.event_type)}>{formatLabel(event.event_type)}</span>
+                          </td>
+                          <td data-label="Status">
+                            <span className={getStatusBadgeClass(event.status)}>{formatLabel(event.status)}</span>
+                          </td>
+                          <td className="name-cell" data-label="Related Entity">
+                            <div className="cell-primary">
+                              {event.newsletter_name ?? event.newsletter_slug ?? `Newsletter #${event.newsletter_id}`}
+                            </div>
+                            <div className="cell-secondary">Run #{event.run_id} · {formatLabel(event.source)}</div>
+                          </td>
+                          <td className="name-cell" data-label="Message">
+                            <div className="cell-primary">{event.message}</div>
+                            <div className="cell-secondary">
+                              {event.provider_id
+                                ? `Provider ID: ${event.provider_id}`
+                                : event.trigger_mode
+                                  ? formatLabel(event.trigger_mode)
+                                  : "Operational event"}
+                            </div>
+                          </td>
+                        </tr>
+                        {selectedOperationalEvent?.id === event.id ? (
+                          <tr className="detail-row">
+                            <td className="detail-cell" colSpan={5}>
+                              <article className="inline-detail-panel">
+                                <div className="section-header">
+                                  <div>
+                                    <h3>{event.message}</h3>
+                                    <span className={getStatusBadgeClass(event.status)}>
+                                      {formatLabel(event.status)}
+                                    </span>
+                                  </div>
+                                  <button
+                                    aria-label="Close operational event details"
+                                    className="secondary-button"
+                                    onClick={() => setSelectedOperationalEvent(null)}
+                                    type="button"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+
+                                <p className="cell-secondary">{event.related_entity}</p>
+
+                                <hr className="form-divider" />
+
+                                <div className="newsletter-meta">
+                                  <div>
+                                    <dt>Timestamp</dt>
+                                    <dd>{formatDateTime(event.created_at)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Event type</dt>
+                                    <dd>{formatLabel(event.event_type)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Status</dt>
+                                    <dd>{formatLabel(event.status)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Source</dt>
+                                    <dd>{formatLabel(event.source)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Newsletter</dt>
+                                    <dd>
+                                      {event.newsletter_name ?? event.newsletter_slug ?? `Newsletter #${event.newsletter_id}`}
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Run</dt>
+                                    <dd>{event.run_id}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Trigger mode</dt>
+                                    <dd>{event.trigger_mode ? formatLabel(event.trigger_mode) : "Not recorded"}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Recipient count</dt>
+                                    <dd>{event.recipient_count ?? "Not recorded"}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Provider ID</dt>
+                                    <dd>{event.provider_id ?? "Not recorded"}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Source ID</dt>
+                                    <dd>{event.source_id}</dd>
+                                  </div>
+                                </div>
+
+                                <hr className="form-divider" />
+
+                                <div>
+                                  <h4>Message</h4>
+                                  <div className="plain-preview">
+                                    <pre>{event.message}</pre>
+                                  </div>
+                                </div>
+                              </article>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
-
-          {selectedOperationalEvent ? (
-            <article className="editor-form">
-              <div className="section-header">
-                <div>
-                  <h3>{selectedOperationalEvent.message}</h3>
-                  <span className={getStatusBadgeClass(selectedOperationalEvent.status)}>
-                    {formatLabel(selectedOperationalEvent.status)}
-                  </span>
-                </div>
-                <button
-                  aria-label="Close operational event details"
-                  className="secondary-button"
-                  onClick={() => setSelectedOperationalEvent(null)}
-                  type="button"
-                >
-                  Close
-                </button>
-              </div>
-
-              <p className="cell-secondary">{selectedOperationalEvent.related_entity}</p>
-
-              <hr className="form-divider" />
-
-              <div className="newsletter-meta">
-                <div>
-                  <dt>Timestamp</dt>
-                  <dd>{formatDateTime(selectedOperationalEvent.created_at)}</dd>
-                </div>
-                <div>
-                  <dt>Event type</dt>
-                  <dd>{formatLabel(selectedOperationalEvent.event_type)}</dd>
-                </div>
-                <div>
-                  <dt>Status</dt>
-                  <dd>{formatLabel(selectedOperationalEvent.status)}</dd>
-                </div>
-                <div>
-                  <dt>Source</dt>
-                  <dd>{formatLabel(selectedOperationalEvent.source)}</dd>
-                </div>
-                <div>
-                  <dt>Newsletter</dt>
-                  <dd>
-                    {selectedOperationalEvent.newsletter_name
-                      ?? selectedOperationalEvent.newsletter_slug
-                      ?? `Newsletter #${selectedOperationalEvent.newsletter_id}`}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Run</dt>
-                  <dd>{selectedOperationalEvent.run_id}</dd>
-                </div>
-                <div>
-                  <dt>Trigger mode</dt>
-                  <dd>
-                    {selectedOperationalEvent.trigger_mode
-                      ? formatLabel(selectedOperationalEvent.trigger_mode)
-                      : "Not recorded"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Recipient count</dt>
-                  <dd>{selectedOperationalEvent.recipient_count ?? "Not recorded"}</dd>
-                </div>
-                <div>
-                  <dt>Provider ID</dt>
-                  <dd>{selectedOperationalEvent.provider_id ?? "Not recorded"}</dd>
-                </div>
-                <div>
-                  <dt>Source ID</dt>
-                  <dd>{selectedOperationalEvent.source_id}</dd>
-                </div>
-              </div>
-
-              <hr className="form-divider" />
-
-              <div>
-                <h4>Message</h4>
-                <div className="plain-preview">
-                  <pre>{selectedOperationalEvent.message}</pre>
-                </div>
-              </div>
-            </article>
-          ) : null}
         </>
       )}
     </section>

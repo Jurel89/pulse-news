@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.models import Newsletter
+from app.source_pipeline.service import build_source_bundle, has_usable_source_bundle
 
 try:  # pragma: no cover - exercised conditionally when dependency is present and configured
     from litellm import completion
@@ -22,6 +26,11 @@ class GeneratedDraft:
     subject: str
     preheader: str
     body_text: str
+    highlights_json: str | None = None
+    source_references_json: str | None = None
+    provider_snapshot_json: str | None = None
+    token_usage_json: str | None = None
+    raw_response_hash: str | None = None
 
 
 SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter", "zai", "kimi"}
@@ -37,18 +46,40 @@ PRESET_BASE_URLS: dict[str, str] = {
     "zai": "https://api.z.ai/api/paas/v4/",
     "kimi": "https://api.kimi.com/coding/v1",
 }
+SIMULATED_AI_GENERATION_ENV_VAR = "PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION"
+
+
+@dataclass(frozen=True)
+class ApiKeyResolution:
+    api_key: str | None
+    source: str
+    detail: str
 
 
 def _get_newsletter_provider(newsletter: Newsletter):
     from sqlalchemy import select
 
     from app.database import get_session_maker
-    from app.models import Provider
+    from app.models import GenerationProfile, Provider
 
     if newsletter.provider is not None:
         return newsletter.provider
     if newsletter.provider_id is None:
-        return None
+        if newsletter.generation_profile_id is None:
+            return None
+
+        session = get_session_maker()()
+        try:
+            profile = session.scalar(
+                select(GenerationProfile).where(
+                    GenerationProfile.id == newsletter.generation_profile_id
+                )
+            )
+            if profile is None or profile.provider_id is None:
+                return None
+            return session.scalar(select(Provider).where(Provider.id == profile.provider_id))
+        finally:
+            session.close()
 
     session = get_session_maker()()
     try:
@@ -64,6 +95,24 @@ def _normalized_provider_name(newsletter: Newsletter) -> str:
 
 
 def _resolved_model_name(newsletter: Newsletter) -> str:
+    if newsletter.generation_profile_id is not None:
+        from sqlalchemy import select
+
+        from app.database import get_session_maker
+        from app.models import GenerationProfile
+
+        session = get_session_maker()()
+        try:
+            profile = session.scalar(
+                select(GenerationProfile).where(
+                    GenerationProfile.id == newsletter.generation_profile_id
+                )
+            )
+            if profile is not None and profile.model_name.strip():
+                return profile.model_name.strip()
+        finally:
+            session.close()
+
     configured_model = newsletter.model_name.strip()
     if configured_model:
         return configured_model
@@ -81,46 +130,14 @@ def _provider_model_name(newsletter: Newsletter) -> str:
     return _resolve_full_model_name(provider_name, model_name)
 
 
-def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
-    from sqlalchemy import select
+def _normalize_api_key_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
-    from app.database import get_session_maker
-    from app.models import ApiKey
 
-    provider_name = _normalized_provider_name(newsletter)
-    session = get_session_maker()()
-
-    try:
-        if newsletter.api_key_id:
-            api_key = session.scalar(
-                select(ApiKey).where(
-                    ApiKey.id == newsletter.api_key_id,
-                    ApiKey.is_active.is_(True),
-                    ApiKey.provider_type == provider_name,
-                )
-            )
-            if api_key and api_key.key_value:
-                try:
-                    return decrypt_secret(api_key.key_value)
-                except Exception:
-                    pass
-
-        active_provider_key = session.scalar(
-            select(ApiKey)
-            .where(
-                ApiKey.provider_type == provider_name,
-                ApiKey.is_active.is_(True),
-            )
-            .order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
-        )
-        if active_provider_key and active_provider_key.key_value:
-            try:
-                return decrypt_secret(active_provider_key.key_value)
-            except Exception:
-                pass
-    finally:
-        session.close()
-
+def _environment_api_key_resolution(provider_name: str) -> ApiKeyResolution:
     env_by_provider = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -131,14 +148,165 @@ def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
         "kimi": "KIMI_API_KEY",
     }
     env_name = env_by_provider.get(provider_name)
-    if env_name:
-        value = os.getenv(env_name)
-        if value:
-            return value
-    # LiteLLM uses MOONSHOT_API_KEY for the moonshot provider
+
     if provider_name == "kimi":
-        return os.getenv("MOONSHOT_API_KEY")
-    return None
+        kimi_key = _normalize_api_key_value(os.getenv("KIMI_API_KEY"))
+        if kimi_key:
+            return ApiKeyResolution(
+                api_key=kimi_key,
+                source="environment",
+                detail="Using KIMI_API_KEY environment default for provider 'kimi'.",
+            )
+        moonshot_key = _normalize_api_key_value(os.getenv("MOONSHOT_API_KEY"))
+        if moonshot_key:
+            return ApiKeyResolution(
+                api_key=moonshot_key,
+                source="environment",
+                detail="Using MOONSHOT_API_KEY environment default for provider 'kimi'.",
+            )
+        return ApiKeyResolution(
+            api_key=None,
+            source="environment",
+            detail=(
+                "No explicit API key is configured for provider 'kimi'. "
+                "Set KIMI_API_KEY or MOONSHOT_API_KEY."
+            ),
+        )
+
+    if env_name is None:
+        return ApiKeyResolution(
+            api_key=None,
+            source="environment",
+            detail=f"No environment credential mapping exists for provider '{provider_name}'.",
+        )
+
+    env_value = _normalize_api_key_value(os.getenv(env_name))
+    if env_value:
+        return ApiKeyResolution(
+            api_key=env_value,
+            source="environment",
+            detail=f"Using {env_name} environment default for provider '{provider_name}'.",
+        )
+
+    return ApiKeyResolution(
+        api_key=None,
+        source="environment",
+        detail=(
+            f"No explicit API key is configured for provider '{provider_name}'. "
+            f"Set {env_name} or select an active matching API key on the newsletter."
+        ),
+    )
+
+
+def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
+    from sqlalchemy import select
+
+    from app.database import get_session_maker
+    from app.models import ApiKey, GenerationProfile
+
+    provider_name = _normalized_provider_name(newsletter)
+    session = get_session_maker()()
+
+    try:
+        binding_mode = "pinned_key"
+        profile_api_key_id = newsletter.api_key_id
+        resolution_source = "newsletter"
+        if newsletter.generation_profile_id is not None:
+            profile = session.scalar(
+                select(GenerationProfile).where(
+                    GenerationProfile.id == newsletter.generation_profile_id
+                )
+            )
+            if profile is not None:
+                binding_mode = profile.api_key_binding_mode or "pinned_key"
+                profile_api_key_id = profile.api_key_id
+                resolution_source = "profile"
+
+        if binding_mode == "system_default":
+            return _environment_api_key_resolution(provider_name)
+
+        if profile_api_key_id is None:
+            return ApiKeyResolution(
+                api_key=None,
+                source=resolution_source,
+                detail=(
+                    "No explicit generation API key is configured. "
+                    "Select a pinned key or opt into system_default via a generation profile."
+                ),
+            )
+
+        if profile_api_key_id:
+            api_key = session.scalar(select(ApiKey).where(ApiKey.id == profile_api_key_id))
+            if api_key is None:
+                return ApiKeyResolution(
+                    api_key=None,
+                    source=resolution_source,
+                    detail=(
+                        "The selected generation API key "
+                        f"(id={profile_api_key_id}) no longer exists."
+                    ),
+                )
+            if api_key.provider_type != provider_name:
+                return ApiKeyResolution(
+                    api_key=None,
+                    source=resolution_source,
+                    detail=(
+                        f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
+                        f"is for provider '{api_key.provider_type}', not '{provider_name}'."
+                    ),
+                )
+            if not api_key.is_active:
+                return ApiKeyResolution(
+                    api_key=None,
+                    source=resolution_source,
+                    detail=(
+                        f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
+                        "is inactive. Activate it or select a different key."
+                    ),
+                )
+            if api_key.key_value:
+                try:
+                    decrypted_value = _normalize_api_key_value(decrypt_secret(api_key.key_value))
+                except Exception:
+                    return ApiKeyResolution(
+                        api_key=None,
+                        source=resolution_source,
+                        detail=(
+                            f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
+                            "could not be decrypted. Re-save the key and try again."
+                        ),
+                    )
+                if decrypted_value:
+                    return ApiKeyResolution(
+                        api_key=decrypted_value,
+                        source=resolution_source,
+                        detail=(
+                            f"Using newsletter API key '{api_key.name}' (id={api_key.id}) for "
+                            f"provider '{provider_name}'."
+                        ),
+                    )
+            return ApiKeyResolution(
+                api_key=None,
+                source=resolution_source,
+                detail=(
+                    f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) is empty."
+                ),
+            )
+    finally:
+        session.close()
+
+    return ApiKeyResolution(
+        api_key=None,
+        source=resolution_source,
+        detail=(
+            "No explicit generation API key is configured. "
+            "Select a pinned key or opt into system_default via a generation profile."
+        ),
+    )
+
+
+def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
+    return _resolve_api_key_for_newsletter(newsletter).api_key
 
 
 def _has_live_provider_credentials(newsletter: Newsletter) -> bool:
@@ -157,12 +325,24 @@ def _provider_completion_configuration(newsletter: Newsletter) -> dict[str, Any]
     return _config_from_provider_type(provider_name, configuration=None)
 
 
-def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
+def _error_generate(newsletter: Newsletter, message: str) -> GeneratedDraft:
+    return GeneratedDraft(
+        status="error",
+        mode="none",
+        message=message,
+        subject=newsletter.draft_subject or newsletter.name,
+        preheader=newsletter.draft_preheader or newsletter.description or "",
+        body_text=newsletter.draft_body_text or "",
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
+    )
+
+
+def _fallback_generate(newsletter: Newsletter, *, reason: str) -> GeneratedDraft:
     subject = newsletter.draft_subject.strip() or f"{newsletter.name}: generated draft"
     preheader = (
         newsletter.draft_preheader
         or newsletter.description
-        or "Generated locally because no live provider credentials are configured."
+        or "Generated locally because explicit AI simulation is enabled."
     ).strip()
     body_text = newsletter.draft_body_text.strip() or (
         "Fallback draft outline:\n"
@@ -174,52 +354,167 @@ def _fallback_generate(newsletter: Newsletter) -> GeneratedDraft:
         status="fallback",
         mode="local-generator",
         message=(
-            "Generated a local fallback draft because no live provider "
-            "credentials were configured for this provider."
+            f"Generated a local simulated draft because {reason} "
+            f"Simulation is explicitly enabled via {SIMULATED_AI_GENERATION_ENV_VAR}=true."
         ),
         subject=subject,
         preheader=preheader,
         body_text=body_text,
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
+    )
+
+
+def _parse_structured_generation_output(
+    newsletter: Newsletter,
+    *,
+    content: str,
+    source_bundle: list[Any],
+) -> GeneratedDraft | None:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    subject = str(parsed.get("subject") or newsletter.name).strip() or newsletter.name
+    preheader = str(parsed.get("preheader") or newsletter.description or "").strip()
+    body_text = str(parsed.get("body_markdown") or parsed.get("body_text") or "").strip()
+    highlights = parsed.get("highlights")
+    source_references = parsed.get("source_references")
+    if not body_text:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message="AI JSON output was missing body_markdown/body_text.",
+            subject=subject,
+            preheader=preheader,
+            body_text="",
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
+        )
+
+    validation_error = _validate_generated_content(
+        subject=subject, preheader=preheader, body_text=body_text
+    )
+    if validation_error is not None:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message=validation_error,
+            subject=subject,
+            preheader=preheader,
+            body_text=body_text,
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
+        )
+
+    structured_output_error = _validate_structured_output(
+        highlights=highlights,
+        source_references=source_references,
+        source_bundle=source_bundle,
+    )
+    if structured_output_error is not None:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message=structured_output_error,
+            subject=subject,
+            preheader=preheader,
+            body_text=body_text,
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
+        )
+
+    return GeneratedDraft(
+        status="generated",
+        mode="litellm",
+        message="Generated draft successfully using the configured provider.",
+        subject=subject,
+        preheader=preheader,
+        body_text=body_text,
+        highlights_json=json.dumps(highlights) if isinstance(highlights, list) else None,
+        source_references_json=(
+            json.dumps(source_references) if isinstance(source_references, list) else None
+        ),
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
     )
 
 
 def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     provider_name = _normalized_provider_name(newsletter)
+    settings = get_settings()
 
     # Enforce provider enabled at generation time
     provider = _get_newsletter_provider(newsletter)
     if provider is not None and not provider.is_enabled:
-        return GeneratedDraft(
-            status="error",
-            mode="none",
-            message=f"Provider '{provider.name}' is disabled. Enable it before generating.",
-            subject=newsletter.draft_subject or newsletter.name,
-            preheader=newsletter.draft_preheader or "",
-            body_text=newsletter.draft_body_text or "",
+        return _error_generate(
+            newsletter,
+            f"Provider '{provider.name}' is disabled. Enable it before generating.",
         )
 
     if provider_name not in SUPPORTED_PROVIDERS:
         supported_providers = ", ".join(sorted(SUPPORTED_PROVIDERS))
-        return GeneratedDraft(
-            status="error",
-            mode="none",
-            message=(
+        return _error_generate(
+            newsletter,
+            (
                 f"Unsupported provider: '{newsletter.provider_name}'. "
                 f"Supported: {supported_providers}"
             ),
-            subject=newsletter.draft_subject or newsletter.name,
-            preheader=newsletter.draft_preheader or "",
-            body_text=newsletter.draft_body_text or "",
         )
 
-    if completion is None or not _has_live_provider_credentials(newsletter):
-        return _fallback_generate(newsletter)
+    credential_resolution = _resolve_api_key_for_newsletter(newsletter)
+    source_bundle = build_source_bundle(newsletter)
+
+    if not has_usable_source_bundle(source_bundle):
+        return _error_generate(
+            newsletter,
+            (
+                "No usable source material could be collected. Add at least one fetchable source "
+                "URL before generating."
+            ),
+        )
+
+    if completion is None:
+        message = "LiteLLM is not available, so live AI generation cannot run."
+        if settings.allow_simulated_ai_generation:
+            return _fallback_generate(newsletter, reason=message)
+        return _error_generate(newsletter, message)
+
+    if credential_resolution.api_key is None:
+        if settings.allow_simulated_ai_generation:
+            return _fallback_generate(newsletter, reason=credential_resolution.detail)
+        return _error_generate(newsletter, credential_resolution.detail)
 
     prompt = "\n".join(
         [
             f"Newsletter name: {newsletter.name}",
             f"Description: {newsletter.description or 'None'}",
             f"Audience label: {newsletter.audience_name}",
+            (
+                f"Style/template constraints: template_key={newsletter.template_key}; keep the "
+                "voice concise, operator-facing, and suitable for plain-text email sections."
+            ),
+            (
+                "Time window: focus on the time period implied by the collected source URLs and "
+                "the current operator prompt."
+            ),
+            (
+                "Previous approved revision:\n"
+                f"Subject: {newsletter.approved_revision.subject}\n"
+                f"Preheader: {newsletter.approved_revision.preheader or ''}\n"
+                f"Body: {newsletter.approved_revision.body_text[:400]}"
+            )
+            if getattr(newsletter, "approved_revision", None)
+            else "Previous approved revision: None",
+            "Source bundle:",
+            *[
+                (
+                    f"- [{source.source_id}] {source.title}: {source.summary} ({source.url}) "
+                    f"published_at={source.published_at or 'unknown'} "
+                    f"relevance_score={source.relevance_score} "
+                    f"dedupe_hash={source.dedupe_hash}"
+                )
+                for source in source_bundle
+            ],
             "Generate a concise newsletter draft with:",
             "1. A subject line",
             "2. A preheader",
@@ -227,16 +522,14 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             "",
             f"Prompt instructions:\n{newsletter.prompt}",
             "",
-            "Return the result as plain text in this exact format:",
-            "SUBJECT: ...",
-            "PREHEADER: ...",
-            "BODY:",
-            "...",
+            "Return strict JSON with this shape:",
+            '{"subject":"...","preheader":"...","body_markdown":"...","highlights":["..."],"source_references":[{"source_id":"src_1","claim":"..."}]}',
+            "Do not return prose outside JSON.",
         ]
     )
 
     try:
-        api_key = _get_api_key_for_newsletter(newsletter)
+        api_key = credential_resolution.api_key
         completion_kwargs = _provider_completion_configuration(newsletter)
 
         # Add User-Agent header for Kimi Code API compatibility
@@ -254,62 +547,109 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             **completion_kwargs,
         )
         content = response.choices[0].message.content or ""
+        token_usage_json = _serialize_token_usage(getattr(response, "usage", None))
+        raw_response_hash = hashlib.sha256(content.encode()).hexdigest()
     except ValueError as exc:
-        return GeneratedDraft(
-            status="error",
-            mode="none",
-            message=str(exc),
-            subject=newsletter.draft_subject or newsletter.name,
-            preheader=newsletter.draft_preheader or newsletter.description or "",
-            body_text=newsletter.draft_body_text or "",
-        )
+        return _error_generate(newsletter, str(exc))
     except Exception as exc:
-        fallback = _fallback_generate(newsletter)
-        fallback.message = f"Live generation failed, using local fallback instead: {exc}"
-        return fallback
-
-    lines = content.splitlines()
-    subject = newsletter.name
-    preheader = newsletter.description or ""
-    body_lines: list[str] = []
-    in_body = False
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("SUBJECT:"):
-            subject = stripped.removeprefix("SUBJECT:").strip() or subject
-        elif stripped.startswith("PREHEADER:"):
-            preheader = stripped.removeprefix("PREHEADER:").strip() or preheader
-        elif stripped == "BODY:":
-            in_body = True
-        elif in_body:
-            body_lines.append(line.rstrip())
-
-    body_text = (
-        "\n".join(body_lines).strip() or newsletter.description or newsletter.draft_body_text or ""
-    )
-
-    if not body_lines and not body_text:
-        return GeneratedDraft(
-            status="error",
-            mode="litellm",
-            message=(
-                "AI output could not be parsed. Expected SUBJECT:/PREHEADER:/BODY: format. "
-                "Raw output was not in the expected structure."
-            ),
-            subject=subject,
-            preheader=preheader,
-            body_text=content[:500] if content else "",
+        detail = (
+            f"Live generation failed for provider '{provider_name}': {type(exc).__name__}: {exc}"
         )
+        if settings.allow_simulated_ai_generation:
+            return _fallback_generate(newsletter, reason=detail)
+        return _error_generate(newsletter, detail)
+
+    structured_result = _parse_structured_generation_output(
+        newsletter,
+        content=content,
+        source_bundle=source_bundle,
+    )
+    if structured_result is not None:
+        structured_result.token_usage_json = token_usage_json
+        structured_result.raw_response_hash = raw_response_hash
+        return structured_result
 
     return GeneratedDraft(
-        status="generated",
+        status="error",
         mode="litellm",
-        message="Generated draft successfully using the configured provider.",
-        subject=subject,
-        preheader=preheader,
-        body_text=body_text,
+        message="AI output could not be parsed as strict JSON.",
+        subject=newsletter.name,
+        preheader=newsletter.description or "",
+        body_text=content[:500] if content else "",
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
+        token_usage_json=token_usage_json,
+        raw_response_hash=raw_response_hash,
     )
+
+
+def _validate_generated_content(*, subject: str, preheader: str, body_text: str) -> str | None:
+    if len(subject) > 120:
+        return "Generated subject exceeds the 120 character limit."
+    if not preheader.strip():
+        return "Generated output is missing a preheader."
+    if not body_text.strip():
+        return "Generated output is missing the body content."
+    if "{{" in body_text or "}}" in body_text or "[[" in body_text or "]]" in body_text:
+        return "Generated output contains unresolved placeholder markup."
+    if "%recipient_" in body_text or "%unsubscribe_" in body_text:
+        return "Generated output contains unsupported template variables."
+    if body_text.count("[") != body_text.count("]") or body_text.count("(") != body_text.count(")"):
+        return "Generated output appears to contain malformed link markup."
+    if len(re.findall(r"^#+\s", body_text, flags=re.MULTILINE)) == 0 and "- " not in body_text:
+        return "Generated output is missing required section structure."
+    return None
+
+
+def _validate_structured_output(
+    *,
+    highlights: Any,
+    source_references: Any,
+    source_bundle: list[Any],
+) -> str | None:
+    if not isinstance(highlights, list) or not all(isinstance(item, str) for item in highlights):
+        return "Structured output must include highlights as an array of strings."
+    if not isinstance(source_references, list):
+        return "Structured output must include source_references as an array."
+
+    valid_source_ids = {getattr(source, "source_id", None) for source in source_bundle}
+    for item in source_references:
+        if not isinstance(item, dict):
+            return "Each source_references entry must be an object."
+        source_id = item.get("source_id")
+        claim = item.get("claim")
+        if not isinstance(source_id, str) or not source_id:
+            return "Each source_references entry must include a non-empty source_id."
+        if source_id not in valid_source_ids:
+            return (
+                "Structured output referenced a source_id that is not in the collected "
+                "source bundle."
+            )
+        if not isinstance(claim, str) or not claim.strip():
+            return "Each source_references entry must include a non-empty claim."
+    return None
+
+
+def _provider_snapshot_json(newsletter: Newsletter) -> str:
+    return json.dumps(
+        {
+            "provider_name": _normalized_provider_name(newsletter),
+            "model_name": _provider_model_name(newsletter),
+        }
+    )
+
+
+def _serialize_token_usage(usage: Any) -> str | None:
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return json.dumps(usage)
+
+    data = {
+        key: value
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+        if isinstance((value := getattr(usage, key, None)), (int, float))
+    }
+    return json.dumps(data) if data else None
 
 
 def _strip_model_prefix(raw_model: str, provider_type: str) -> str:
