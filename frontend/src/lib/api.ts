@@ -124,6 +124,10 @@ export type DraftRevisionApproveResponse = {
   newsletter: NewsletterDetail;
 };
 
+export type DraftRevisionDetailResponse = {
+  revision: DraftRevisionSummary;
+};
+
 
 
 export type FormOptionTemplate = {
@@ -271,6 +275,17 @@ export const api = {
     }),
   listNewsletterRevisions: (newsletterId: number) =>
     request<DraftRevisionListResponse>(`/newsletters/${newsletterId}/revisions`),
+  getNewsletterRevision: (newsletterId: number, revisionId: number) =>
+    request<DraftRevisionDetailResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}`),
+  updateNewsletterRevision: (
+    newsletterId: number,
+    revisionId: number,
+    payload: Pick<DraftRevisionSummary, "subject" | "preheader" | "body_text">
+  ) =>
+    request<DraftRevisionDetailResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}`, {
+      method: "PATCH",
+      jsonBody: payload,
+    }),
   approveNewsletterRevision: (newsletterId: number, revisionId: number) =>
     request<DraftRevisionApproveResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}/approve`, {
       method: "POST"

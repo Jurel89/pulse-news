@@ -34,8 +34,10 @@ from app.models import (
 )
 from app.schemas import (
     DraftRevisionApproveResponse,
+    DraftRevisionDetailResponse,
     DraftRevisionListResponse,
     DraftRevisionSummary,
+    DraftRevisionUpdateRequest,
     NewsletterCreateRequest,
     NewsletterDetail,
     NewsletterGenerationResponse,
@@ -1265,6 +1267,50 @@ def approve_newsletter_revision(
         revision=DraftRevisionSummary.model_validate(approved),
         newsletter=serialize_newsletter_detail(newsletter),
     )
+
+
+@newsletters_router.get(
+    "/{newsletter_id}/revisions/{revision_id}",
+    response_model=DraftRevisionDetailResponse,
+)
+def get_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionDetailResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    return DraftRevisionDetailResponse(revision=DraftRevisionSummary.model_validate(revision))
+
+
+@newsletters_router.patch(
+    "/{newsletter_id}/revisions/{revision_id}",
+    response_model=DraftRevisionDetailResponse,
+)
+def update_newsletter_revision(
+    newsletter_id: int,
+    revision_id: int,
+    payload: DraftRevisionUpdateRequest,
+    request: Request,
+    db: DbSession,
+) -> DraftRevisionDetailResponse:
+    require_authenticated_user(request, db)
+    newsletter = get_newsletter_or_404(db, newsletter_id)
+    revision = get_revision_or_404(db, newsletter, revision_id)
+    if revision.state == "approved":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Approved revisions are immutable. Create or approve a new candidate instead.",
+        )
+    revision.subject = payload.subject.strip()
+    revision.preheader = payload.preheader.strip() if payload.preheader else None
+    revision.body_text = payload.body_text.strip()
+    db.add(revision)
+    db.commit()
+    db.refresh(revision)
+    return DraftRevisionDetailResponse(revision=DraftRevisionSummary.model_validate(revision))
 
 
 @newsletters_router.post("/{newsletter_id}/schedule/resume", response_model=NewsletterDetail)

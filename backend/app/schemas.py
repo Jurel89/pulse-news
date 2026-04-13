@@ -272,6 +272,16 @@ class DraftRevisionApproveResponse(BaseModel):
     newsletter: NewsletterDetail
 
 
+class DraftRevisionUpdateRequest(BaseModel):
+    subject: str
+    preheader: str | None = None
+    body_text: str
+
+
+class DraftRevisionDetailResponse(BaseModel):
+    revision: DraftRevisionSummary
+
+
 class EmailTemplateSummary(BaseModel):
     id: int
     name: str
