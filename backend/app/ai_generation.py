@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -381,6 +382,19 @@ def _parse_structured_generation_output(
             body_text="",
         )
 
+    validation_error = _validate_generated_content(
+        subject=subject, preheader=preheader, body_text=body_text
+    )
+    if validation_error is not None:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message=validation_error,
+            subject=subject,
+            preheader=preheader,
+            body_text=body_text,
+        )
+
     return GeneratedDraft(
         status="generated",
         mode="litellm",
@@ -441,9 +455,22 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             f"Newsletter name: {newsletter.name}",
             f"Description: {newsletter.description or 'None'}",
             f"Audience label: {newsletter.audience_name}",
+            (
+                "Previous approved revision:\n"
+                f"Subject: {newsletter.approved_revision.subject}\n"
+                f"Preheader: {newsletter.approved_revision.preheader or ''}\n"
+                f"Body: {newsletter.approved_revision.body_text[:400]}"
+            )
+            if getattr(newsletter, "approved_revision", None)
+            else "Previous approved revision: None",
             "Source bundle:",
             *[
-                f"- [{source.source_id}] {source.title}: {source.summary} ({source.url})"
+                (
+                    f"- [{source.source_id}] {source.title}: {source.summary} ({source.url}) "
+                    f"published_at={source.published_at or 'unknown'} "
+                    f"relevance_score={source.relevance_score} "
+                    f"dedupe_hash={source.dedupe_hash}"
+                )
                 for source in source_bundle
             ],
             "Generate a concise newsletter draft with:",
@@ -500,6 +527,22 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         preheader=newsletter.description or "",
         body_text=content[:500] if content else "",
     )
+
+
+def _validate_generated_content(*, subject: str, preheader: str, body_text: str) -> str | None:
+    if len(subject) > 120:
+        return "Generated subject exceeds the 120 character limit."
+    if not preheader.strip():
+        return "Generated output is missing a preheader."
+    if not body_text.strip():
+        return "Generated output is missing the body content."
+    if "{{" in body_text or "}}" in body_text or "[[" in body_text or "]]" in body_text:
+        return "Generated output contains unresolved placeholder markup."
+    if body_text.count("[") != body_text.count("]") or body_text.count("(") != body_text.count(")"):
+        return "Generated output appears to contain malformed link markup."
+    if len(re.findall(r"^#+\s", body_text, flags=re.MULTILINE)) == 0 and "- " not in body_text:
+        return "Generated output is missing required section structure."
+    return None
 
 
 def _strip_model_prefix(raw_model: str, provider_type: str) -> str:

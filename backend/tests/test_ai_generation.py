@@ -54,6 +54,9 @@ def client(tmp_path, monkeypatch):
                     title="Example source",
                     summary="Fetched source summary",
                     source_type="operator_url_fetched",
+                    published_at="2026-04-13T00:00:00+00:00",
+                    relevance_score=0.9,
+                    dedupe_hash="deadbeefcafefeed",
                 )
             ]
         ),
@@ -253,6 +256,9 @@ def test_generate_newsletter_draft_rejects_unfetched_source_urls(
                     title="https://unreachable.invalid/source",
                     summary="Unable to fetch source content directly: RuntimeError",
                     source_type="operator_url_unfetched",
+                    published_at=None,
+                    relevance_score=0.0,
+                    dedupe_hash="deadbeefcafefeed",
                 )
             ]
         ),
@@ -301,6 +307,35 @@ def test_generate_newsletter_draft_accepts_structured_json_output(
     assert result.subject == "Operator Watch"
     assert result.preheader == "Signals worth scanning"
     assert result.body_text == "First section\n\nSecond section"
+
+
+def test_generate_newsletter_draft_rejects_subjects_longer_than_limit(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="Fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "{"
+            f'"subject":"{"x" * 121}",'
+            '"preheader":"Signals worth scanning",'
+            '"body_markdown":"- Section one"'
+            "}"
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert "120 character limit" in result.message
 
 
 def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_key(
