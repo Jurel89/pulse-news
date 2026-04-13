@@ -71,6 +71,7 @@ test('create newsletter through the UI', async ({ page }) => {
   await ensureJobsNav(page);
   await page.getByRole('button', { name: 'Jobs' }).click();
   await page.getByRole('button', { name: /new newsletter/i }).click();
+  await expect(page.getByLabel('Name')).toBeVisible({ timeout: 15000 });
   await page.getByLabel('Name').fill('UI Created Newsletter');
   await page.getByLabel('Description').fill('Created through the UI');
   await page.getByLabel('Status').selectOption({ label: 'Active' });
