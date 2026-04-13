@@ -283,5 +283,6 @@ def test_kimi_provider_uses_coding_api_base_url(client: TestClient, monkeypatch)
 
     app.ai_generation.generate_newsletter_draft(newsletter)
 
+    assert completion_mock.call_args.kwargs["model"] == "moonshot/kimi-k2.5"
     assert completion_mock.call_args.kwargs["api_base"] == "https://api.kimi.com/coding/v1"
     assert completion_mock.call_args.kwargs["extra_headers"]["User-Agent"] == "claude-code/0.1.0"
