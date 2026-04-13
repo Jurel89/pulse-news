@@ -178,6 +178,36 @@ def test_duplicate_manual_send_reuses_existing_run(client: TestClient):
     assert second_run["revision_id"] == first_run["revision_id"]
 
 
+def test_duplicate_scheduled_send_uses_fire_scope(client: TestClient):
+    import app.database
+    from app.api.newsletters import execute_newsletter_send
+    from app.models import Newsletter
+
+    bootstrap_operator(client)
+    newsletter_payload = create_newsletter(client)
+
+    session = app.database.get_session_maker()()
+    try:
+        newsletter = session.get(Newsletter, newsletter_payload["id"])
+        assert newsletter is not None
+        first_response, first_run = execute_newsletter_send(
+            session,
+            newsletter,
+            trigger_mode="scheduled-send",
+            fire_scope="2026-04-13T10:00:00+00:00",
+        )
+        second_response, second_run = execute_newsletter_send(
+            session,
+            newsletter,
+            trigger_mode="scheduled-send",
+            fire_scope="2026-04-20T10:00:00+00:00",
+        )
+        assert first_response.run.id != second_response.run.id
+        assert first_run.attempt_key != second_run.attempt_key
+    finally:
+        session.close()
+
+
 def test_operational_events_endpoint_defaults_to_run_events_only(client: TestClient):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)

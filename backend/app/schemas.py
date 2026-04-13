@@ -489,6 +489,10 @@ class NewsletterTestSendRequest(BaseModel):
     to_email: EmailStr
 
 
+class NewsletterSendRequest(BaseModel):
+    idempotency_key: str | None = None
+
+
 class NewsletterTestSendResponse(BaseModel):
     status: str
     mode: str

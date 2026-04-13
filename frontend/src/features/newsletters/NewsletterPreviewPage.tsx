@@ -106,10 +106,14 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
     setTestSendResult(null);
     setManualSendResult(null);
     try {
+      if (selectedRevisionId && selectedRevisionId !== approvedRevisionId) {
+        throw new Error("Only the approved revision can be sent. Approve this revision first.");
+      }
       const targetRevisionId = selectedRevisionId ?? approvedRevisionId;
+      const idempotencyKey = crypto.randomUUID();
       const result = targetRevisionId
-        ? await api.sendNewsletterRevision(newsletter.id, targetRevisionId)
-        : await api.sendNewsletter(newsletter.id);
+        ? await api.sendNewsletterRevision(newsletter.id, targetRevisionId, idempotencyKey)
+        : await api.sendNewsletter(newsletter.id, idempotencyKey);
       setManualSendResult(result);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send newsletter.");
@@ -234,7 +238,7 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
               {busy ? "Sending..." : "Send Test Email"}
             </button>
             <button className="secondary-button" disabled={busy} onClick={() => void handleManualSend()} type="button">
-               {busy ? "Working..." : "Send Approved Draft"}
+               {busy ? "Working..." : selectedRevisionId && selectedRevisionId !== approvedRevisionId ? "Approve revision to send" : "Send Approved Draft"}
             </button>
           </div>
 

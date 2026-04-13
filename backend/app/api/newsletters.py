@@ -39,6 +39,7 @@ from app.schemas import (
     NewsletterGenerationResponse,
     NewsletterPreviewResponse,
     NewsletterRunSummary,
+    NewsletterSendRequest,
     NewsletterSendResponse,
     NewsletterSummary,
     NewsletterTestSendRequest,
@@ -458,6 +459,8 @@ def execute_newsletter_send(
     *,
     revision: DraftRevision | None = None,
     trigger_mode: str,
+    idempotency_key: str | None = None,
+    fire_scope: str | None = None,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
     validate_send_allowed(newsletter)
     resolved_revision = revision or _approved_revision(newsletter)
@@ -475,11 +478,12 @@ def execute_newsletter_send(
             detail="Cannot send: no active recipients.",
         )
 
-    attempt_key = build_delivery_attempt_key(
+    attempt_key = idempotency_key or build_delivery_attempt_key(
         newsletter_id=newsletter.id,
         revision_id=resolved_revision.id,
         trigger_mode=trigger_mode,
         recipient_emails=active_recipient_emails,
+        fire_scope=fire_scope,
     )
 
     existing_run = db.scalar(select(NewsletterRun).where(NewsletterRun.attempt_key == attempt_key))
@@ -1255,6 +1259,7 @@ def send_newsletter(
     newsletter_id: int,
     request: Request,
     db: DbSession,
+    payload: NewsletterSendRequest | None = None,
 ) -> NewsletterSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
@@ -1263,6 +1268,7 @@ def send_newsletter(
         newsletter,
         revision=_approved_revision(newsletter),
         trigger_mode="manual-send",
+        idempotency_key=payload.idempotency_key if payload else None,
     )
     return response
 
@@ -1276,15 +1282,22 @@ def send_newsletter_revision(
     revision_id: int,
     request: Request,
     db: DbSession,
+    payload: NewsletterSendRequest | None = None,
 ) -> NewsletterSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     revision = get_revision_or_404(db, newsletter, revision_id)
+    if revision.id != (newsletter.approved_revision_id or 0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only the approved revision can be sent. Approve the revision first.",
+        )
     response, _run = execute_newsletter_send(
         db,
         newsletter,
         revision=revision,
         trigger_mode="manual-send",
+        idempotency_key=payload.idempotency_key if payload else None,
     )
     return response
 
@@ -1350,12 +1363,25 @@ def update_newsletter(
             prompt_snapshot=payload.prompt,
         )
         newsletter.draft_head_revision = draft_revision
-    else:
-        draft_revision.subject = payload.draft_subject
-        draft_revision.preheader = payload.draft_preheader
-        draft_revision.body_text = payload.draft_body_text
-        draft_revision.prompt_snapshot = payload.prompt
-        draft_revision.state = "candidate"
+    elif (
+        draft_revision.subject != payload.draft_subject
+        or draft_revision.preheader != payload.draft_preheader
+        or draft_revision.body_text != payload.draft_body_text
+        or draft_revision.prompt_snapshot != payload.prompt
+    ):
+        if draft_revision.state == "candidate":
+            draft_revision.state = "superseded"
+        draft_revision = _create_revision(
+            newsletter,
+            state="candidate",
+            origin="manual",
+            subject=payload.draft_subject,
+            preheader=payload.draft_preheader,
+            body_text=payload.draft_body_text,
+            prompt_snapshot=payload.prompt,
+            source_bundle_snapshot_json=draft_revision.source_bundle_snapshot_json,
+        )
+        newsletter.draft_head_revision = draft_revision
 
     upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
 

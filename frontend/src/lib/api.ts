@@ -266,13 +266,15 @@ export const api = {
       method: "POST",
       jsonBody: { to_email: toEmail }
     }),
-  sendNewsletter: (newsletterId: number) =>
+  sendNewsletter: (newsletterId: number, idempotencyKey?: string) =>
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
-      method: "POST"
+      method: "POST",
+      jsonBody: idempotencyKey ? { idempotency_key: idempotencyKey } : undefined,
     }),
-  sendNewsletterRevision: (newsletterId: number, revisionId: number) =>
+  sendNewsletterRevision: (newsletterId: number, revisionId: number, idempotencyKey?: string) =>
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/send`, {
-      method: "POST"
+      method: "POST",
+      jsonBody: idempotencyKey ? { idempotency_key: idempotencyKey } : undefined,
     }),
   listAuditEvents: (params: AuditEventListParams) =>
     request<AuditEventListResponse>(`/audit${buildQueryString(params)}`),
