@@ -27,6 +27,8 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
   const [draftHeadRevisionId, setDraftHeadRevisionId] = useState<number | null>(newsletter.draft_head_revision_id);
   const [selectedRevisionId, setSelectedRevisionId] = useState<number | null>(newsletter.approved_revision_id ?? newsletter.draft_head_revision_id);
   const [revisionDraft, setRevisionDraft] = useState({ subject: "", preheader: "", body_text: "" });
+  const approvedRevision = revisions.find((revision) => revision.id === approvedRevisionId) ?? null;
+  const selectedRevision = revisions.find((revision) => revision.id === selectedRevisionId) ?? null;
 
   const loadRevisionState = useCallback(async () => {
     const nextRevisions = await api.listNewsletterRevisions(newsletter.id);
@@ -247,6 +249,31 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
               })}
             </div>
           </div>
+
+          {selectedRevision && approvedRevision && selectedRevision.id !== approvedRevision.id ? (
+            <div className="status-panel">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">Compare revisions</p>
+                  <h3 className="section-title">Candidate vs approved</h3>
+                </div>
+              </div>
+              <div className="form-grid">
+                <article className="newsletter-card">
+                  <strong>Approved revision #{approvedRevision.version_number}</strong>
+                  <p className="newsletter-description">{approvedRevision.subject}</p>
+                  <p className="newsletter-description">{approvedRevision.preheader || "No preheader"}</p>
+                  <p className="newsletter-description">Run #{approvedRevision.generation_run_id ?? "—"}</p>
+                </article>
+                <article className="newsletter-card">
+                  <strong>Candidate revision #{selectedRevision.version_number}</strong>
+                  <p className="newsletter-description">{selectedRevision.subject}</p>
+                  <p className="newsletter-description">{selectedRevision.preheader || "No preheader"}</p>
+                  <p className="newsletter-description">Run #{selectedRevision.generation_run_id ?? "—"}</p>
+                </article>
+              </div>
+            </div>
+          ) : null}
 
           {selectedRevisionId && selectedRevisionId !== approvedRevisionId ? (
             <div className="status-panel">

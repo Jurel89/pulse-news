@@ -37,21 +37,7 @@ def build_source_bundle(newsletter: Newsletter) -> list[SourceItem]:
         for index, url in enumerate(deduped_urls)
     ]
 
-    if source_items:
-        return source_items
-
-    return [
-        SourceItem(
-            source_id="src_context",
-            url=f"pulse-news://newsletter/{newsletter.slug}",
-            title=f"{newsletter.name} context",
-            summary=(
-                f"Fallback operator context for audience '{newsletter.audience_name}' and "
-                f"topic '{newsletter.delivery_topic}'."
-            ),
-            source_type="operator_context",
-        )
-    ]
+    return source_items
 
 
 def _fetch_source_item(newsletter: Newsletter, *, url: str, index: int) -> SourceItem:

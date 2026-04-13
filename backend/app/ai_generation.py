@@ -416,6 +416,15 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     credential_resolution = _resolve_api_key_for_newsletter(newsletter)
     source_bundle = build_source_bundle(newsletter)
 
+    if not source_bundle:
+        return _error_generate(
+            newsletter,
+            (
+                "No source material could be collected. Add at least one fetchable source URL "
+                "before generating."
+            ),
+        )
+
     if completion is None:
         message = "LiteLLM is not available, so live AI generation cannot run."
         if settings.allow_simulated_ai_generation:
@@ -446,11 +455,7 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             "",
             "Return strict JSON with this shape:",
             '{"subject":"...","preheader":"...","body_markdown":"...","highlights":["..."],"source_references":[{"source_id":"src_1","claim":"..."}]}',
-            "If you cannot return JSON, fall back to this exact plain text format:",
-            "SUBJECT: ...",
-            "PREHEADER: ...",
-            "BODY:",
-            "...",
+            "Do not return prose outside JSON.",
         ]
     )
 
@@ -487,47 +492,13 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     if structured_result is not None:
         return structured_result
 
-    lines = content.splitlines()
-    subject = newsletter.name
-    preheader = newsletter.description or ""
-    body_lines: list[str] = []
-    in_body = False
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("SUBJECT:"):
-            subject = stripped.removeprefix("SUBJECT:").strip() or subject
-        elif stripped.startswith("PREHEADER:"):
-            preheader = stripped.removeprefix("PREHEADER:").strip() or preheader
-        elif stripped == "BODY:":
-            in_body = True
-        elif in_body:
-            body_lines.append(line.rstrip())
-
-    body_text = (
-        "\n".join(body_lines).strip() or newsletter.description or newsletter.draft_body_text or ""
-    )
-
-    if not body_lines and not body_text:
-        return GeneratedDraft(
-            status="error",
-            mode="litellm",
-            message=(
-                "AI output could not be parsed. Expected SUBJECT:/PREHEADER:/BODY: format. "
-                "Raw output was not in the expected structure."
-            ),
-            subject=subject,
-            preheader=preheader,
-            body_text=content[:500] if content else "",
-        )
-
     return GeneratedDraft(
-        status="generated",
+        status="error",
         mode="litellm",
-        message="Generated draft successfully using the configured provider.",
-        subject=subject,
-        preheader=preheader,
-        body_text=body_text,
+        message="AI output could not be parsed as strict JSON.",
+        subject=newsletter.name,
+        preheader=newsletter.description or "",
+        body_text=content[:500] if content else "",
     )
 
 

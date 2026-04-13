@@ -53,7 +53,7 @@ def build_newsletter(**overrides):
         "name": "Weekly Radar",
         "slug": "weekly-radar",
         "description": "Founder signals worth scanning",
-        "prompt": "Summarize the top AI and startup operations stories for founders.",
+        "prompt": "Summarize the top AI and startup operations stories for founders using https://example.com/source.",
         "draft_subject": "",
         "draft_preheader": "",
         "draft_body_text": "",
@@ -185,7 +185,7 @@ def test_generate_newsletter_draft_returns_explicit_simulation_when_enabled(
     assert "Fallback draft outline" in result.body_text
 
 
-def test_generate_newsletter_draft_parses_subject_preheader_and_body_sections(
+def test_generate_newsletter_draft_rejects_non_json_output(
     client: TestClient,
     monkeypatch,
 ):
@@ -211,9 +211,9 @@ def test_generate_newsletter_draft_parses_subject_preheader_and_body_sections(
 
     result = app.ai_generation.generate_newsletter_draft(newsletter)
 
-    assert result.subject == "Operator Watch"
-    assert result.preheader == "Signals worth scanning"
-    assert result.body_text == "First section\n\nSecond section"
+    assert result.status == "error"
+    assert result.mode == "litellm"
+    assert "strict JSON" in result.message
 
 
 def test_generate_newsletter_draft_accepts_structured_json_output(
@@ -280,10 +280,11 @@ def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_ke
 
     completion_mock = Mock(
         return_value=make_completion_response(
-            "SUBJECT: Provider Defaults\n"
-            "PREHEADER: Configured by provider\n"
-            "BODY:\n"
-            "- Uses the provider default model"
+            "{"
+            '"subject":"Provider Defaults",'
+            '"preheader":"Configured by provider",'
+            '"body_markdown":"- Uses the provider default model"'
+            "}"
         )
     )
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
