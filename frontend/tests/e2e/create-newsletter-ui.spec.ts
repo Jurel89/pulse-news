@@ -77,7 +77,9 @@ test('create newsletter through the UI', async ({ page }) => {
   const nameInput = page.locator('input').first();
   await expect(nameInput).toBeVisible({ timeout: 15000 });
   await nameInput.fill('UI Created Newsletter');
-  await page.getByLabel('Description').fill('Created through the UI');
+  const descriptionInput = page.locator('textarea').first();
+  await expect(descriptionInput).toBeVisible({ timeout: 15000 });
+  await descriptionInput.fill('Created through the UI');
   await page.getByLabel('Status').selectOption({ label: 'Active' });
   await page.getByLabel('Prompt').fill('Summarize https://example.com/updates');
   await page.getByLabel('Draft Subject').fill('Initial subject');
