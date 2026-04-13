@@ -241,6 +241,71 @@ class NewsletterUpdateRequest(NewsletterCreateRequest):
     pass
 
 
+class NewsletterJobUpdateRequest(BaseModel):
+    name: str
+    description: str | None = None
+    prompt: str
+    provider_id: int | None = None
+    provider_name: str
+    model_name: str
+    template_key: str
+    api_key_id: int | None = None
+    resend_api_key_id: int | None = None
+    generation_profile_id: int | None = None
+    delivery_profile_id: int | None = None
+    audience_name: str
+    delivery_topic: str
+    timezone: str
+    schedule_enabled: bool
+    schedule_cron: str | None = None
+    status: NewsletterStatus
+    notes: str | None = None
+    recipient_import_text: str
+
+    @field_validator("name", "model_name", "template_key")
+    @classmethod
+    def validate_required_text_fields(cls, value: str, info: ValidationInfo) -> str:
+        return _normalize_required_text(value, field_name=info.field_name)
+
+    @field_validator("provider_name")
+    @classmethod
+    def validate_provider_name(cls, value: str) -> str:
+        return _validate_supported_provider_name(value, field_name="provider_name")
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("timezone must not be empty.")
+        try:
+            ZoneInfo(normalized)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone must be a valid IANA timezone.") from exc
+        return normalized
+
+    @field_validator("schedule_cron")
+    @classmethod
+    def validate_schedule_cron(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = " ".join(value.split())
+        if not normalized:
+            return None
+        if CRON_5_FIELD_PATTERN.fullmatch(normalized) is None:
+            raise ValueError("schedule_cron must be a valid 5-field cron expression.")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_schedule_state(self) -> NewsletterJobUpdateRequest:
+        if self.schedule_enabled and not self.schedule_cron:
+            raise ValueError("schedule_cron is required when schedule_enabled is true.")
+        if self.schedule_enabled and self.status != NewsletterStatus.ACTIVE:
+            raise ValueError("status must be 'active' when schedule_enabled is true.")
+        return self
+
+
 class NewsletterDetail(NewsletterSummary):
     recipients: list[NewsletterRecipientSummary]
     recipient_import_text: str

@@ -41,6 +41,7 @@ from app.schemas import (
     NewsletterCreateRequest,
     NewsletterDetail,
     NewsletterGenerationResponse,
+    NewsletterJobUpdateRequest,
     NewsletterPreviewResponse,
     NewsletterRunSummary,
     NewsletterSendRequest,
@@ -48,7 +49,6 @@ from app.schemas import (
     NewsletterSummary,
     NewsletterTestSendRequest,
     NewsletterTestSendResponse,
-    NewsletterUpdateRequest,
 )
 from app.source_pipeline.service import build_source_bundle, serialize_source_bundle
 
@@ -1434,7 +1434,7 @@ def send_newsletter_revision(
 @newsletters_router.put("/{newsletter_id}", response_model=NewsletterDetail)
 def update_newsletter(
     newsletter_id: int,
-    payload: NewsletterUpdateRequest,
+    payload: NewsletterJobUpdateRequest,
     request: Request,
     db: DbSession,
 ) -> NewsletterDetail:
@@ -1465,54 +1465,6 @@ def update_newsletter(
     newsletter.schedule_enabled = payload.schedule_enabled
     newsletter.status = payload.status
     newsletter.notes = payload.notes
-
-    draft_revision = _draft_revision(newsletter)
-    approved_revision = _approved_revision(newsletter)
-    if draft_revision is None:
-        draft_revision = _create_revision(
-            newsletter,
-            state="candidate",
-            origin="manual",
-            subject=payload.draft_subject,
-            preheader=payload.draft_preheader,
-            body_text=payload.draft_body_text,
-            prompt_snapshot=payload.prompt,
-        )
-        newsletter.draft_head_revision = draft_revision
-    elif draft_revision.id == (approved_revision.id if approved_revision else None) and (
-        draft_revision.subject != payload.draft_subject
-        or draft_revision.preheader != payload.draft_preheader
-        or draft_revision.body_text != payload.draft_body_text
-    ):
-        draft_revision = _create_revision(
-            newsletter,
-            state="candidate",
-            origin="manual",
-            subject=payload.draft_subject,
-            preheader=payload.draft_preheader,
-            body_text=payload.draft_body_text,
-            prompt_snapshot=payload.prompt,
-        )
-        newsletter.draft_head_revision = draft_revision
-    elif (
-        draft_revision.subject != payload.draft_subject
-        or draft_revision.preheader != payload.draft_preheader
-        or draft_revision.body_text != payload.draft_body_text
-        or draft_revision.prompt_snapshot != payload.prompt
-    ):
-        if draft_revision.state == "candidate":
-            draft_revision.state = "superseded"
-        draft_revision = _create_revision(
-            newsletter,
-            state="candidate",
-            origin="manual",
-            subject=payload.draft_subject,
-            preheader=payload.draft_preheader,
-            body_text=payload.draft_body_text,
-            prompt_snapshot=payload.prompt,
-            source_bundle_snapshot_json=draft_revision.source_bundle_snapshot_json,
-        )
-        newsletter.draft_head_revision = draft_revision
 
     upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
 

@@ -311,32 +311,40 @@ export function NewsletterEditorPage({
             />
           </label>
 
-          <div className="form-grid">
-            <label>
-              <FieldLabel label="Draft Subject" helpText={fieldHelpText.draft_subject} />
-              <input
-                onChange={(event) => updateField("draft_subject", event.target.value)}
-                value={form.draft_subject}
-              />
-            </label>
+          {initialNewsletter ? (
+            <p className="form-notice">
+              Draft subject, preheader, and body are managed in the revision preview screen.
+            </p>
+          ) : (
+            <>
+              <div className="form-grid">
+                <label>
+                  <FieldLabel label="Draft Subject" helpText={fieldHelpText.draft_subject} />
+                  <input
+                    onChange={(event) => updateField("draft_subject", event.target.value)}
+                    value={form.draft_subject}
+                  />
+                </label>
 
-            <label>
-              <FieldLabel label="Draft Preheader" helpText={fieldHelpText.draft_preheader} />
-              <input
-                onChange={(event) => updateField("draft_preheader", event.target.value)}
-                value={form.draft_preheader}
-              />
-            </label>
-          </div>
+                <label>
+                  <FieldLabel label="Draft Preheader" helpText={fieldHelpText.draft_preheader} />
+                  <input
+                    onChange={(event) => updateField("draft_preheader", event.target.value)}
+                    value={form.draft_preheader}
+                  />
+                </label>
+              </div>
 
-          <label>
-            <FieldLabel label="Draft Body" helpText={fieldHelpText.draft_body_text} />
-            <textarea
-              onChange={(event) => updateField("draft_body_text", event.target.value)}
-              rows={8}
-              value={form.draft_body_text}
-            />
-          </label>
+              <label>
+                <FieldLabel label="Draft Body" helpText={fieldHelpText.draft_body_text} />
+                <textarea
+                  onChange={(event) => updateField("draft_body_text", event.target.value)}
+                  rows={8}
+                  value={form.draft_body_text}
+                />
+              </label>
+            </>
+          )}
         </div>
 
         <div className="form-section">

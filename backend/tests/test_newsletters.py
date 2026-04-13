@@ -314,7 +314,7 @@ def test_candidate_revision_cannot_be_sent_until_approved(client: TestClient):
     assert "Only the approved revision can be sent" in send_response.json()["detail"]
 
 
-def test_updating_draft_creates_new_candidate_revision(client: TestClient):
+def test_updating_job_does_not_mutate_candidate_revision(client: TestClient):
     bootstrap_operator(client)
     create_test_provider(client, "openai")
     create_response = client.post(
@@ -345,17 +345,57 @@ def test_updating_draft_creates_new_candidate_revision(client: TestClient):
 
     detail_response = client.get(f"/api/newsletters/{newsletter_id}")
     detail_payload = detail_response.json()
-    detail_payload["draft_subject"] = "Updated candidate subject"
-    detail_payload["draft_body_text"] = "Updated candidate body"
+    detail_payload["name"] = "Updated job name"
+    detail_payload["notes"] = "Updated job notes"
     update_response = client.put(f"/api/newsletters/{newsletter_id}", json=detail_payload)
     assert update_response.status_code == 200
 
     revisions = client.get(f"/api/newsletters/{newsletter_id}/revisions").json()["items"]
-    assert revisions[0]["id"] != first_candidate_revision_id
-    previous_candidate = next(
-        item for item in revisions if item["id"] == first_candidate_revision_id
+    assert revisions[0]["id"] == first_candidate_revision_id
+    assert revisions[0]["state"] == "candidate"
+
+
+def test_updating_revision_uses_dedicated_revision_endpoint(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Revision Edit Test",
+            "description": "Revision endpoint test",
+            "prompt": "Write a brief about revision edits.",
+            "draft_subject": "Initial subject",
+            "draft_preheader": "Initial preheader",
+            "draft_body_text": "Initial body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "testers",
+            "delivery_topic": "revision-edit",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "approver@example.com",
+        },
     )
-    assert previous_candidate["state"] == "superseded"
+    newsletter_id = create_response.json()["id"]
+    first_candidate_revision_id = client.post(
+        f"/api/newsletters/{newsletter_id}/generate-draft"
+    ).json()["revision_id"]
+
+    update_revision_response = client.patch(
+        f"/api/newsletters/{newsletter_id}/revisions/{first_candidate_revision_id}",
+        json={
+            "subject": "Updated candidate subject",
+            "preheader": "Updated candidate preheader",
+            "body_text": "Updated candidate body",
+        },
+    )
+    assert update_revision_response.status_code == 200
+    updated_revision = update_revision_response.json()["revision"]
+    assert updated_revision["id"] == first_candidate_revision_id
+    assert updated_revision["subject"] == "Updated candidate subject"
+    assert updated_revision["body_text"] == "Updated candidate body"
 
 
 def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
