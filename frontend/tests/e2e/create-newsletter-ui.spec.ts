@@ -52,6 +52,7 @@ test('create newsletter through the UI', async ({ page }) => {
     await page.getByRole('button', { name: /log in/i }).click();
   }
 
+  await expect(page.getByRole('button', { name: 'Jobs' })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: 'Jobs' }).click();
   await page.getByRole('button', { name: /new newsletter/i }).click();
   await page.getByLabel('Name').fill('UI Created Newsletter');
@@ -85,6 +86,7 @@ test('create newsletter through the UI', async ({ page }) => {
     await page.getByRole('button', { name: /log in/i }).click();
   }
 
+  await expect(page.getByRole('button', { name: 'Jobs' })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: 'Jobs' }).click();
   await expect(page.locator('tr', { hasText: 'UI Created Newsletter' }).first()).toBeVisible({ timeout: 15000 });
 });
