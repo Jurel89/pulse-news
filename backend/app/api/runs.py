@@ -80,6 +80,7 @@ def list_runs(
     request: Request,
     db: DbSession,
     newsletter_id: int | None = None,
+    revision_id: int | None = None,
     run_type: str | None = None,
     run_status: str | None = None,
     trigger_mode: str | None = None,
@@ -90,6 +91,8 @@ def list_runs(
     statement = select(NewsletterRun).order_by(NewsletterRun.created_at.desc())
     if newsletter_id is not None:
         statement = statement.where(NewsletterRun.newsletter_id == newsletter_id)
+    if revision_id is not None:
+        statement = statement.where(NewsletterRun.revision_id == revision_id)
     if run_type is not None:
         statement = statement.where(NewsletterRun.run_type == run_type)
     if run_status is not None:

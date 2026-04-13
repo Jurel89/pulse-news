@@ -209,10 +209,10 @@ class Newsletter(TimestampMixin, Base):
         foreign_keys=[resend_api_key_id],
     )
     generation_profile: Mapped[GenerationProfile | None] = relationship(
-        "GenerationProfile", foreign_keys=[generation_profile_id]
+        GenerationProfile, foreign_keys=[generation_profile_id]
     )
     delivery_profile: Mapped[DeliveryProfile | None] = relationship(
-        "DeliveryProfile", foreign_keys=[delivery_profile_id]
+        DeliveryProfile, foreign_keys=[delivery_profile_id]
     )
     recipients: Mapped[list[NewsletterRecipient]] = relationship(
         back_populates="newsletter",

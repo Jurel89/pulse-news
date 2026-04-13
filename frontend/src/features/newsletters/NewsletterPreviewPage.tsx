@@ -4,6 +4,7 @@ import {
   api,
   type DraftRevisionSummary,
   type NewsletterPreview,
+  type NewsletterSendResult as NewsletterSendResultShape,
   type NewsletterSendResult,
   type NewsletterTestSendResult
 } from "../../lib/api";
@@ -24,6 +25,7 @@ export function NewsletterPreviewPage({ newsletter, onBack, onOpenRuns }: Newsle
   const [testSendResult, setTestSendResult] = useState<NewsletterTestSendResult | null>(null);
   const [manualSendResult, setManualSendResult] = useState<NewsletterSendResult | null>(null);
   const [revisions, setRevisions] = useState<DraftRevisionSummary[]>([]);
+  const [revisionRuns, setRevisionRuns] = useState<NewsletterSendResultShape["run"][]>([]);
   const [approvedRevisionId, setApprovedRevisionId] = useState<number | null>(newsletter.approved_revision_id);
   const [draftHeadRevisionId, setDraftHeadRevisionId] = useState<number | null>(newsletter.draft_head_revision_id);
   const [selectedRevisionId, setSelectedRevisionId] = useState<number | null>(newsletter.approved_revision_id ?? newsletter.draft_head_revision_id);
@@ -43,7 +45,9 @@ export function NewsletterPreviewPage({ newsletter, onBack, onOpenRuns }: Newsle
 
     if (nextSelectedRevisionId) {
       const nextPreview = await api.previewNewsletterRevision(newsletter.id, nextSelectedRevisionId);
+      const nextRuns = await api.listRuns({ revision_id: String(nextSelectedRevisionId) });
       setPreview(nextPreview);
+      setRevisionRuns(nextRuns.items);
       const selectedRevision = nextRevisions.items.find((revision) => revision.id === nextSelectedRevisionId);
       if (selectedRevision) {
         setRevisionDraft({
@@ -60,8 +64,10 @@ export function NewsletterPreviewPage({ newsletter, onBack, onOpenRuns }: Newsle
     setError(null);
     try {
       const nextPreview = await api.previewNewsletterRevision(newsletter.id, revisionId);
+      const nextRuns = await api.listRuns({ revision_id: String(revisionId) });
       setSelectedRevisionId(revisionId);
       setPreview(nextPreview);
+      setRevisionRuns(nextRuns.items);
       const selectedRevision = revisions.find((revision) => revision.id === revisionId);
       if (selectedRevision) {
         setRevisionDraft({
@@ -285,6 +291,36 @@ export function NewsletterPreviewPage({ newsletter, onBack, onOpenRuns }: Newsle
                   <p className="newsletter-description">{selectedRevision.preheader || "No preheader"}</p>
                   <p className="newsletter-description">Run #{selectedRevision.generation_run_id ?? "—"}</p>
                 </article>
+              </div>
+            </div>
+          ) : null}
+
+          {selectedRevision ? (
+            <div className="status-panel">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">Revision runs</p>
+                  <h3 className="section-title">Run history for revision #{selectedRevision.version_number}</h3>
+                </div>
+              </div>
+              <div className="newsletter-list">
+                {revisionRuns.length === 0 ? (
+                  <p className="newsletter-description">No runs recorded for this revision yet.</p>
+                ) : (
+                  revisionRuns.map((run) => (
+                    <article className="newsletter-card" key={run.id}>
+                      <strong>Run #{run.id}</strong>
+                      <p className="newsletter-description">{run.run_type ?? "unknown"} · {run.run_status}</p>
+                      <p className="newsletter-description">Started: {run.started_at ?? run.created_at}</p>
+                      <p className="newsletter-description">Completed: {run.completed_at ?? "—"}</p>
+                      {onOpenRuns ? (
+                        <button className="secondary-button" onClick={() => onOpenRuns(run.id)} type="button">
+                          Open run
+                        </button>
+                      ) : null}
+                    </article>
+                  ))
+                )}
               </div>
             </div>
           ) : null}
