@@ -236,12 +236,6 @@ class Newsletter(TimestampMixin, Base):
         back_populates="newsletter",
         cascade="all, delete-orphan",
     )
-    revisions: Mapped[list[DraftRevision]] = relationship(
-        "DraftRevision",
-        back_populates="newsletter",
-        cascade="all, delete-orphan",
-        foreign_keys="DraftRevision.newsletter_id",
-    )
     approved_revision: Mapped[DraftRevision | None] = relationship(
         foreign_keys=[approved_revision_id],
         post_update=True,
@@ -286,10 +280,18 @@ class DraftRevision(TimestampMixin, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     newsletter: Mapped[Newsletter] = relationship(
-        "Newsletter",
+        Newsletter,
         back_populates="revisions",
         foreign_keys=[newsletter_id],
     )
+
+
+Newsletter.revisions = relationship(  # type: ignore[attr-defined]
+    DraftRevision,
+    back_populates="newsletter",
+    cascade="all, delete-orphan",
+    foreign_keys=[DraftRevision.newsletter_id],
+)
 
 
 class NewsletterRecipient(TimestampMixin, Base):
