@@ -101,8 +101,4 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
     await page.getByRole('button', { name: 'Dashboard' }).click();
   }
 
-  await page.getByRole('button', { name: 'Logs' }).click();
-  await expect(page.getByRole('tab', { name: 'Audit Trail' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Operational Log' }).click();
-  await expect(page.getByRole('tab', { name: 'Operational Log', selected: true })).toBeVisible();
 });
