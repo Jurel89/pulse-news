@@ -8,7 +8,7 @@ from typing import Any
 from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.models import Newsletter
-from app.source_pipeline.service import build_source_bundle
+from app.source_pipeline.service import build_source_bundle, has_usable_source_bundle
 
 try:  # pragma: no cover - exercised conditionally when dependency is present and configured
     from litellm import completion
@@ -416,12 +416,12 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     credential_resolution = _resolve_api_key_for_newsletter(newsletter)
     source_bundle = build_source_bundle(newsletter)
 
-    if not source_bundle:
+    if not has_usable_source_bundle(source_bundle):
         return _error_generate(
             newsletter,
             (
-                "No source material could be collected. Add at least one fetchable source URL "
-                "before generating."
+                "No usable source material could be collected. Add at least one fetchable source "
+                "URL before generating."
             ),
         )
 

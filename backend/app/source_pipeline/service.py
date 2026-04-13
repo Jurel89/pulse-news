@@ -79,3 +79,7 @@ def serialize_source_bundle(source_items: list[SourceItem]) -> str:
             for item in source_items
         ]
     )
+
+
+def has_usable_source_bundle(source_items: list[SourceItem]) -> bool:
+    return any(item.source_type == "operator_url_fetched" for item in source_items)

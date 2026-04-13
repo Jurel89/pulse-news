@@ -24,6 +24,7 @@ def client(tmp_path, monkeypatch):
     import app.main
     import app.models
     import app.schemas
+    from app.source_pipeline.service import SourceItem
 
     app.config.get_settings.cache_clear()
     app.database.get_engine.cache_clear()
@@ -41,6 +42,23 @@ def client(tmp_path, monkeypatch):
     reload(app.api.router)
     reload(app.main)
     app.database.init_database()
+
+    monkeypatch.setattr(
+        app.ai_generation,
+        "build_source_bundle",
+        Mock(
+            return_value=[
+                SourceItem(
+                    source_id="src_1",
+                    url="https://example.com/source",
+                    title="Example source",
+                    summary="Fetched source summary",
+                    source_type="operator_url_fetched",
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(app.ai_generation, "has_usable_source_bundle", Mock(return_value=True))
 
     with TestClient(app.main.app) as test_client:
         yield test_client
@@ -214,6 +232,45 @@ def test_generate_newsletter_draft_rejects_non_json_output(
     assert result.status == "error"
     assert result.mode == "litellm"
     assert "strict JSON" in result.message
+
+
+def test_generate_newsletter_draft_rejects_unfetched_source_urls(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+    from app.source_pipeline.service import SourceItem
+
+    newsletter = build_newsletter(prompt="Summarize https://unreachable.invalid/source")
+    monkeypatch.setattr(
+        app.ai_generation,
+        "build_source_bundle",
+        Mock(
+            return_value=[
+                SourceItem(
+                    source_id="src_1",
+                    url="https://unreachable.invalid/source",
+                    title="https://unreachable.invalid/source",
+                    summary="Unable to fetch source content directly: RuntimeError",
+                    source_type="operator_url_unfetched",
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(app.ai_generation, "has_usable_source_bundle", Mock(return_value=False))
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+    completion_mock = Mock()
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert "No usable source material could be collected" in result.message
+    completion_mock.assert_not_called()
 
 
 def test_generate_newsletter_draft_accepts_structured_json_output(
