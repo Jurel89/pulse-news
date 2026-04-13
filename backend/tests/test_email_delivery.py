@@ -73,6 +73,21 @@ def build_rendered_newsletter():
     )
 
 
+def persist_operation_modes(*, ai_generation_mode="live", email_delivery_mode="live") -> None:
+    import app.database
+    from app.auth import get_or_create_system_settings
+
+    session = app.database.get_session_maker()()
+    try:
+        settings = get_or_create_system_settings(session)
+        settings.ai_generation_mode = ai_generation_mode
+        settings.email_delivery_mode = email_delivery_mode
+        session.add(settings)
+        session.commit()
+    finally:
+        session.close()
+
+
 def bootstrap_operator(client: TestClient) -> None:
     response = client.post(
         "/api/auth/bootstrap",
@@ -341,7 +356,7 @@ def test_send_test_email_returns_error_when_resend_is_not_configured_by_default(
     assert result.provider_id is None
     assert result.to_email == "qa@example.com"
     assert "blocked" in result.message.lower()
-    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
+    assert "switch email delivery mode to simulated in system settings" in result.message
     urlopen.assert_not_called()
 
 
@@ -351,7 +366,8 @@ def test_send_test_email_returns_explicit_local_preview_when_simulation_is_enabl
 ):
     import app.email_delivery
 
-    settings = make_settings(allow_simulated_email_delivery=True)
+    persist_operation_modes(email_delivery_mode="simulated")
+    settings = make_settings()
     rendered = build_rendered_newsletter()
     urlopen = Mock()
     monkeypatch.setattr(app.email_delivery.request, "urlopen", urlopen)
@@ -364,9 +380,7 @@ def test_send_test_email_returns_explicit_local_preview_when_simulation_is_enabl
 
     assert result.status == "simulated"
     assert result.mode == "local-preview"
-    assert (
-        "simulation is enabled via PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
-    )
+    assert "Email delivery mode is set to simulated in system settings." in result.message
     urlopen.assert_not_called()
 
 
@@ -534,7 +548,7 @@ def test_send_test_email_reports_newsletter_key_decryption_failures(
         "No sender email is configured for the selected newsletter-specific Resend key"
         in result.message
     )
-    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
+    assert "switch email delivery mode to simulated in system settings" in result.message
     urlopen.assert_not_called()
 
 
@@ -794,7 +808,7 @@ def test_send_newsletter_email_returns_failed_outcomes_when_resend_is_not_config
         "second@example.com",
     ]
     assert all(outcome.status == "failed" for outcome in result.recipient_outcomes)
-    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
+    assert "switch email delivery mode to simulated in system settings" in result.message
     urlopen.assert_not_called()
 
 
@@ -851,7 +865,8 @@ def test_send_newsletter_email_simulated_mode_returns_all_outcomes_for_large_bat
 ):
     import app.email_delivery
 
-    settings = make_settings(allow_simulated_email_delivery=True)
+    persist_operation_modes(email_delivery_mode="simulated")
+    settings = make_settings()
     rendered = build_rendered_newsletter()
     recipient_targets = [
         app.email_delivery.RecipientDeliveryTarget(email=f"user{index}@example.com")
@@ -870,7 +885,11 @@ def test_send_newsletter_email_simulated_mode_returns_all_outcomes_for_large_bat
     assert result.recipient_outcomes[0].email == "user0@example.com"
     assert result.recipient_outcomes[-1].email == "user119@example.com"
     assert all(outcome.status == "simulated" for outcome in result.recipient_outcomes)
-    assert "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true" in result.message
+    assert "Email delivery mode is set to simulated in system settings." in result.message
+    assert (
+        result.recipient_outcomes[0].detail
+        == "Local preview simulation enabled in system settings."
+    )
 
 
 def test_batch_sends_to_multiple_recipients_via_batch_endpoint(client: TestClient, monkeypatch):
