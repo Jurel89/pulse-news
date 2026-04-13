@@ -46,7 +46,14 @@ def test_bootstrap_login_and_password_change_flow(client: TestClient):
         "initialized": False,
         "authenticated": False,
         "user": None,
+        "ai_generation_mode": "live",
+        "email_delivery_mode": "live",
     }
+
+    health_response = client.get("/api/health")
+    assert health_response.status_code == 200
+    assert health_response.json()["ai_generation_mode"] == "live"
+    assert health_response.json()["email_delivery_mode"] == "live"
 
     bootstrap_response = client.post(
         "/api/auth/bootstrap",
@@ -57,6 +64,32 @@ def test_bootstrap_login_and_password_change_flow(client: TestClient):
     assert bootstrap_payload["initialized"] is True
     assert bootstrap_payload["authenticated"] is True
     assert bootstrap_payload["user"]["email"] == "operator@example.com"
+    assert bootstrap_payload["ai_generation_mode"] == "live"
+    assert bootstrap_payload["email_delivery_mode"] == "live"
+
+    update_settings_response = client.patch(
+        "/api/auth/system-settings",
+        json={
+            "ai_generation_mode": "simulated",
+            "email_delivery_mode": "simulated",
+        },
+    )
+    assert update_settings_response.status_code == 200
+    assert update_settings_response.json() == {
+        "initialized": True,
+        "ai_generation_mode": "simulated",
+        "email_delivery_mode": "simulated",
+    }
+
+    updated_session_response = client.get("/api/auth/session")
+    assert updated_session_response.status_code == 200
+    assert updated_session_response.json()["ai_generation_mode"] == "simulated"
+    assert updated_session_response.json()["email_delivery_mode"] == "simulated"
+
+    updated_health_response = client.get("/api/health")
+    assert updated_health_response.status_code == 200
+    assert updated_health_response.json()["ai_generation_mode"] == "simulated"
+    assert updated_health_response.json()["email_delivery_mode"] == "simulated"
 
     second_bootstrap_response = client.post(
         "/api/auth/bootstrap",
@@ -73,6 +106,8 @@ def test_bootstrap_login_and_password_change_flow(client: TestClient):
     )
     assert login_response.status_code == 200
     assert login_response.json()["authenticated"] is True
+    assert login_response.json()["ai_generation_mode"] == "simulated"
+    assert login_response.json()["email_delivery_mode"] == "simulated"
 
     change_password_response = client.post(
         "/api/auth/change-password",
