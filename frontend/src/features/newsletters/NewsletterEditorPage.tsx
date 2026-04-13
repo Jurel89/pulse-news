@@ -110,6 +110,9 @@ export function NewsletterEditorPage({
   const [form, setForm] = useState<NewsletterInput>(
     initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput
   );
+  const [savedForm, setSavedForm] = useState<NewsletterInput | null>(
+    initialNewsletter ? toNewsletterInput(initialNewsletter) : null
+  );
   const [formOptions, setFormOptions] = useState<FormOptions | null>(null);
   const [formOptionsError, setFormOptionsError] = useState<string | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -119,8 +122,15 @@ export function NewsletterEditorPage({
     [initialNewsletter]
   );
 
+  const isDirty = useMemo(() => {
+    if (!savedForm) return false;
+    return JSON.stringify(form) !== JSON.stringify(savedForm);
+  }, [form, savedForm]);
+
   useEffect(() => {
-    setForm(initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput);
+    const nextForm = initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput;
+    setForm(nextForm);
+    setSavedForm(initialNewsletter ? nextForm : null);
   }, [initialNewsletter]);
 
   useEffect(() => {
@@ -172,29 +182,17 @@ export function NewsletterEditorPage({
   const templateSelectDisabled = loadingOptions || availableTemplates.length === 0;
   const timezoneSelectDisabled = loadingOptions || timezoneOptions.length === 0;
 
-  useEffect(() => {
-    setForm((current) => {
-      const next = { ...current };
-      let changed = false;
+  const missingApiKeyOption = useMemo(() => {
+    if (form.api_key_id == null) return null;
+    if (availableApiKeys.some((k) => k.id === form.api_key_id)) return null;
+    return { id: form.api_key_id, label: `Key #${form.api_key_id} (not available or inactive)` };
+  }, [form.api_key_id, availableApiKeys]);
 
-      const apiKeys = getAvailableApiKeys(next.provider_name, formOptions);
-      if (next.api_key_id !== null && !apiKeys.some((apiKey) => apiKey.id === next.api_key_id)) {
-        next.api_key_id = null;
-        changed = true;
-      }
-
-      const resendApiKeys = getAvailableResendApiKeys(formOptions);
-      if (
-        next.resend_api_key_id !== null
-        && !resendApiKeys.some((apiKey) => apiKey.id === next.resend_api_key_id)
-      ) {
-        next.resend_api_key_id = null;
-        changed = true;
-      }
-
-      return changed ? next : current;
-    });
-  }, [form.provider_name, formOptions]);
+  const missingResendKeyOption = useMemo(() => {
+    if (form.resend_api_key_id == null) return null;
+    if (availableResendApiKeys.some((k) => k.id === form.resend_api_key_id)) return null;
+    return { id: form.resend_api_key_id, label: `Key #${form.resend_api_key_id} (not available or inactive)` };
+  }, [form.resend_api_key_id, availableResendApiKeys]);
 
   function updateProvider(providerValue: string) {
     setForm((current) => {
@@ -384,6 +382,11 @@ export function NewsletterEditorPage({
                 <option value="">
                   {availableApiKeys.length > 0 ? "Use any matching active API key" : "No matching API keys available"}
                 </option>
+                {missingApiKeyOption ? (
+                  <option disabled value={String(missingApiKeyOption.id)}>
+                    {missingApiKeyOption.label}
+                  </option>
+                ) : null}
                 {availableApiKeys.map((apiKey) => (
                   <option key={apiKey.id} value={String(apiKey.id)}>
                     {`${apiKey.name} (${apiKey.masked_key})`}
@@ -403,6 +406,11 @@ export function NewsletterEditorPage({
                     ? "Use any active Resend API key"
                     : "No active Resend API keys — add one in Settings > API Keys"}
                 </option>
+                {missingResendKeyOption ? (
+                  <option disabled value={String(missingResendKeyOption.id)}>
+                    {missingResendKeyOption.label}
+                  </option>
+                ) : null}
                 {availableResendApiKeys.map((apiKey) => (
                   <option key={apiKey.id} value={String(apiKey.id)}>
                     {apiKey.from_email
@@ -527,11 +535,12 @@ export function NewsletterEditorPage({
           {initialNewsletter ? (
             <button
               className="secondary-button"
-              disabled={busy}
+              disabled={busy || isDirty}
               onClick={() => void onGenerate?.(initialNewsletter.id)}
+              title={isDirty ? "Save changes before generating" : undefined}
               type="button"
             >
-              {busy ? "Working..." : "Generate Draft"}
+              {busy ? "Working..." : isDirty ? "Save to Enable Generate" : "Generate Draft"}
             </button>
           ) : null}
         </div>

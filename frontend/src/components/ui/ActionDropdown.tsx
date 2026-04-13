@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type ActionItem = {
   label: string;
@@ -17,6 +18,42 @@ type ActionDropdownProps = {
 export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    function updateMenuPosition() {
+      if (!isOpen || !triggerRef.current) {
+        return;
+      }
+
+      const rect = triggerRef.current.getBoundingClientRect();
+      const menuWidth = 180;
+      const spacing = 8;
+      const left = align === "left"
+        ? rect.left
+        : Math.max(spacing, rect.right - menuWidth);
+
+      setMenuPosition({
+        top: rect.bottom + spacing,
+        left,
+      });
+    }
+
+    updateMenuPosition();
+
+    if (!isOpen) {
+      return;
+    }
+
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [align, isOpen]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -55,6 +92,7 @@ export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps
   return (
     <div className="action-dropdown" ref={dropdownRef}>
       <button
+        ref={triggerRef}
         className="action-dropdown-trigger"
         onClick={() => setIsOpen(!isOpen)}
         type="button"
@@ -76,31 +114,35 @@ export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps
         <span className="sr-only">Actions</span>
       </button>
 
-      {isOpen && (
-        <div
-          className={`action-dropdown-menu ${align === "left" ? "align-left" : "align-right"}`}
-          role="menu"
-        >
-          {visibleActions.map((action, index) => (
-            <button
-              key={index}
-              className={`action-dropdown-item ${action.variant || "default"}`}
-              onClick={() => {
-                action.onClick();
-                setIsOpen(false);
-              }}
-              disabled={action.disabled}
-              type="button"
-              role="menuitem"
+      {isOpen && menuPosition
+        ? createPortal(
+            <div
+              className="action-dropdown-menu action-dropdown-menu-portal"
+              role="menu"
+              style={{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px` }}
             >
-              {action.icon && (
-                <span className="action-dropdown-item-icon">{action.icon}</span>
-              )}
-              <span className="action-dropdown-item-label">{action.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
+              {visibleActions.map((action) => (
+                <button
+                  key={`${action.label}-${action.variant ?? "default"}`}
+                  className={`action-dropdown-item ${action.variant || "default"}`}
+                  onClick={() => {
+                    action.onClick();
+                    setIsOpen(false);
+                  }}
+                  disabled={action.disabled}
+                  type="button"
+                  role="menuitem"
+                >
+                  {action.icon && (
+                    <span className="action-dropdown-item-icon">{action.icon}</span>
+                  )}
+                  <span className="action-dropdown-item-label">{action.label}</span>
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

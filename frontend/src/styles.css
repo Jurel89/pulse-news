@@ -1001,11 +1001,11 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
   gap: var(--sp-6);
 }
 
-  .data-table-container {
+.data-table-container {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
-  overflow: visible;
+  overflow: hidden;
   box-shadow: var(--shadow-sm);
 }
 
@@ -1421,8 +1421,6 @@ code {
 
 .action-dropdown-menu {
   position: absolute;
-  top: 100%;
-  margin-top: var(--sp-2);
   min-width: 160px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -1431,6 +1429,12 @@ code {
   z-index: 50;
   padding: var(--sp-1);
   animation: dropdown-fade-in 120ms ease;
+}
+
+.action-dropdown-menu-portal {
+  position: fixed;
+  min-width: 180px;
+  z-index: 1000;
 }
 
 .action-dropdown-menu.align-right {
@@ -1504,6 +1508,49 @@ code {
   flex-shrink: 0;
 }
 
+.detail-row {
+  background: var(--color-surface-alt);
+}
+
+.data-table tbody tr.detail-row:hover {
+  background: var(--color-surface-alt);
+}
+
+.data-table td.detail-cell {
+  padding: 0;
+}
+
+.inline-detail-panel,
+.run-detail-panel {
+  padding: var(--sp-5);
+  background: var(--color-surface-alt);
+}
+
+.run-detail-header,
+.audit-detail-header,
+.operational-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: var(--sp-3);
+}
+
+.run-detail-header h4,
+.audit-detail-header h4,
+.operational-detail-header h4 {
+  margin: 0;
+}
+
+.newsletter-list.compact {
+  gap: var(--sp-3);
+}
+
+.newsletter-list.compact .newsletter-card {
+  padding: var(--sp-4);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1550,6 +1597,18 @@ code {
     box-shadow: var(--shadow-sm);
     transition: box-shadow var(--transition-base);
     margin-bottom: var(--sp-3);
+  }
+
+  .data-table tbody tr.detail-row {
+    display: block;
+    padding: 0;
+    margin-top: calc(var(--sp-3) * -1);
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  .detail-row .detail-cell::before {
+    display: none;
   }
 
   .data-table tbody tr:last-child {
