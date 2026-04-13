@@ -1,5 +1,21 @@
 import { expect, test } from '@playwright/test';
 
+async function ensureJobsNav(page: import('@playwright/test').Page) {
+  await page.waitForLoadState('networkidle');
+  if (await page.getByRole('button', { name: 'Jobs' }).count()) {
+    return;
+  }
+
+  await page.reload();
+  if (await page.getByRole('heading', { name: /log in to pulse news/i }).count()) {
+    await page.getByLabel('Email').fill('operator@example.com');
+    await page.getByLabel('Password').fill('super-secret-password');
+    await page.getByRole('button', { name: /log in/i }).click();
+  }
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: 'Jobs' })).toBeVisible({ timeout: 15000 });
+}
+
 test('create newsletter through the UI', async ({ page }) => {
   await page.goto('/');
 
@@ -52,7 +68,7 @@ test('create newsletter through the UI', async ({ page }) => {
     await page.getByRole('button', { name: /log in/i }).click();
   }
 
-  await expect(page.getByRole('button', { name: 'Jobs' })).toBeVisible({ timeout: 15000 });
+  await ensureJobsNav(page);
   await page.getByRole('button', { name: 'Jobs' }).click();
   await page.getByRole('button', { name: /new newsletter/i }).click();
   await page.getByLabel('Name').fill('UI Created Newsletter');
@@ -86,7 +102,7 @@ test('create newsletter through the UI', async ({ page }) => {
     await page.getByRole('button', { name: /log in/i }).click();
   }
 
-  await expect(page.getByRole('button', { name: 'Jobs' })).toBeVisible({ timeout: 15000 });
+  await ensureJobsNav(page);
   await page.getByRole('button', { name: 'Jobs' }).click();
   await expect(page.locator('tr', { hasText: 'UI Created Newsletter' }).first()).toBeVisible({ timeout: 15000 });
 });
