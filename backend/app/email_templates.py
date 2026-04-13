@@ -217,10 +217,16 @@ def render_custom_template(
     result = result.replace("{{content}}", body_html)
     result = result.replace("{{body_html}}", body_html)
     result = result.replace("{{newsletter_name}}", escape(newsletter_name))
+
     footer = _build_email_footer()
-    result = result.replace("{{footer}}", footer)
-    if "{{footer}}" not in html_template and "</body>" in result:
+    if "{{footer}}" in html_template:
+        result = result.replace("{{footer}}", footer)
+    elif "</body>" in result:
         result = result.replace("</body>", f"{footer}\n</body>")
+    elif "</html>" in result:
+        result = result.replace("</html>", f"{footer}\n</html>")
+    else:
+        result += footer
     return result
 
 

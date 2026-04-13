@@ -188,3 +188,37 @@ def test_standalone_bold_line_is_heading(client: TestClient):
     )
     assert "<h2" in rendered.html
     assert "Major Releases</h2>" in rendered.html
+
+
+def test_custom_template_with_body_tag_gets_footer(client: TestClient):
+    import app.email_templates
+
+    template = (
+        "<!doctype html><html><body><h1>{{subject}}</h1><div>{{body_html}}</div></body></html>"
+    )
+    rendered = app.email_templates.render_custom_template(
+        template, "Test Subject", "pre", "<p>Hello</p>", "My Newsletter"
+    )
+    assert "Pulse-News" in rendered
+    assert "https://github.com/Jurel89/pulse-news" in rendered
+
+
+def test_custom_template_with_footer_placeholder_gets_footer(client: TestClient):
+    import app.email_templates
+
+    template = "<html><body><h1>{{subject}}</h1>{{body_html}}{{footer}}</body></html>"
+    rendered = app.email_templates.render_custom_template(
+        template, "Test Subject", "pre", "<p>Hello</p>", "My Newsletter"
+    )
+    assert "Pulse-News" in rendered
+    assert rendered.count("Pulse-News") == 1
+
+
+def test_custom_template_without_body_or_footer_still_gets_footer(client: TestClient):
+    import app.email_templates
+
+    template = "<html><h1>{{subject}}</h1><div>{{body_html}}</div></html>"
+    rendered = app.email_templates.render_custom_template(
+        template, "Test Subject", "pre", "<p>Hello</p>", "My Newsletter"
+    )
+    assert "Pulse-News" in rendered
