@@ -80,6 +80,16 @@ def make_completion_response(content: str) -> Mock:
     return response
 
 
+def make_api_key_resolution(*, api_key: str | None, detail: str = "Using test API key"):
+    import app.ai_generation
+
+    return app.ai_generation.ApiKeyResolution(
+        api_key=api_key,
+        source="test",
+        detail=detail,
+    )
+
+
 def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
     client: TestClient,
     monkeypatch,
@@ -99,8 +109,8 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
     monkeypatch.setattr(
         app.ai_generation,
-        "_has_live_provider_credentials",
-        Mock(return_value=True),
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
     result = app.ai_generation.generate_newsletter_draft(newsletter)
@@ -115,7 +125,7 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
     assert "Prompt instructions:" in completion_mock.call_args.kwargs["messages"][0]["content"]
 
 
-def test_generate_newsletter_draft_returns_fallback_when_litellm_raises(
+def test_generate_newsletter_draft_returns_error_when_litellm_raises_by_default(
     client: TestClient,
     monkeypatch,
 ):
@@ -129,17 +139,49 @@ def test_generate_newsletter_draft_returns_fallback_when_litellm_raises(
     )
     monkeypatch.setattr(
         app.ai_generation,
-        "_has_live_provider_credentials",
-        Mock(return_value=True),
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert result.mode == "none"
+    assert result.subject == "Weekly Radar"
+    assert result.preheader == "Founder signals worth scanning"
+    assert "Live generation failed for provider 'openai'" in result.message
+    assert "provider unavailable" in result.message
+    assert result.body_text == ""
+
+
+def test_generate_newsletter_draft_returns_explicit_simulation_when_enabled(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    monkeypatch.setenv("PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION", "true")
+    app.ai_generation.get_settings.cache_clear()
+
+    newsletter = build_newsletter()
+    monkeypatch.setattr(app.ai_generation, "completion", Mock())
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(
+            return_value=make_api_key_resolution(
+                api_key=None,
+                detail="The selected newsletter API key is inactive.",
+            )
+        ),
     )
 
     result = app.ai_generation.generate_newsletter_draft(newsletter)
 
     assert result.status == "fallback"
     assert result.mode == "local-generator"
-    assert result.subject == "Weekly Radar: generated draft"
-    assert result.preheader == "Founder signals worth scanning"
-    assert "Live generation failed, using local fallback instead" in result.message
+    assert "PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION=true" in result.message
+    assert "inactive" in result.message
     assert "Fallback draft outline" in result.body_text
 
 
@@ -163,8 +205,8 @@ def test_generate_newsletter_draft_parses_subject_preheader_and_body_sections(
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
     monkeypatch.setattr(
         app.ai_generation,
-        "_has_live_provider_credentials",
-        Mock(return_value=True),
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
     result = app.ai_generation.generate_newsletter_draft(newsletter)
@@ -174,7 +216,7 @@ def test_generate_newsletter_draft_parses_subject_preheader_and_body_sections(
     assert result.body_text == "First section\n\nSecond section"
 
 
-def test_generate_newsletter_draft_uses_provider_defaults_and_active_database_key(
+def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_key(
     client: TestClient,
     monkeypatch,
 ):
@@ -199,9 +241,11 @@ def test_generate_newsletter_draft_uses_provider_defaults_and_active_database_ke
     session.add_all([provider, api_key])
     session.commit()
     session.refresh(provider)
+    session.refresh(api_key)
+    api_key_id = api_key.id
     session.close()
 
-    newsletter = build_newsletter(provider_id=provider.id, model_name="")
+    newsletter = build_newsletter(provider_id=provider.id, model_name="", api_key_id=api_key_id)
     newsletter.provider = provider
 
     completion_mock = Mock(
@@ -241,8 +285,8 @@ def test_generate_newsletter_draft_returns_error_for_invalid_provider_configurat
 
     monkeypatch.setattr(
         app.ai_generation,
-        "_has_live_provider_credentials",
-        Mock(return_value=True),
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
     result = app.ai_generation.generate_newsletter_draft(newsletter)
@@ -250,6 +294,41 @@ def test_generate_newsletter_draft_returns_error_for_invalid_provider_configurat
     assert result.status == "error"
     assert result.mode == "none"
     assert result.message == "Provider configuration must be a JSON object."
+
+
+def test_generate_newsletter_draft_fails_closed_for_inactive_pinned_key(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+    from app.database import get_session_maker
+    from app.models import ApiKey
+
+    session = get_session_maker()()
+    api_key = ApiKey(
+        name="Inactive OpenAI Key",
+        provider_type="openai",
+        key_value="db-openai-key",
+        is_active=False,
+    )
+    session.add(api_key)
+    session.commit()
+    session.refresh(api_key)
+    api_key_id = api_key.id
+    session.close()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "env-openai-key")
+    completion_mock = Mock()
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+
+    newsletter = build_newsletter(api_key_id=api_key_id)
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.status == "error"
+    assert result.mode == "none"
+    assert "Inactive OpenAI Key" in result.message
+    assert "inactive" in result.message
+    completion_mock.assert_not_called()
 
 
 def test_kimi_provider_uses_coding_api_base_url(client: TestClient, monkeypatch):
@@ -272,13 +351,8 @@ def test_kimi_provider_uses_coding_api_base_url(client: TestClient, monkeypatch)
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
     monkeypatch.setattr(
         app.ai_generation,
-        "_has_live_provider_credentials",
-        Mock(return_value=True),
-    )
-    monkeypatch.setattr(
-        app.ai_generation,
-        "_get_api_key_for_newsletter",
-        Mock(return_value="test-key"),
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
     app.ai_generation.generate_newsletter_draft(newsletter)
@@ -309,13 +383,8 @@ def test_kimi_user_agent_merges_with_existing_extra_headers(client: TestClient, 
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
     monkeypatch.setattr(
         app.ai_generation,
-        "_has_live_provider_credentials",
-        Mock(return_value=True),
-    )
-    monkeypatch.setattr(
-        app.ai_generation,
-        "_get_api_key_for_newsletter",
-        Mock(return_value="test-key"),
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
     app.ai_generation.generate_newsletter_draft(newsletter)
