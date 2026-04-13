@@ -547,6 +547,10 @@ export default function App() {
             <NewsletterPreviewPage
               newsletter={previewingNewsletter}
               onBack={() => setPreviewingNewsletter(null)}
+              onOpenRuns={() => {
+                setPreviewingNewsletter(null);
+                setActiveView("dashboard");
+              }}
             />
           );
         }

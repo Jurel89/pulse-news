@@ -12,9 +12,10 @@ import type { Newsletter } from "./newsletter-types";
 type NewsletterPreviewPageProps = {
   newsletter: Newsletter;
   onBack: () => void;
+  onOpenRuns?: () => void;
 };
 
-export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewPageProps) {
+export function NewsletterPreviewPage({ newsletter, onBack, onOpenRuns }: NewsletterPreviewPageProps) {
   const [preview, setPreview] = useState<NewsletterPreview | null>(null);
   const [activeTab, setActiveTab] = useState<"html" | "text">("html");
   const [busy, setBusy] = useState(false);
@@ -223,6 +224,7 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
                       {isDraftHead ? " · Current draft" : ""}
                       {revision.id === selectedRevisionId ? " · Previewing" : ""}
                     </p>
+                    <p className="newsletter-description">Created by: {revision.created_by_email ?? "System"}</p>
                     <p className="newsletter-description">{revision.preheader || "No preheader"}</p>
                     <div className="form-actions">
                       <button
@@ -241,6 +243,16 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
                           type="button"
                         >
                           Approve revision
+                        </button>
+                      ) : null}
+                      {revision.generation_run_id && onOpenRuns ? (
+                        <button
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={onOpenRuns}
+                          type="button"
+                        >
+                          Open run #{revision.generation_run_id}
                         </button>
                       ) : null}
                     </div>
@@ -262,12 +274,14 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
                 <article className="newsletter-card">
                   <strong>Approved revision #{approvedRevision.version_number}</strong>
                   <p className="newsletter-description">{approvedRevision.subject}</p>
+                  <p className="newsletter-description">Created by: {approvedRevision.created_by_email ?? "System"}</p>
                   <p className="newsletter-description">{approvedRevision.preheader || "No preheader"}</p>
                   <p className="newsletter-description">Run #{approvedRevision.generation_run_id ?? "—"}</p>
                 </article>
                 <article className="newsletter-card">
                   <strong>Candidate revision #{selectedRevision.version_number}</strong>
                   <p className="newsletter-description">{selectedRevision.subject}</p>
+                  <p className="newsletter-description">Created by: {selectedRevision.created_by_email ?? "System"}</p>
                   <p className="newsletter-description">{selectedRevision.preheader || "No preheader"}</p>
                   <p className="newsletter-description">Run #{selectedRevision.generation_run_id ?? "—"}</p>
                 </article>

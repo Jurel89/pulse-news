@@ -55,6 +55,9 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
     assert "source_bundle_snapshot_json" in {
         column["name"] for column in inspector.get_columns("draft_revisions")
     }
+    assert "created_by_email" in {
+        column["name"] for column in inspector.get_columns("draft_revisions")
+    }
 
     foreign_keys = {fk["name"]: fk for fk in inspector.get_foreign_keys("newsletters")}
     assert set(foreign_keys) >= {
@@ -90,4 +93,4 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
             sa.text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "5d6e7f8091a2"
+    assert version == "6e7f8091a2b3"

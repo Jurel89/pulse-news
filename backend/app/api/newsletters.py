@@ -143,6 +143,7 @@ def _create_revision(
     *,
     state: str,
     origin: str,
+    created_by_email: str | None,
     subject: str,
     preheader: str | None,
     body_text: str,
@@ -155,6 +156,7 @@ def _create_revision(
         version_number=_next_revision_number(newsletter),
         state=state,
         origin=origin,
+        created_by_email=created_by_email,
         subject=subject,
         preheader=preheader,
         body_text=body_text,
@@ -188,6 +190,7 @@ def _ensure_revision_projection(newsletter: Newsletter) -> DraftRevision | None:
         newsletter,
         state="approved",
         origin="imported",
+        created_by_email=None,
         subject=newsletter.draft_subject,
         preheader=newsletter.draft_preheader,
         body_text=newsletter.draft_body_text,
@@ -665,6 +668,7 @@ def create_newsletter(
         newsletter,
         state="approved",
         origin="imported",
+        created_by_email=user.email,
         subject=payload.draft_subject,
         preheader=payload.draft_preheader,
         body_text=payload.draft_body_text,
@@ -1164,7 +1168,7 @@ def generate_draft(
     request: Request,
     db: DbSession,
 ) -> NewsletterGenerationResponse:
-    require_authenticated_user(request, db)
+    user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     generated = generate_newsletter_draft(newsletter)
     source_bundle_snapshot_json = serialize_source_bundle(build_source_bundle(newsletter))
@@ -1172,6 +1176,7 @@ def generate_draft(
         newsletter,
         state="candidate",
         origin="llm" if generated.status in {"generated", "fallback"} else "manual",
+        created_by_email=user.email,
         subject=generated.subject,
         preheader=generated.preheader,
         body_text=generated.body_text,

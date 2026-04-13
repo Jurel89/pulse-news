@@ -107,6 +107,7 @@ export type DraftRevisionSummary = {
   version_number: number;
   state: string;
   origin: string;
+  created_by_email: string | null;
   subject: string;
   preheader: string | null;
   body_text: string;

@@ -317,6 +317,7 @@ class DraftRevisionSummary(BaseModel):
     version_number: int
     state: str
     origin: str
+    created_by_email: str | None = None
     subject: str
     preheader: str | None = None
     body_text: str

@@ -250,6 +250,7 @@ class DraftRevision(TimestampMixin, Base):
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="candidate", index=True)
     origin: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    created_by_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     subject: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     preheader: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body_text: Mapped[str] = mapped_column(Text(), nullable=False, default="")
