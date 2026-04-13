@@ -380,7 +380,7 @@ export function NewsletterEditorPage({
                 value={form.api_key_id === null ? "" : String(form.api_key_id)}
               >
                 <option value="">
-                  {availableApiKeys.length > 0 ? "Use any matching active API key" : "No matching API keys available"}
+                  {availableApiKeys.length > 0 ? "No pinned key selected (fail closed)" : "No matching API keys available"}
                 </option>
                 {missingApiKeyOption ? (
                   <option disabled value={String(missingApiKeyOption.id)}>
@@ -403,7 +403,7 @@ export function NewsletterEditorPage({
               >
                 <option value="">
                   {availableResendApiKeys.length > 0
-                    ? "Use any active Resend API key"
+                    ? "No pinned Resend key selected (fail closed)"
                     : "No active Resend API keys — add one in Settings > API Keys"}
                 </option>
                 {missingResendKeyOption ? (
@@ -554,21 +554,21 @@ function HelpText({ text }: { text: string }) {
 
   return (
     <span className="help-text-wrapper">
-      <span
+      <button
         className="help-text-icon"
+        type="button"
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
         onClick={() => setShowTooltip(!showTooltip)}
-        role="button"
-        tabIndex={0}
         aria-label="Show help"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+          <title>Help</title>
           <circle cx="12" cy="12" r="10" />
           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
           <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
-      </span>
+      </button>
       {showTooltip ? (
         <span className="help-text-tooltip">
           {text}

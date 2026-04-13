@@ -134,6 +134,17 @@ jobs:
           PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true \
           PORT=9876 make up
 
+      - name: Wait for Pulse News health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9876/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs --no-color --tail 200
+          exit 1
+
       - name: Run Playwright smoke test
         working-directory: frontend
         run: npx playwright test

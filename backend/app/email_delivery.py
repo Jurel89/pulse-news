@@ -98,8 +98,33 @@ def _resolve_resend_configuration(
     *,
     db_session=None,
 ) -> ResendConfigurationResolution:
+    if newsletter is None:
+        env_api_key = _normalize_config_value(settings.resend_api_key)
+        env_from_email = _normalize_config_value(settings.resend_from_email)
+        if env_api_key and env_from_email:
+            return ResendConfigurationResolution(
+                api_key=env_api_key,
+                from_email=env_from_email,
+                api_key_source="environment",
+                detail=(
+                    "Using explicit environment delivery configuration with sender "
+                    f"'{env_from_email}'."
+                ),
+            )
+        return ResendConfigurationResolution(
+            api_key=None,
+            from_email=env_from_email,
+            api_key_source="environment",
+            detail=(
+                "Environment delivery configuration is incomplete. "
+                "Set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
+            ),
+        )
+
     profile_api_key_id = newsletter.resend_api_key_id if newsletter else None
     profile_from_email = None
+    binding_mode = "pinned_key"
+    api_key_source = "newsletter"
     if newsletter and newsletter.delivery_profile_id is not None:
         from sqlalchemy import select
 
@@ -115,9 +140,35 @@ def _resolve_resend_configuration(
             if profile is not None:
                 profile_api_key_id = profile.api_key_id
                 profile_from_email = _normalize_config_value(profile.from_email)
+                binding_mode = profile.api_key_binding_mode or "pinned_key"
+                api_key_source = "profile"
         finally:
             if owns_session:
                 session.close()
+
+    if binding_mode == "system_default":
+        env_api_key = _normalize_config_value(settings.resend_api_key)
+        env_from_email = _normalize_config_value(settings.resend_from_email)
+        if env_api_key and env_from_email:
+            return ResendConfigurationResolution(
+                api_key=env_api_key,
+                from_email=env_from_email,
+                api_key_source="environment",
+                detail=(
+                    "Using explicit system_default delivery profile. "
+                    f"Using sender '{env_from_email}'."
+                ),
+            )
+        return ResendConfigurationResolution(
+            api_key=None,
+            from_email=env_from_email,
+            api_key_source="environment",
+            detail=(
+                "Delivery profile requests system_default, but environment configuration is "
+                "incomplete. "
+                "Set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
+            ),
+        )
 
     if newsletter and profile_api_key_id is not None:
         detail_parts: list[str] = []
@@ -214,7 +265,7 @@ def _resolve_resend_configuration(
                         return ResendConfigurationResolution(
                             api_key=decrypted_key,
                             from_email=from_email,
-                            api_key_source="newsletter",
+                            api_key_source=api_key_source,
                             detail=detail,
                         )
                     detail_parts.append(
@@ -239,48 +290,18 @@ def _resolve_resend_configuration(
         return ResendConfigurationResolution(
             api_key=None,
             from_email=from_email,
-            api_key_source="newsletter",
+            api_key_source=api_key_source,
             detail=detail,
         )
 
-    detail_parts: list[str] = []
-    if newsletter:
-        detail_parts.append("No newsletter-specific Resend API key is selected.")
-
-    env_api_key = _normalize_config_value(settings.resend_api_key)
-    env_from_email = _normalize_config_value(_get_resend_from_email(settings, newsletter))
-    if env_api_key and env_from_email:
-        detail = " ".join([*detail_parts, "Using PULSE_NEWS_RESEND_API_KEY."])
-        detail = f"{detail} Using sender '{env_from_email}'."
-        return ResendConfigurationResolution(
-            api_key=env_api_key,
-            from_email=env_from_email,
-            api_key_source="environment",
-            detail=detail,
-        )
-
-    if env_api_key:
-        detail_parts.append(
-            "PULSE_NEWS_RESEND_API_KEY is set, but PULSE_NEWS_RESEND_FROM_EMAIL is not set."
-        )
-    else:
-        detail_parts.append("PULSE_NEWS_RESEND_API_KEY is not set.")
-
-    if env_from_email:
-        detail_parts.append(f"Using sender '{env_from_email}'.")
-    else:
-        detail_parts.append("PULSE_NEWS_RESEND_FROM_EMAIL is not set.")
-
-    detail = " ".join(detail_parts)
-    logger.info(
-        "No usable Resend API key resolved for newsletter id=%s: %s",
-        newsletter.id if newsletter else None,
-        detail,
+    detail = (
+        "No explicit delivery API key is configured. "
+        "Select a pinned Resend key or opt into system_default via a delivery profile."
     )
     return ResendConfigurationResolution(
         api_key=None,
-        from_email=env_from_email,
-        api_key_source="missing",
+        from_email=profile_from_email,
+        api_key_source=api_key_source,
         detail=detail,
     )
 

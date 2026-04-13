@@ -99,11 +99,11 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
     newsletter = build_newsletter()
     completion_mock = Mock(
         return_value=make_completion_response(
-            "SUBJECT: Founder Radar\n"
-            "PREHEADER: The week in startup infrastructure\n"
-            "BODY:\n"
-            "- Fundraising signals\n"
-            "- Ops playbook updates"
+            "{"
+            '"subject":"Founder Radar",'
+            '"preheader":"The week in startup infrastructure",'
+            '"body_markdown":"- Fundraising signals\\n- Ops playbook updates"'
+            "}"
         )
     )
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
@@ -200,6 +200,36 @@ def test_generate_newsletter_draft_parses_subject_preheader_and_body_sections(
             "First section\n"
             "\n"
             "Second section"
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_draft(newsletter)
+
+    assert result.subject == "Operator Watch"
+    assert result.preheader == "Signals worth scanning"
+    assert result.body_text == "First section\n\nSecond section"
+
+
+def test_generate_newsletter_draft_accepts_structured_json_output(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="Fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "{"
+            '"subject":"Operator Watch",'
+            '"preheader":"Signals worth scanning",'
+            '"body_markdown":"First section\\n\\nSecond section"'
+            "}"
         )
     )
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)

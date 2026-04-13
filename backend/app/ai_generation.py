@@ -201,22 +201,39 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
     session = get_session_maker()()
 
     try:
+        binding_mode = "pinned_key"
         profile_api_key_id = newsletter.api_key_id
+        resolution_source = "newsletter"
         if newsletter.generation_profile_id is not None:
             profile = session.scalar(
                 select(GenerationProfile).where(
                     GenerationProfile.id == newsletter.generation_profile_id
                 )
             )
-            if profile is not None and profile.api_key_id is not None:
+            if profile is not None:
+                binding_mode = profile.api_key_binding_mode or "pinned_key"
                 profile_api_key_id = profile.api_key_id
+                resolution_source = "profile"
+
+        if binding_mode == "system_default":
+            return _environment_api_key_resolution(provider_name)
+
+        if profile_api_key_id is None:
+            return ApiKeyResolution(
+                api_key=None,
+                source=resolution_source,
+                detail=(
+                    "No explicit generation API key is configured. "
+                    "Select a pinned key or opt into system_default via a generation profile."
+                ),
+            )
 
         if profile_api_key_id:
             api_key = session.scalar(select(ApiKey).where(ApiKey.id == profile_api_key_id))
             if api_key is None:
                 return ApiKeyResolution(
                     api_key=None,
-                    source="profile" if newsletter.generation_profile_id else "newsletter",
+                    source=resolution_source,
                     detail=(
                         "The selected generation API key "
                         f"(id={profile_api_key_id}) no longer exists."
@@ -225,7 +242,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
             if api_key.provider_type != provider_name:
                 return ApiKeyResolution(
                     api_key=None,
-                    source="profile" if newsletter.generation_profile_id else "newsletter",
+                    source=resolution_source,
                     detail=(
                         f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
                         f"is for provider '{api_key.provider_type}', not '{provider_name}'."
@@ -234,7 +251,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
             if not api_key.is_active:
                 return ApiKeyResolution(
                     api_key=None,
-                    source="profile" if newsletter.generation_profile_id else "newsletter",
+                    source=resolution_source,
                     detail=(
                         f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
                         "is inactive. Activate it or select a different key."
@@ -246,7 +263,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
                 except Exception:
                     return ApiKeyResolution(
                         api_key=None,
-                        source="profile" if newsletter.generation_profile_id else "newsletter",
+                        source=resolution_source,
                         detail=(
                             f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
                             "could not be decrypted. Re-save the key and try again."
@@ -255,7 +272,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
                 if decrypted_value:
                     return ApiKeyResolution(
                         api_key=decrypted_value,
-                        source="profile" if newsletter.generation_profile_id else "newsletter",
+                        source=resolution_source,
                         detail=(
                             f"Using newsletter API key '{api_key.name}' (id={api_key.id}) for "
                             f"provider '{provider_name}'."
@@ -263,7 +280,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
                     )
             return ApiKeyResolution(
                 api_key=None,
-                source="profile" if newsletter.generation_profile_id else "newsletter",
+                source=resolution_source,
                 detail=(
                     f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) is empty."
                 ),
@@ -271,7 +288,14 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
     finally:
         session.close()
 
-    return _environment_api_key_resolution(provider_name)
+    return ApiKeyResolution(
+        api_key=None,
+        source=resolution_source,
+        detail=(
+            "No explicit generation API key is configured. "
+            "Select a pinned key or opt into system_default via a generation profile."
+        ),
+    )
 
 
 def _get_api_key_for_newsletter(newsletter: Newsletter) -> str | None:
@@ -331,6 +355,42 @@ def _fallback_generate(newsletter: Newsletter, *, reason: str) -> GeneratedDraft
     )
 
 
+def _parse_structured_generation_output(
+    newsletter: Newsletter,
+    *,
+    content: str,
+) -> GeneratedDraft | None:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    subject = str(parsed.get("subject") or newsletter.name).strip() or newsletter.name
+    preheader = str(parsed.get("preheader") or newsletter.description or "").strip()
+    body_text = str(parsed.get("body_markdown") or parsed.get("body_text") or "").strip()
+    if not body_text:
+        return GeneratedDraft(
+            status="error",
+            mode="litellm",
+            message="AI JSON output was missing body_markdown/body_text.",
+            subject=subject,
+            preheader=preheader,
+            body_text="",
+        )
+
+    return GeneratedDraft(
+        status="generated",
+        mode="litellm",
+        message="Generated draft successfully using the configured provider.",
+        subject=subject,
+        preheader=preheader,
+        body_text=body_text,
+    )
+
+
 def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     provider_name = _normalized_provider_name(newsletter)
     settings = get_settings()
@@ -384,7 +444,9 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             "",
             f"Prompt instructions:\n{newsletter.prompt}",
             "",
-            "Return the result as plain text in this exact format:",
+            "Return strict JSON with this shape:",
+            '{"subject":"...","preheader":"...","body_markdown":"...","highlights":["..."],"source_references":[{"source_id":"src_1","claim":"..."}]}',
+            "If you cannot return JSON, fall back to this exact plain text format:",
             "SUBJECT: ...",
             "PREHEADER: ...",
             "BODY:",
@@ -420,6 +482,10 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         if settings.allow_simulated_ai_generation:
             return _fallback_generate(newsletter, reason=detail)
         return _error_generate(newsletter, detail)
+
+    structured_result = _parse_structured_generation_output(newsletter, content=content)
+    if structured_result is not None:
+        return structured_result
 
     lines = content.splitlines()
     subject = newsletter.name

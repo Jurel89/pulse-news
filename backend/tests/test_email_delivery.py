@@ -184,7 +184,7 @@ def test_get_resend_api_key_uses_complete_environment_configuration_when_no_key_
 ):
     import app.database
     import app.email_delivery
-    from app.models import ApiKey, Newsletter
+    from app.models import ApiKey, DeliveryProfile, Newsletter
 
     session = app.database.get_session_maker()()
     try:
@@ -215,6 +215,15 @@ def test_get_resend_api_key_uses_complete_environment_configuration_when_no_key_
             status="active",
         )
         session.add(newsletter)
+        session.flush()
+        delivery_profile = DeliveryProfile(
+            name="System Default Delivery",
+            provider_type="resend",
+            api_key_binding_mode="system_default",
+        )
+        session.add(delivery_profile)
+        session.flush()
+        newsletter.delivery_profile_id = delivery_profile.id
         session.commit()
         session.refresh(newsletter)
     finally:
@@ -269,6 +278,43 @@ def test_get_resend_api_key_requires_sender_email_without_falling_back_to_databa
 
     # Env API key set but no sender email — should fail closed instead of falling through.
     settings = make_settings(resend_api_key="re-env-key")
+
+    assert app.email_delivery._get_resend_api_key(settings, newsletter) is None
+
+
+def test_get_resend_api_key_fails_closed_without_pinned_key_or_system_default_profile(
+    client: TestClient,
+):
+    import app.database
+    import app.email_delivery
+    from app.models import Newsletter
+
+    session = app.database.get_session_maker()()
+    try:
+        newsletter = Newsletter(
+            name="Delivery Brief",
+            slug="delivery-brief-no-default",
+            description="No resend default",
+            prompt="Generate a delivery brief.",
+            draft_subject="Delivery Brief",
+            draft_preheader="Delivery test",
+            draft_body_text="Body copy",
+            provider_name="openai",
+            model_name="gpt-4o-mini",
+            template_key="signal",
+            audience_name="ops",
+            delivery_topic="delivery-brief",
+            timezone="UTC",
+            schedule_enabled=False,
+            status="active",
+        )
+        session.add(newsletter)
+        session.commit()
+        session.refresh(newsletter)
+    finally:
+        session.close()
+
+    settings = make_settings(resend_api_key="re-env-key", resend_from_email="sender@example.com")
 
     assert app.email_delivery._get_resend_api_key(settings, newsletter) is None
 
@@ -646,7 +692,7 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
     import app.config
     import app.database
     import app.email_delivery
-    from app.models import Newsletter
+    from app.models import DeliveryProfile, Newsletter
 
     bootstrap_operator(client)
     monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re-env-key")
@@ -673,6 +719,15 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
             status="active",
         )
         session.add(newsletter)
+        session.flush()
+        delivery_profile = DeliveryProfile(
+            name="System Default Delivery",
+            provider_type="resend",
+            api_key_binding_mode="system_default",
+        )
+        session.add(delivery_profile)
+        session.flush()
+        newsletter.delivery_profile_id = delivery_profile.id
         session.commit()
         newsletter_id = newsletter.id
     finally:
