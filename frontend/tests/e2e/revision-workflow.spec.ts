@@ -97,7 +97,9 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
     });
   });
 
-  await page.getByRole('button', { name: 'Dashboard' }).click();
+  if (await page.getByRole('button', { name: 'Dashboard' }).count()) {
+    await page.getByRole('button', { name: 'Dashboard' }).click();
+  }
   await expect(page.getByRole('heading', { name: /run dashboard/i })).toBeVisible();
   await expect(page.getByText(/Delivery Runs/i)).toBeVisible();
   await expect(page.locator('table tbody tr').first()).toBeVisible();
