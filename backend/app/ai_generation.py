@@ -8,6 +8,7 @@ from typing import Any
 from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.models import Newsletter
+from app.source_pipeline.service import build_source_bundle
 
 try:  # pragma: no cover - exercised conditionally when dependency is present and configured
     from litellm import completion
@@ -52,12 +53,26 @@ def _get_newsletter_provider(newsletter: Newsletter):
     from sqlalchemy import select
 
     from app.database import get_session_maker
-    from app.models import Provider
+    from app.models import GenerationProfile, Provider
 
     if newsletter.provider is not None:
         return newsletter.provider
     if newsletter.provider_id is None:
-        return None
+        if newsletter.generation_profile_id is None:
+            return None
+
+        session = get_session_maker()()
+        try:
+            profile = session.scalar(
+                select(GenerationProfile).where(
+                    GenerationProfile.id == newsletter.generation_profile_id
+                )
+            )
+            if profile is None or profile.provider_id is None:
+                return None
+            return session.scalar(select(Provider).where(Provider.id == profile.provider_id))
+        finally:
+            session.close()
 
     session = get_session_maker()()
     try:
@@ -73,6 +88,24 @@ def _normalized_provider_name(newsletter: Newsletter) -> str:
 
 
 def _resolved_model_name(newsletter: Newsletter) -> str:
+    if newsletter.generation_profile_id is not None:
+        from sqlalchemy import select
+
+        from app.database import get_session_maker
+        from app.models import GenerationProfile
+
+        session = get_session_maker()()
+        try:
+            profile = session.scalar(
+                select(GenerationProfile).where(
+                    GenerationProfile.id == newsletter.generation_profile_id
+                )
+            )
+            if profile is not None and profile.model_name.strip():
+                return profile.model_name.strip()
+        finally:
+            session.close()
+
     configured_model = newsletter.model_name.strip()
     if configured_model:
         return configured_model
@@ -162,27 +195,37 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
     from sqlalchemy import select
 
     from app.database import get_session_maker
-    from app.models import ApiKey
+    from app.models import ApiKey, GenerationProfile
 
     provider_name = _normalized_provider_name(newsletter)
     session = get_session_maker()()
 
     try:
-        if newsletter.api_key_id:
-            api_key = session.scalar(select(ApiKey).where(ApiKey.id == newsletter.api_key_id))
+        profile_api_key_id = newsletter.api_key_id
+        if newsletter.generation_profile_id is not None:
+            profile = session.scalar(
+                select(GenerationProfile).where(
+                    GenerationProfile.id == newsletter.generation_profile_id
+                )
+            )
+            if profile is not None and profile.api_key_id is not None:
+                profile_api_key_id = profile.api_key_id
+
+        if profile_api_key_id:
+            api_key = session.scalar(select(ApiKey).where(ApiKey.id == profile_api_key_id))
             if api_key is None:
                 return ApiKeyResolution(
                     api_key=None,
-                    source="newsletter",
+                    source="profile" if newsletter.generation_profile_id else "newsletter",
                     detail=(
-                        "The selected newsletter API key "
-                        f"(id={newsletter.api_key_id}) no longer exists."
+                        "The selected generation API key "
+                        f"(id={profile_api_key_id}) no longer exists."
                     ),
                 )
             if api_key.provider_type != provider_name:
                 return ApiKeyResolution(
                     api_key=None,
-                    source="newsletter",
+                    source="profile" if newsletter.generation_profile_id else "newsletter",
                     detail=(
                         f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
                         f"is for provider '{api_key.provider_type}', not '{provider_name}'."
@@ -191,7 +234,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
             if not api_key.is_active:
                 return ApiKeyResolution(
                     api_key=None,
-                    source="newsletter",
+                    source="profile" if newsletter.generation_profile_id else "newsletter",
                     detail=(
                         f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
                         "is inactive. Activate it or select a different key."
@@ -203,7 +246,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
                 except Exception:
                     return ApiKeyResolution(
                         api_key=None,
-                        source="newsletter",
+                        source="profile" if newsletter.generation_profile_id else "newsletter",
                         detail=(
                             f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) "
                             "could not be decrypted. Re-save the key and try again."
@@ -212,7 +255,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
                 if decrypted_value:
                     return ApiKeyResolution(
                         api_key=decrypted_value,
-                        source="newsletter",
+                        source="profile" if newsletter.generation_profile_id else "newsletter",
                         detail=(
                             f"Using newsletter API key '{api_key.name}' (id={api_key.id}) for "
                             f"provider '{provider_name}'."
@@ -220,7 +263,7 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
                     )
             return ApiKeyResolution(
                 api_key=None,
-                source="newsletter",
+                source="profile" if newsletter.generation_profile_id else "newsletter",
                 detail=(
                     f"The selected newsletter API key '{api_key.name}' (id={api_key.id}) is empty."
                 ),
@@ -311,6 +354,7 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         )
 
     credential_resolution = _resolve_api_key_for_newsletter(newsletter)
+    source_bundle = build_source_bundle(newsletter)
 
     if completion is None:
         message = "LiteLLM is not available, so live AI generation cannot run."
@@ -328,6 +372,11 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             f"Newsletter name: {newsletter.name}",
             f"Description: {newsletter.description or 'None'}",
             f"Audience label: {newsletter.audience_name}",
+            "Source bundle:",
+            *[
+                f"- [{source.source_id}] {source.title}: {source.summary} ({source.url})"
+                for source in source_bundle
+            ],
             "Generate a concise newsletter draft with:",
             "1. A subject line",
             "2. A preheader",

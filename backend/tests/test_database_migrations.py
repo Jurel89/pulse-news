@@ -29,9 +29,14 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
     inspector = sa.inspect(app.database.get_engine())
 
     assert database_path.exists()
-    assert {"api_keys", "draft_revisions", "email_templates", "providers"}.issubset(
-        inspector.get_table_names()
-    )
+    assert {
+        "api_keys",
+        "delivery_profiles",
+        "draft_revisions",
+        "email_templates",
+        "generation_profiles",
+        "providers",
+    }.issubset(inspector.get_table_names())
     assert "from_email" in {column["name"] for column in inspector.get_columns("api_keys")}
     assert {
         "provider_id",
@@ -40,11 +45,16 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
         "resend_api_key_id",
         "approved_revision_id",
         "draft_head_revision_id",
+        "generation_profile_id",
+        "delivery_profile_id",
         "version",
     }.issubset({column["name"] for column in inspector.get_columns("newsletters")})
     assert {"revision_id", "run_type"}.issubset(
         {column["name"] for column in inspector.get_columns("newsletter_runs")}
     )
+    assert "source_bundle_snapshot_json" in {
+        column["name"] for column in inspector.get_columns("draft_revisions")
+    }
 
     foreign_keys = {fk["name"]: fk for fk in inspector.get_foreign_keys("newsletters")}
     assert set(foreign_keys) >= {
@@ -54,6 +64,8 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
         "fk_newsletters_resend_api_key_id",
         "fk_newsletters_approved_revision_id",
         "fk_newsletters_draft_head_revision_id",
+        "fk_newsletters_generation_profile_id",
+        "fk_newsletters_delivery_profile_id",
     }
     assert foreign_keys["fk_newsletters_provider_id"]["referred_table"] == "providers"
     assert foreign_keys["fk_newsletters_template_id"]["referred_table"] == "email_templates"
@@ -65,10 +77,17 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
     assert (
         foreign_keys["fk_newsletters_draft_head_revision_id"]["referred_table"] == "draft_revisions"
     )
+    assert (
+        foreign_keys["fk_newsletters_generation_profile_id"]["referred_table"]
+        == "generation_profiles"
+    )
+    assert (
+        foreign_keys["fk_newsletters_delivery_profile_id"]["referred_table"] == "delivery_profiles"
+    )
 
     with app.database.get_engine().connect() as connection:
         version = connection.execute(
             sa.text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "3b4c5d6e7f80"
+    assert version == "5d6e7f8091a2"

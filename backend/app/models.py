@@ -94,6 +94,43 @@ class ApiKey(TimestampMixin, Base):
     )
 
 
+class GenerationProfile(TimestampMixin, Base):
+    __tablename__ = "generation_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    api_key_binding_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pinned_key"
+    )
+    api_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    settings_json: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+
+class DeliveryProfile(TimestampMixin, Base):
+    __tablename__ = "delivery_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(64), nullable=False, default="resend")
+    api_key_binding_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pinned_key"
+    )
+    api_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    from_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    reply_to: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    delivery_tags_json: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+
 class Newsletter(TimestampMixin, Base):
     __tablename__ = "newsletters"
 
@@ -127,6 +164,12 @@ class Newsletter(TimestampMixin, Base):
         ForeignKey("api_keys.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+    generation_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generation_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    delivery_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("delivery_profiles.id", ondelete="SET NULL"), nullable=True, index=True
     )
     approved_revision_id: Mapped[int | None] = mapped_column(
         ForeignKey("draft_revisions.id", ondelete="SET NULL"),
@@ -164,6 +207,12 @@ class Newsletter(TimestampMixin, Base):
     resend_api_key: Mapped[ApiKey | None] = relationship(
         back_populates="resend_newsletters",
         foreign_keys=[resend_api_key_id],
+    )
+    generation_profile: Mapped[GenerationProfile | None] = relationship(
+        foreign_keys=[generation_profile_id]
+    )
+    delivery_profile: Mapped[DeliveryProfile | None] = relationship(
+        foreign_keys=[delivery_profile_id]
     )
     recipients: Mapped[list[NewsletterRecipient]] = relationship(
         back_populates="newsletter",
@@ -205,6 +254,7 @@ class DraftRevision(TimestampMixin, Base):
     preheader: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body_text: Mapped[str] = mapped_column(Text(), nullable=False, default="")
     prompt_snapshot: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    source_bundle_snapshot_json: Mapped[str | None] = mapped_column(Text(), nullable=True)
     generation_run_id: Mapped[int | None] = mapped_column(
         ForeignKey("newsletter_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )

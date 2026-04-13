@@ -98,11 +98,32 @@ def _resolve_resend_configuration(
     *,
     db_session=None,
 ) -> ResendConfigurationResolution:
-    if newsletter and newsletter.resend_api_key_id is not None:
+    profile_api_key_id = newsletter.resend_api_key_id if newsletter else None
+    profile_from_email = None
+    if newsletter and newsletter.delivery_profile_id is not None:
+        from sqlalchemy import select
+
+        from app.database import get_session_maker
+        from app.models import DeliveryProfile
+
+        owns_session = db_session is None
+        session = db_session or get_session_maker()()
+        try:
+            profile = session.scalar(
+                select(DeliveryProfile).where(DeliveryProfile.id == newsletter.delivery_profile_id)
+            )
+            if profile is not None:
+                profile_api_key_id = profile.api_key_id
+                profile_from_email = _normalize_config_value(profile.from_email)
+        finally:
+            if owns_session:
+                session.close()
+
+    if newsletter and profile_api_key_id is not None:
         detail_parts: list[str] = []
         try:
             stored_key = _load_resend_api_key_record(
-                api_key_id=newsletter.resend_api_key_id,
+                api_key_id=profile_api_key_id,
                 db_session=db_session,
             )
         except Exception as exc:
@@ -125,7 +146,7 @@ def _resolve_resend_configuration(
                 )
                 detail_parts.append(
                     "The selected newsletter-specific Resend API key "
-                    f"(id={newsletter.resend_api_key_id}) no longer exists."
+                    f"(id={profile_api_key_id}) no longer exists."
                 )
             elif stored_key.provider_type != "resend":
                 logger.warning(
@@ -167,7 +188,7 @@ def _resolve_resend_configuration(
                     )
                 else:
                     if decrypted_key:
-                        from_email = _normalize_config_value(
+                        from_email = profile_from_email or _normalize_config_value(
                             _get_resend_from_email(
                                 settings,
                                 newsletter,
