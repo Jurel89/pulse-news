@@ -1,10 +1,13 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from html import escape
 
 from app.models import Newsletter
+
+PULSE_NEWS_GITHUB_URL = "https://github.com/Jurel89/pulse-news"
 
 
 @dataclass
@@ -32,22 +35,122 @@ def render_plain_text(subject: str, preheader: str, body: str) -> str:
     return "\n".join(sections).strip()
 
 
+def _inline_markdown_to_html(text: str) -> str:
+    """Convert inline markdown patterns to HTML within a line of text.
+
+    Handles: **bold**, *italic*, `code`, [link](url).
+    """
+    result = escape(text)
+
+    result = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        r'<a href="\2" style="color:#18324a;text-decoration:underline;">\1</a>',
+        result,
+    )
+    result = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", result)
+    result = re.sub(r"\*(.+?)\*", r"<em>\1</em>", result)
+    result = re.sub(
+        r"`([^`]+)`",
+        r'<code style="background:#f0f4f8;padding:2px 6px;border-radius:4px;font-size:14px;">\1</code>',
+        result,
+    )
+
+    return result
+
+
+def _markdown_body_to_html(body: str) -> str:
+    """Convert markdown-like plain text into styled HTML suitable for email.
+
+    Handles headings (** or ##), bold, italic, code, links, bullet lists,
+    and blank-line paragraph breaks.
+    """
+    lines = body.splitlines()
+    html_parts: list[str] = []
+    in_list = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+
+        if not stripped:
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+            continue
+
+        heading_match = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+        bold_heading_match = re.match(r"^\*\*(.+?)\*\*\s*$", stripped)
+
+        if heading_match:
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+            level = len(heading_match.group(1))
+            size = {1: "24px", 2: "20px", 3: "17px"}[level]
+            weight = {1: "700", 2: "600", 3: "600"}[level]
+            margin_top = "24px" if html_parts else "0"
+            heading_text = _inline_markdown_to_html(heading_match.group(2))
+            html_parts.append(
+                f'<h{level} style="margin:{margin_top} 0 12px;font-size:{size};'
+                f'font-weight:{weight};line-height:1.3;color:#18324a;">'
+                f"{heading_text}</h{level}>"
+            )
+        elif bold_heading_match and not re.search(r"\*\*.+\*\*.+\*\*", stripped):
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+            margin_top = "24px" if html_parts else "0"
+            heading_text = _inline_markdown_to_html(bold_heading_match.group(1))
+            html_parts.append(
+                f'<h2 style="margin:{margin_top} 0 12px;font-size:20px;'
+                f'font-weight:600;line-height:1.3;color:#18324a;">'
+                f"{heading_text}</h2>"
+            )
+        elif stripped.startswith(("- ", "* ", "\u2022 ")):
+            if not in_list:
+                html_parts.append(
+                    '<ul style="margin:0 0 16px 20px;padding:0;line-height:1.7;color:#2c3e50;">'
+                )
+                in_list = True
+            item_text = _inline_markdown_to_html(stripped[2:])
+            html_parts.append(f'<li style="margin:0 0 6px;font-size:15px;">{item_text}</li>')
+        else:
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+            line_html = _inline_markdown_to_html(stripped)
+            html_parts.append(
+                f'<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#2c3e50;">'
+                f"{line_html}</p>"
+            )
+
+    if in_list:
+        html_parts.append("</ul>")
+
+    return "\n".join(html_parts)
+
+
 def render_signal_template(subject: str, preheader: str, body_html: str) -> str:
     return "\n".join(
         [
             "<!doctype html>",
             "<html>",
-            '  <body style="margin:0;background:#eef3f7;font-family:IBM Plex Sans,Segoe UI,sans-serif;color:#18324a;">',
-            '    <div style="max-width:640px;margin:0 auto;padding:32px 18px;">',
-            '      <div style="background:linear-gradient(135deg,#18324a,#2f5f7a);color:#f7f5ef;border-radius:28px;padding:32px;">',
-            '        <p style="margin:0 0 12px;font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:0.8;">Pulse News</p>',
-            f'        <h1 style="margin:0;font-size:34px;line-height:1.05;">{escape(subject)}</h1>',
-            f'        <p style="margin:16px 0 0;font-size:16px;line-height:1.5;opacity:0.92;">{escape(preheader)}</p>',
+            "  <head>",
+            '    <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+            "  </head>",
+            "  <body style=\"margin:0;padding:0;background:#eef3f7;font-family:'IBM Plex Sans','Segoe UI',system-ui,-apple-system,sans-serif;color:#18324a;-webkit-font-smoothing:antialiased;\">",
+            '    <center style="width:100%;background:#eef3f7;">',
+            '      <div style="max-width:640px;margin:0 auto;padding:32px 18px;">',
+            '        <div style="background:linear-gradient(135deg,#18324a,#2f5f7a);color:#f7f5ef;border-radius:28px;padding:36px 32px;">',
+            '          <p style="margin:0 0 14px;font-size:11px;letter-spacing:2.5px;text-transform:uppercase;opacity:0.75;font-weight:500;">Pulse News</p>',
+            f'          <h1 style="margin:0;font-size:28px;line-height:1.2;font-weight:700;letter-spacing:-0.3px;">{escape(subject)}</h1>',
+            f'          <p style="margin:14px 0 0;font-size:15px;line-height:1.5;opacity:0.88;">{escape(preheader)}</p>',
+            "        </div>",
+            '        <div style="background:#ffffff;border-radius:20px;padding:32px 28px;margin-top:16px;box-shadow:0 12px 40px rgba(24,50,74,0.10);">',
+            f"          {body_html}",
+            "        </div>",
+            _build_email_footer(),
             "      </div>",
-            '      <div style="background:#ffffff;border-radius:24px;padding:28px;margin-top:18px;box-shadow:0 18px 45px rgba(24,50,74,0.12);">',
-            f"        {body_html}",
-            "      </div>",
-            "    </div>",
+            "    </center>",
             "  </body>",
             "</html>",
         ]
@@ -59,20 +162,48 @@ def render_ledger_template(subject: str, preheader: str, body_html: str) -> str:
         [
             "<!doctype html>",
             "<html>",
-            '  <body style="margin:0;background:#f5efe4;font-family:Georgia,Times New Roman,serif;color:#40240f;">',
-            '    <div style="max-width:680px;margin:0 auto;padding:24px 16px;">',
-            '      <div style="border:1px solid #d8c0a8;background:#fffaf3;padding:28px;">',
-            '        <p style="margin:0 0 12px;font-size:12px;letter-spacing:3px;text-transform:uppercase;color:#8b5e1b;">Field Notes</p>',
-            f'        <h1 style="margin:0;font-size:36px;line-height:1.1;">{escape(subject)}</h1>',
-            f'        <p style="margin:18px 0 0;font-size:17px;line-height:1.6;color:#6a4a2c;">{escape(preheader)}</p>',
+            "  <head>",
+            '    <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+            "  </head>",
+            "  <body style=\"margin:0;padding:0;background:#f5efe4;font-family:Georgia,'Times New Roman',serif;color:#40240f;-webkit-font-smoothing:antialiased;\">",
+            '    <center style="width:100%;background:#f5efe4;">',
+            '      <div style="max-width:680px;margin:0 auto;padding:24px 16px;">',
+            '        <div style="border:1px solid #d8c0a8;background:#fffaf3;padding:32px 28px;">',
+            '          <p style="margin:0 0 12px;font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#8b5e1b;font-weight:500;">Field Notes</p>',
+            f'          <h1 style="margin:0;font-size:30px;line-height:1.15;font-weight:700;">{escape(subject)}</h1>',
+            f'          <p style="margin:16px 0 0;font-size:16px;line-height:1.6;color:#6a4a2c;">{escape(preheader)}</p>',
+            "        </div>",
+            '        <div style="border-left:5px solid #8b5e1b;background:#ffffff;padding:32px 28px;margin-top:16px;">',
+            f"          {body_html}",
+            "        </div>",
+            _build_email_footer(accent="#8b5e1b"),
             "      </div>",
-            '      <div style="border-left:6px solid #8b5e1b;background:#ffffff;padding:28px;margin-top:18px;">',
-            f"        {body_html}",
-            "      </div>",
-            "    </div>",
+            "    </center>",
             "  </body>",
             "</html>",
         ]
+    )
+
+
+def _build_email_footer(accent: str = "#5c7a8a") -> str:
+    return (
+        '<div style="text-align:center;padding:24px 18px 12px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+        "<tr>"
+        '<td style="padding-bottom:12px;">'
+        f'<div style="height:1px;background:linear-gradient(to right,transparent,{accent},transparent);opacity:0.3;"></div>'
+        "</td>"
+        "</tr>"
+        "<tr>"
+        '<td style="padding:8px 0;">'
+        f'<p style="margin:0;font-size:12px;color:{accent};opacity:0.7;line-height:1.5;">'
+        f'Sent from <a href="{PULSE_NEWS_GITHUB_URL}" '
+        f'style="color:{accent};text-decoration:underline;font-weight:600;">Pulse News</a>'
+        " &mdash; self-hosted newsletter operations</p>"
+        "</td>"
+        "</tr>"
+        "</table>"
+        "</div>"
     )
 
 
@@ -96,15 +227,7 @@ def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
     from app.models import EmailTemplate
 
     subject, preheader, body = normalize_draft_content(newsletter)
-    body_lines = [line.strip() for line in body.splitlines()]
-    body_html = "".join(
-        (
-            f'<p style="margin:0 0 16px;line-height:1.7;">{escape(line)}</p>'
-            if line
-            else '<div style="height:12px;"></div>'
-        )
-        for line in body_lines
-    )
+    body_html = _markdown_body_to_html(body)
 
     template_key = newsletter.template_key or "signal"
     db = next(get_db_session())

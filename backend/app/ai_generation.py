@@ -35,7 +35,7 @@ PROVIDER_TO_LITELLM_PREFIX: dict[str, str] = {
 
 PRESET_BASE_URLS: dict[str, str] = {
     "zai": "https://api.z.ai/api/paas/v4/",
-    "kimi": "https://api.moonshot.ai/v1",
+    "kimi": "https://api.kimi.com/coding/v1",
 }
 
 
@@ -238,6 +238,13 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
     try:
         api_key = _get_api_key_for_newsletter(newsletter)
         completion_kwargs = _provider_completion_configuration(newsletter)
+
+        # Add User-Agent header for Kimi Code API compatibility
+        if _normalized_provider_name(newsletter) == "kimi":
+            completion_kwargs["extra_headers"] = {
+                "User-Agent": os.environ.get("LITELLM_USER_AGENT", "claude-code/0.1.0")
+            }
+
         response = completion(
             model=_provider_model_name(newsletter),
             messages=[{"role": "user", "content": prompt}],
