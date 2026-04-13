@@ -168,7 +168,7 @@ export default function App() {
   const navItems = useMemo(
     () => [
       { id: "dashboard" as const, label: "Dashboard" },
-      { id: "newsletters" as const, label: "Newsletters" },
+      { id: "newsletters" as const, label: "Jobs" },
       { id: "templates" as const, label: "Templates" },
       { id: "providers" as const, label: "Providers" },
       { id: "apikeys" as const, label: "API Keys" },
@@ -185,7 +185,7 @@ export default function App() {
         : await api.createNewsletter(payload);
       void savedNewsletter;
       await loadNewsletters();
-      setNotice(`Newsletter ${newsletterId ? "updated" : "created"} successfully.`);
+      setNotice(`Job ${newsletterId ? "updated" : "created"} successfully.`);
       setEditingNewsletter(null);
       setPreviewingNewsletter(null);
       setShowEditor(false);
@@ -255,14 +255,6 @@ export default function App() {
       await loadNewsletters();
       setEditingNewsletter(result.newsletter);
       setNotice(result.message);
-    });
-  }
-
-  async function handleRunNewsletter(newsletterId: number) {
-    await runAuthAction(async () => {
-      const result = await api.runNewsletter(newsletterId);
-      await loadNewsletters();
-      setNotice(result.send.message);
     });
   }
 
@@ -599,7 +591,6 @@ export default function App() {
             }}
             onPause={handlePauseNewsletter}
             onResume={handleResumeNewsletter}
-            onRun={handleRunNewsletter}
             onSchedulePause={handleSchedulePause}
             onScheduleResume={handleScheduleResume}
           />

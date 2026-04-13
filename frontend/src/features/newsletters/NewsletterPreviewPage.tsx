@@ -71,6 +71,9 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
         <div>
           <p className="eyebrow">Preview</p>
           <h2 className="section-title">{newsletter.name}</h2>
+          <p className="cell-secondary">
+            Approved revision #{newsletter.approved_revision_id ?? "—"} · Draft revision #{newsletter.draft_head_revision_id ?? "—"}
+          </p>
         </div>
         <button className="secondary-button" onClick={onBack} type="button">
           Back to newsletters
@@ -124,7 +127,7 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
               {busy ? "Sending..." : "Send Test Email"}
             </button>
             <button className="secondary-button" disabled={busy} onClick={() => void handleManualSend()} type="button">
-              {busy ? "Working..." : "Send to Active Recipients"}
+               {busy ? "Working..." : "Send Approved Draft"}
             </button>
           </div>
 

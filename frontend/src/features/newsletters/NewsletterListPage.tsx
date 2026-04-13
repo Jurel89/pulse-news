@@ -9,7 +9,6 @@ type NewsletterListPageProps = {
   onCreate: () => void;
   onEdit: (newsletter: NewsletterSummary) => void;
   onPreview: (newsletter: NewsletterSummary) => void;
-  onRun: (newsletterId: number) => Promise<void>;
   onArchive: (newsletterId: number) => Promise<void>;
   onPause: (newsletterId: number) => Promise<void>;
   onResume: (newsletterId: number) => Promise<void>;
@@ -26,7 +25,6 @@ export function NewsletterListPage({
   onCreate,
   onEdit,
   onPreview,
-  onRun,
   onArchive,
   onPause,
   onResume,
@@ -35,7 +33,6 @@ export function NewsletterListPage({
   onDelete
 }: NewsletterListPageProps) {
   function getNewsletterActions(newsletter: NewsletterSummary): ActionItem[] {
-    const canRunNewsletter = newsletter.status === "active";
     const actions: ActionItem[] = [
       {
         label: "Preview",
@@ -46,18 +43,6 @@ export function NewsletterListPage({
             <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
           </svg>
         )
-      },
-      {
-        label: "Run",
-        onClick: () => void onRun(newsletter.id),
-        icon: (
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 3.5v9l8-4.5-8-4.5z" fill="currentColor"/>
-            <path d="M12.5 3.5v9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-        ),
-        variant: "primary",
-        hidden: !canRunNewsletter
       },
       {
         label: "Edit",
@@ -219,7 +204,9 @@ export function NewsletterListPage({
                 <tr key={newsletter.id} className="data-row">
                   <td className="name-cell">
                     <div className="cell-primary">{newsletter.name}</div>
-                    <div className="cell-secondary">{newsletter.slug}</div>
+                    <div className="cell-secondary">
+                      {newsletter.slug} · Approved #{newsletter.approved_revision_id ?? "—"} · Draft #{newsletter.draft_head_revision_id ?? "—"}
+                    </div>
                   </td>
                   <td data-label="Status">
                     <span className={`status-badge status-${newsletter.status}`}>

@@ -52,6 +52,8 @@ export type NewsletterSendResult = {
   run: {
     id: number;
     newsletter_id: number;
+    revision_id: number | null;
+    run_type: string | null;
     trigger_mode: string;
     run_status: string;
     provider_name: string;
@@ -94,13 +96,12 @@ export type NewsletterGenerationResult = {
   status: string;
   mode: string;
   message: string;
+  revision_id?: number | null;
   newsletter: NewsletterDetail;
+  run: NewsletterSendResult["run"];
 };
 
-export type NewsletterRunResult = {
-  generation: NewsletterGenerationResult;
-  send: NewsletterSendResult;
-};
+
 
 export type FormOptionTemplate = {
   key: string;
@@ -223,15 +224,7 @@ export const api = {
     request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
       method: "POST"
     }),
-  runNewsletter: async (newsletterId: number) => {
-    const generation = await request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
-      method: "POST"
-    });
-    const send = await request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
-      method: "POST"
-    });
-    return { generation, send } satisfies NewsletterRunResult;
-  },
+
   testSendNewsletter: (newsletterId: number, toEmail: string) =>
     request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/test-send`, {
       method: "POST",

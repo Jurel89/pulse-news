@@ -11,6 +11,8 @@ export type NewsletterSummary = {
   provider_name: string;
   api_key_id: number | null;
   resend_api_key_id: number | null;
+  approved_revision_id: number | null;
+  draft_head_revision_id: number | null;
   model_name: string;
   template_key: string;
   audience_name: string;
