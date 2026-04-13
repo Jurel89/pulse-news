@@ -1177,6 +1177,8 @@ def generate_draft(
         source_bundle_snapshot_json=source_bundle_snapshot_json,
     )
     newsletter.draft_head_revision = revision
+    db.add(revision)
+    db.flush()
     run = create_newsletter_run(
         newsletter,
         revision,
@@ -1187,7 +1189,6 @@ def generate_draft(
         result_message=generated.message,
     )
     db.add(newsletter)
-    db.add(revision)
     db.add(run)
     db.flush()
     revision.generation_run_id = run.id

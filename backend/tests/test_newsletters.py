@@ -207,6 +207,7 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     assert result["newsletter"]["id"] == newsletter_id
     assert result["newsletter"]["draft_head_revision_id"] == result["revision_id"]
     assert result["newsletter"]["approved_revision_id"] != result["revision_id"]
+    assert result["run"]["revision_id"] == result["revision_id"]
 
     get_response = client.get(f"/api/newsletters/{newsletter_id}")
     assert get_response.status_code == 200
