@@ -87,6 +87,13 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
     });
   });
 
+  await page.reload();
+  if (await page.getByRole('heading', { name: /log in to pulse news/i }).count()) {
+    await page.getByLabel('Email').fill('operator@example.com');
+    await page.getByLabel('Password').fill('super-secret-password');
+    await page.getByRole('button', { name: /log in/i }).click();
+  }
+
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await expect(page.getByRole('heading', { name: /run dashboard/i })).toBeVisible();
   await expect(page.getByText(/Run ID/i)).toBeVisible();

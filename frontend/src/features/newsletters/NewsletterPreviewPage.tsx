@@ -26,6 +26,7 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
   const [approvedRevisionId, setApprovedRevisionId] = useState<number | null>(newsletter.approved_revision_id);
   const [draftHeadRevisionId, setDraftHeadRevisionId] = useState<number | null>(newsletter.draft_head_revision_id);
   const [selectedRevisionId, setSelectedRevisionId] = useState<number | null>(newsletter.approved_revision_id ?? newsletter.draft_head_revision_id);
+  const [revisionDraft, setRevisionDraft] = useState({ subject: "", preheader: "", body_text: "" });
 
   const loadRevisionState = useCallback(async () => {
     const nextRevisions = await api.listNewsletterRevisions(newsletter.id);
@@ -40,6 +41,14 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
     if (nextSelectedRevisionId) {
       const nextPreview = await api.previewNewsletterRevision(newsletter.id, nextSelectedRevisionId);
       setPreview(nextPreview);
+      const selectedRevision = nextRevisions.items.find((revision) => revision.id === nextSelectedRevisionId);
+      if (selectedRevision) {
+        setRevisionDraft({
+          subject: selectedRevision.subject,
+          preheader: selectedRevision.preheader ?? "",
+          body_text: selectedRevision.body_text,
+        });
+      }
     }
   }, [newsletter.id]);
 
@@ -50,6 +59,14 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
       const nextPreview = await api.previewNewsletterRevision(newsletter.id, revisionId);
       setSelectedRevisionId(revisionId);
       setPreview(nextPreview);
+      const selectedRevision = revisions.find((revision) => revision.id === revisionId);
+      if (selectedRevision) {
+        setRevisionDraft({
+          subject: selectedRevision.subject,
+          preheader: selectedRevision.preheader ?? "",
+          body_text: selectedRevision.body_text,
+        });
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to preview revision.");
     } finally {
@@ -96,6 +113,23 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
       await loadRevisionState();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to approve revision.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveRevision() {
+    if (!selectedRevisionId) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateNewsletterRevision(newsletter.id, selectedRevisionId, revisionDraft);
+      await loadRevisionState();
+      await handleSelectRevision(selectedRevisionId);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to update revision.");
     } finally {
       setBusy(false);
     }
@@ -213,6 +247,44 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
               })}
             </div>
           </div>
+
+          {selectedRevisionId && selectedRevisionId !== approvedRevisionId ? (
+            <div className="status-panel">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">Edit revision</p>
+                  <h3 className="section-title">Candidate revision editor</h3>
+                </div>
+              </div>
+              <div className="editor-form">
+                <label>
+                  <span className="status-label">Subject</span>
+                  <input
+                    value={revisionDraft.subject}
+                    onChange={(event) => setRevisionDraft((current) => ({ ...current, subject: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span className="status-label">Preheader</span>
+                  <input
+                    value={revisionDraft.preheader}
+                    onChange={(event) => setRevisionDraft((current) => ({ ...current, preheader: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span className="status-label">Body</span>
+                  <textarea
+                    rows={8}
+                    value={revisionDraft.body_text}
+                    onChange={(event) => setRevisionDraft((current) => ({ ...current, body_text: event.target.value }))}
+                  />
+                </label>
+                <button className="primary-button" disabled={busy} onClick={() => void handleSaveRevision()} type="button">
+                  {busy ? "Saving..." : "Save revision changes"}
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <div className="nav-pills">
             <button
