@@ -17,10 +17,11 @@ from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
-from app.email_templates import render_newsletter
+from app.email_templates import render_newsletter_content
 from app.models import (
     ApiKey,
     AuditEvent,
+    DraftRevision,
     EmailTemplate,
     Newsletter,
     NewsletterRecipient,
@@ -110,6 +111,116 @@ def get_newsletter_or_404(db: DbSession, newsletter_id: int) -> Newsletter:
     return newsletter
 
 
+def _next_revision_number(newsletter: Newsletter) -> int:
+    if not newsletter.revisions:
+        return 1
+    return max(revision.version_number for revision in newsletter.revisions) + 1
+
+
+def _create_revision(
+    newsletter: Newsletter,
+    *,
+    state: str,
+    origin: str,
+    subject: str,
+    preheader: str | None,
+    body_text: str,
+    prompt_snapshot: str | None,
+    generation_run_id: int | None = None,
+) -> DraftRevision:
+    revision = DraftRevision(
+        newsletter=newsletter,
+        version_number=_next_revision_number(newsletter),
+        state=state,
+        origin=origin,
+        subject=subject,
+        preheader=preheader,
+        body_text=body_text,
+        prompt_snapshot=prompt_snapshot,
+        generation_run_id=generation_run_id,
+    )
+    return revision
+
+
+def _ensure_revision_projection(newsletter: Newsletter) -> DraftRevision | None:
+    if newsletter.draft_head_revision is not None:
+        return newsletter.draft_head_revision
+
+    if newsletter.approved_revision is not None:
+        newsletter.draft_head_revision = newsletter.approved_revision
+        return newsletter.draft_head_revision
+
+    if newsletter.revisions:
+        sorted_revisions = sorted(
+            newsletter.revisions, key=lambda revision: revision.version_number
+        )
+        newsletter.approved_revision = next(
+            (revision for revision in reversed(sorted_revisions) if revision.state == "approved"),
+            sorted_revisions[0],
+        )
+        newsletter.draft_head_revision = sorted_revisions[-1]
+        return newsletter.draft_head_revision
+
+    imported_revision = _create_revision(
+        newsletter,
+        state="approved",
+        origin="imported",
+        subject=newsletter.draft_subject,
+        preheader=newsletter.draft_preheader,
+        body_text=newsletter.draft_body_text,
+        prompt_snapshot=newsletter.prompt,
+    )
+    newsletter.approved_revision = imported_revision
+    newsletter.draft_head_revision = imported_revision
+    return imported_revision
+
+
+def _draft_revision(newsletter: Newsletter) -> DraftRevision | None:
+    return _ensure_revision_projection(newsletter)
+
+
+def _approved_revision(newsletter: Newsletter) -> DraftRevision | None:
+    _ensure_revision_projection(newsletter)
+    return newsletter.approved_revision
+
+
+def _summary_payload(newsletter: Newsletter) -> dict:
+    draft_revision = _draft_revision(newsletter)
+    return {
+        "id": newsletter.id,
+        "name": newsletter.name,
+        "slug": newsletter.slug,
+        "description": newsletter.description,
+        "prompt": newsletter.prompt,
+        "draft_subject": draft_revision.subject if draft_revision else newsletter.draft_subject,
+        "draft_preheader": draft_revision.preheader
+        if draft_revision
+        else newsletter.draft_preheader,
+        "draft_body_text": draft_revision.body_text
+        if draft_revision
+        else newsletter.draft_body_text,
+        "provider_id": newsletter.provider_id,
+        "provider_name": newsletter.provider_name,
+        "model_name": newsletter.model_name,
+        "template_key": newsletter.template_key,
+        "api_key_id": newsletter.api_key_id,
+        "resend_api_key_id": newsletter.resend_api_key_id,
+        "approved_revision_id": newsletter.approved_revision.id
+        if newsletter.approved_revision
+        else None,
+        "draft_head_revision_id": draft_revision.id if draft_revision else None,
+        "audience_name": newsletter.audience_name,
+        "delivery_topic": newsletter.delivery_topic,
+        "timezone": newsletter.timezone,
+        "schedule_cron": newsletter.schedule_cron,
+        "schedule_enabled": newsletter.schedule_enabled,
+        "status": newsletter.status,
+        "notes": newsletter.notes,
+        "created_at": newsletter.created_at,
+        "updated_at": newsletter.updated_at,
+    }
+
+
 def ensure_unique_slug(db: DbSession, *, desired_slug: str, current_id: int | None = None) -> str:
     slug = desired_slug
     suffix = 1
@@ -181,7 +292,7 @@ def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
         and recipient.status == "subscribed"
     ]
     return NewsletterDetail(
-        **NewsletterSummary.model_validate(newsletter).model_dump(),
+        **_summary_payload(newsletter),
         recipients=[
             {
                 "id": recipient.id,
@@ -227,7 +338,9 @@ def validate_schedule_configuration(newsletter: Newsletter) -> None:
 
 def create_newsletter_run(
     newsletter: Newsletter,
+    revision: DraftRevision,
     *,
+    run_type: str,
     trigger_mode: str,
     run_status: str,
     result_mode: str | None = None,
@@ -237,15 +350,17 @@ def create_newsletter_run(
     snapshot_recipient_emails = recipient_emails or get_active_recipient_emails(newsletter)
     return NewsletterRun(
         newsletter_id=newsletter.id,
+        revision_id=revision.id,
+        run_type=run_type,
         trigger_mode=trigger_mode,
         run_status=run_status,
         provider_name=newsletter.provider_name,
         model_name=newsletter.model_name,
         template_key=newsletter.template_key,
         recipient_count=len(snapshot_recipient_emails),
-        snapshot_subject=newsletter.draft_subject,
-        snapshot_preheader=newsletter.draft_preheader,
-        snapshot_body_text=newsletter.draft_body_text,
+        snapshot_subject=revision.subject,
+        snapshot_preheader=revision.preheader,
+        snapshot_body_text=revision.body_text,
         snapshot_recipient_emails=json.dumps(snapshot_recipient_emails),
         delivery_outcomes="[]",
         result_mode=result_mode,
@@ -282,9 +397,16 @@ def execute_newsletter_send(
     db: DbSession,
     newsletter: Newsletter,
     *,
+    revision: DraftRevision | None = None,
     trigger_mode: str,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
     validate_send_allowed(newsletter)
+    resolved_revision = revision or _approved_revision(newsletter)
+    if resolved_revision is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot send newsletter without an approved revision.",
+        )
 
     active_recipients = get_active_recipients(newsletter)
     active_recipient_emails = [recipient.email for recipient in active_recipients]
@@ -296,15 +418,17 @@ def execute_newsletter_send(
 
     run = NewsletterRun(
         newsletter_id=newsletter.id,
+        revision_id=resolved_revision.id,
+        run_type="delivery",
         trigger_mode=trigger_mode,
         run_status="pending",
         provider_name=newsletter.provider_name,
         model_name=newsletter.model_name,
         template_key=newsletter.template_key,
         recipient_count=len(active_recipient_emails),
-        snapshot_subject=newsletter.draft_subject,
-        snapshot_preheader=newsletter.draft_preheader,
-        snapshot_body_text=newsletter.draft_body_text,
+        snapshot_subject=resolved_revision.subject,
+        snapshot_preheader=resolved_revision.preheader,
+        snapshot_body_text=resolved_revision.body_text,
         snapshot_recipient_emails=json.dumps(active_recipient_emails),
         snapshot_prompt=newsletter.prompt,
         snapshot_newsletter_name=newsletter.name,
@@ -318,15 +442,17 @@ def execute_newsletter_send(
     db.flush()
 
     try:
-        from app.email_templates import normalize_draft_content
-
-        _subject, _preheader, _body = normalize_draft_content(newsletter)
-        if not _body.strip():
+        if not resolved_revision.body_text.strip():
             raise ValueError(
                 "Newsletter has no content to send. "
                 "Add body text or generate a draft before sending."
             )
-        rendered = render_newsletter(newsletter)
+        rendered = render_newsletter_content(
+            newsletter,
+            subject=resolved_revision.subject,
+            preheader=resolved_revision.preheader,
+            body=resolved_revision.body_text,
+        )
         run.rendered_subject = rendered.subject
         run.rendered_preheader = rendered.preheader
         run.rendered_html = rendered.html
@@ -415,7 +541,12 @@ def list_newsletters(request: Request, db: DbSession) -> list[NewsletterSummary]
         .where(Newsletter.deleted_at.is_(None))
         .order_by(Newsletter.updated_at.desc())
     ).all()
-    return [NewsletterSummary.model_validate(newsletter) for newsletter in newsletters]
+    for newsletter in newsletters:
+        _ensure_revision_projection(newsletter)
+    db.flush()
+    return [
+        NewsletterSummary.model_validate(_summary_payload(newsletter)) for newsletter in newsletters
+    ]
 
 
 @newsletters_router.post("", response_model=NewsletterDetail, status_code=status.HTTP_201_CREATED)
@@ -448,6 +579,17 @@ def create_newsletter(
         status=payload.status,
         notes=payload.notes,
     )
+    initial_revision = _create_revision(
+        newsletter,
+        state="approved",
+        origin="imported",
+        subject=payload.draft_subject,
+        preheader=payload.draft_preheader,
+        body_text=payload.draft_body_text,
+        prompt_snapshot=payload.prompt,
+    )
+    newsletter.approved_revision = initial_revision
+    newsletter.draft_head_revision = initial_revision
     upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
 
     try:
@@ -658,6 +800,8 @@ def _validate_newsletter_entities(
 def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> NewsletterDetail:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
+    _ensure_revision_projection(newsletter)
+    db.flush()
     return serialize_newsletter_detail(newsletter)
 
 
@@ -669,7 +813,17 @@ def preview_newsletter(
 ) -> NewsletterPreviewResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    rendered = render_newsletter(newsletter)
+    revision = _draft_revision(newsletter)
+    if revision is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No draft revision found."
+        )
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
     return NewsletterPreviewResponse(
         subject=rendered.subject,
         preheader=rendered.preheader,
@@ -688,10 +842,22 @@ def test_send_newsletter(
 ) -> NewsletterTestSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    rendered = render_newsletter(newsletter)
+    revision = _draft_revision(newsletter)
+    if revision is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No draft revision found."
+        )
+    rendered = render_newsletter_content(
+        newsletter,
+        subject=revision.subject,
+        preheader=revision.preheader,
+        body=revision.body_text,
+    )
 
     run = create_newsletter_run(
         newsletter,
+        revision,
+        run_type="test_send",
         trigger_mode="test-send",
         run_status="sending",
         recipient_emails=[payload.to_email],
@@ -760,19 +926,30 @@ def generate_draft(
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     generated = generate_newsletter_draft(newsletter)
-    newsletter.draft_subject = generated.subject
-    newsletter.draft_preheader = generated.preheader
-    newsletter.draft_body_text = generated.body_text
+    revision = _create_revision(
+        newsletter,
+        state="candidate",
+        origin="llm" if generated.status in {"generated", "fallback"} else "manual",
+        subject=generated.subject,
+        preheader=generated.preheader,
+        body_text=generated.body_text,
+        prompt_snapshot=newsletter.prompt,
+    )
+    newsletter.draft_head_revision = revision
     run = create_newsletter_run(
         newsletter,
+        revision,
+        run_type="generation",
         trigger_mode="manual-generate",
         run_status=generated.status,
         result_mode=generated.mode,
         result_message=generated.message,
     )
     db.add(newsletter)
+    db.add(revision)
     db.add(run)
     db.flush()
+    revision.generation_run_id = run.id
     add_run_event(
         db,
         run,
@@ -793,6 +970,7 @@ def generate_draft(
         status=generated.status,
         mode=generated.mode,
         message=generated.message,
+        revision_id=revision.id,
         newsletter=serialize_newsletter_detail(newsletter),
         run=NewsletterRunSummary.model_validate(run),
     )
@@ -862,7 +1040,12 @@ def send_newsletter(
 ) -> NewsletterSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    response, _run = execute_newsletter_send(db, newsletter, trigger_mode="manual-send")
+    response, _run = execute_newsletter_send(
+        db,
+        newsletter,
+        revision=_approved_revision(newsletter),
+        trigger_mode="manual-send",
+    )
     return response
 
 
@@ -885,9 +1068,6 @@ def update_newsletter(
     )
     newsletter.description = payload.description
     newsletter.prompt = payload.prompt
-    newsletter.draft_subject = payload.draft_subject
-    newsletter.draft_preheader = payload.draft_preheader
-    newsletter.draft_body_text = payload.draft_body_text
     newsletter.provider_id = payload.provider_id
     newsletter.provider_name = payload.provider_name
     newsletter.model_name = payload.model_name
@@ -901,6 +1081,42 @@ def update_newsletter(
     newsletter.schedule_enabled = payload.schedule_enabled
     newsletter.status = payload.status
     newsletter.notes = payload.notes
+
+    draft_revision = _draft_revision(newsletter)
+    approved_revision = _approved_revision(newsletter)
+    if draft_revision is None:
+        draft_revision = _create_revision(
+            newsletter,
+            state="candidate",
+            origin="manual",
+            subject=payload.draft_subject,
+            preheader=payload.draft_preheader,
+            body_text=payload.draft_body_text,
+            prompt_snapshot=payload.prompt,
+        )
+        newsletter.draft_head_revision = draft_revision
+    elif draft_revision.id == (approved_revision.id if approved_revision else None) and (
+        draft_revision.subject != payload.draft_subject
+        or draft_revision.preheader != payload.draft_preheader
+        or draft_revision.body_text != payload.draft_body_text
+    ):
+        draft_revision = _create_revision(
+            newsletter,
+            state="candidate",
+            origin="manual",
+            subject=payload.draft_subject,
+            preheader=payload.draft_preheader,
+            body_text=payload.draft_body_text,
+            prompt_snapshot=payload.prompt,
+        )
+        newsletter.draft_head_revision = draft_revision
+    else:
+        draft_revision.subject = payload.draft_subject
+        draft_revision.preheader = payload.draft_preheader
+        draft_revision.body_text = payload.draft_body_text
+        draft_revision.prompt_snapshot = payload.prompt
+        draft_revision.state = "candidate"
+
     upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
 
     try:

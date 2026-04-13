@@ -114,6 +114,10 @@ def test_newsletter_crud_flow(client: TestClient):
     assert created_newsletter["status"] == "active"
     assert len(created_newsletter["recipients"]) == 3
     assert created_newsletter["draft_subject"] == "Daily Brief: AI infrastructure headlines"
+    assert created_newsletter["approved_revision_id"] is not None
+    assert (
+        created_newsletter["draft_head_revision_id"] == created_newsletter["approved_revision_id"]
+    )
 
     list_response = client.get("/api/newsletters")
     assert list_response.status_code == 200
@@ -199,7 +203,16 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     assert "message" in result
     assert "newsletter" in result
     assert "run" in result
+    assert result["revision_id"] is not None
     assert result["newsletter"]["id"] == newsletter_id
+    assert result["newsletter"]["draft_head_revision_id"] == result["revision_id"]
+    assert result["newsletter"]["approved_revision_id"] != result["revision_id"]
+
+    get_response = client.get(f"/api/newsletters/{newsletter_id}")
+    assert get_response.status_code == 200
+    fetched_newsletter = get_response.json()
+    assert fetched_newsletter["draft_head_revision_id"] == result["revision_id"]
+    assert fetched_newsletter["approved_revision_id"] != result["revision_id"]
 
 
 def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
