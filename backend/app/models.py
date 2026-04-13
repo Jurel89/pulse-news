@@ -256,6 +256,9 @@ class DraftRevision(TimestampMixin, Base):
     body_text: Mapped[str] = mapped_column(Text(), nullable=False, default="")
     prompt_snapshot: Mapped[str | None] = mapped_column(Text(), nullable=True)
     source_bundle_snapshot_json: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    provider_snapshot_json: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    token_usage_json: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    raw_response_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     generation_run_id: Mapped[int | None] = mapped_column(
         ForeignKey("newsletter_runs.id", ondelete="SET NULL"), nullable=True, index=True
     )

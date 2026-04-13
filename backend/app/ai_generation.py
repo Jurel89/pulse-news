@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -25,6 +26,9 @@ class GeneratedDraft:
     subject: str
     preheader: str
     body_text: str
+    provider_snapshot_json: str | None = None
+    token_usage_json: str | None = None
+    raw_response_hash: str | None = None
 
 
 SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter", "zai", "kimi"}
@@ -327,6 +331,7 @@ def _error_generate(newsletter: Newsletter, message: str) -> GeneratedDraft:
         subject=newsletter.draft_subject or newsletter.name,
         preheader=newsletter.draft_preheader or newsletter.description or "",
         body_text=newsletter.draft_body_text or "",
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
     )
 
 
@@ -353,6 +358,7 @@ def _fallback_generate(newsletter: Newsletter, *, reason: str) -> GeneratedDraft
         subject=subject,
         preheader=preheader,
         body_text=body_text,
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
     )
 
 
@@ -380,6 +386,7 @@ def _parse_structured_generation_output(
             subject=subject,
             preheader=preheader,
             body_text="",
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
         )
 
     validation_error = _validate_generated_content(
@@ -393,6 +400,7 @@ def _parse_structured_generation_output(
             subject=subject,
             preheader=preheader,
             body_text=body_text,
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
         )
 
     return GeneratedDraft(
@@ -402,6 +410,7 @@ def _parse_structured_generation_output(
         subject=subject,
         preheader=preheader,
         body_text=body_text,
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
     )
 
 
@@ -505,6 +514,8 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
             **completion_kwargs,
         )
         content = response.choices[0].message.content or ""
+        token_usage_json = _serialize_token_usage(getattr(response, "usage", None))
+        raw_response_hash = hashlib.sha256(content.encode()).hexdigest()
     except ValueError as exc:
         return _error_generate(newsletter, str(exc))
     except Exception as exc:
@@ -517,6 +528,8 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
 
     structured_result = _parse_structured_generation_output(newsletter, content=content)
     if structured_result is not None:
+        structured_result.token_usage_json = token_usage_json
+        structured_result.raw_response_hash = raw_response_hash
         return structured_result
 
     return GeneratedDraft(
@@ -526,6 +539,9 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         subject=newsletter.name,
         preheader=newsletter.description or "",
         body_text=content[:500] if content else "",
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
+        token_usage_json=token_usage_json,
+        raw_response_hash=raw_response_hash,
     )
 
 
@@ -543,6 +559,29 @@ def _validate_generated_content(*, subject: str, preheader: str, body_text: str)
     if len(re.findall(r"^#+\s", body_text, flags=re.MULTILINE)) == 0 and "- " not in body_text:
         return "Generated output is missing required section structure."
     return None
+
+
+def _provider_snapshot_json(newsletter: Newsletter) -> str:
+    return json.dumps(
+        {
+            "provider_name": _normalized_provider_name(newsletter),
+            "model_name": _provider_model_name(newsletter),
+        }
+    )
+
+
+def _serialize_token_usage(usage: Any) -> str | None:
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return json.dumps(usage)
+
+    data = {
+        key: value
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+        if isinstance((value := getattr(usage, key, None)), (int, float))
+    }
+    return json.dumps(data) if data else None
 
 
 def _strip_model_prefix(raw_model: str, provider_type: str) -> str:

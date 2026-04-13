@@ -149,6 +149,9 @@ def _create_revision(
     body_text: str,
     prompt_snapshot: str | None,
     source_bundle_snapshot_json: str | None = None,
+    provider_snapshot_json: str | None = None,
+    token_usage_json: str | None = None,
+    raw_response_hash: str | None = None,
     generation_run_id: int | None = None,
 ) -> DraftRevision:
     revision = DraftRevision(
@@ -162,6 +165,9 @@ def _create_revision(
         body_text=body_text,
         prompt_snapshot=prompt_snapshot,
         source_bundle_snapshot_json=source_bundle_snapshot_json,
+        provider_snapshot_json=provider_snapshot_json,
+        token_usage_json=token_usage_json,
+        raw_response_hash=raw_response_hash,
         generation_run_id=generation_run_id,
     )
     return revision
@@ -1182,6 +1188,9 @@ def generate_draft(
         body_text=generated.body_text,
         prompt_snapshot=newsletter.prompt,
         source_bundle_snapshot_json=source_bundle_snapshot_json,
+        provider_snapshot_json=generated.provider_snapshot_json,
+        token_usage_json=generated.token_usage_json,
+        raw_response_hash=generated.raw_response_hash,
     )
     newsletter.draft_head_revision = revision
     db.add(revision)
