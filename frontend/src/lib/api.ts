@@ -54,6 +54,7 @@ export type NewsletterSendResult = {
     newsletter_id: number;
     revision_id: number | null;
     run_type: string | null;
+    snapshot_newsletter_name: string | null;
     trigger_mode: string;
     run_status: string;
     provider_name: string;
@@ -67,6 +68,8 @@ export type NewsletterSendResult = {
   delivery_outcomes: string;
   result_mode: string | null;
   result_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
   };

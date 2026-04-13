@@ -9,6 +9,7 @@ type RunSummary = {
   newsletter_id: number;
   revision_id: number | null;
   run_type: string | null;
+  snapshot_newsletter_name: string | null;
   trigger_mode: string;
   run_status: string;
   provider_name: string;
@@ -22,6 +23,8 @@ type RunSummary = {
   delivery_outcomes: string;
   result_mode: string | null;
   result_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -48,6 +51,7 @@ type RunDetail = {
 
 type RunDashboardPageProps = {
   newsletters: NewsletterSummary[];
+  initialRunId?: number | null;
 };
 
 function getStatusBadgeClass(status: string): string {
@@ -86,7 +90,7 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
+export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashboardPageProps) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   const [runDetails, setRunDetails] = useState<Map<number, RunDetail>>(new Map());
@@ -125,7 +129,7 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
     void loadRuns();
   }, [loadRuns]);
 
-  async function handleToggleRun(runId: number) {
+  const handleToggleRun = useCallback(async (runId: number) => {
     // If already expanded, collapse it
     if (expandedRunId === runId) {
       setExpandedRunId(null);
@@ -144,7 +148,17 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
         setError(requestError instanceof Error ? requestError.message : "Unable to load run detail.");
       }
     }
-  }
+  }, [expandedRunId, runDetails]);
+
+  useEffect(() => {
+    if (initialRunId == null) {
+      return;
+    }
+    const matchingRun = runs.find((run) => run.id === initialRunId);
+    if (matchingRun) {
+      void handleToggleRun(initialRunId);
+    }
+  }, [handleToggleRun, initialRunId, runs]);
 
   async function handleReconcile(runId: number) {
     try {
@@ -340,11 +354,13 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
                   <th>Run ID</th>
                   <th>Revision</th>
                   <th>Type</th>
+                  <th>Job</th>
                   <th>Subject</th>
                   <th>Status</th>
                   <th>Trigger</th>
                   <th>Recipients</th>
-                  <th>Date</th>
+                  <th>Started</th>
+                  <th>Completed</th>
                   <th className="actions-column">Actions</th>
                 </tr>
               </thead>
@@ -369,6 +385,10 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
                         {run.revision_id ? `#${run.revision_id}` : "—"}
                       </td>
                       <td data-label="Type">{formatRunType(run.run_type)}</td>
+                      <td className="name-cell" data-label="Job">
+                        <div className="cell-primary">{run.snapshot_newsletter_name ?? `Newsletter #${run.newsletter_id}`}</div>
+                        <div className="cell-secondary">#{run.newsletter_id}</div>
+                      </td>
                       <td className="name-cell" data-label="Subject">
                         <div className="cell-primary">{run.snapshot_subject}</div>
                         <div className="cell-secondary">{run.provider_name} / {run.model_name}</div>
@@ -380,8 +400,11 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
                       </td>
                       <td data-label="Trigger">{formatTriggerMode(run.trigger_mode)}</td>
                       <td data-label="Recipients">{run.recipient_count.toLocaleString()}</td>
-                      <td className="cell-secondary" data-label="Date">
-                        {formatDate(run.created_at)}
+                      <td className="cell-secondary" data-label="Started">
+                        {formatDate(run.started_at ?? run.created_at)}
+                      </td>
+                      <td className="cell-secondary" data-label="Completed">
+                        {run.completed_at ? formatDate(run.completed_at) : "—"}
                       </td>
                       <td className="actions-cell">
                         <ActionDropdown actions={getRunActions(run)} />
@@ -389,7 +412,7 @@ export function RunDashboardPage({ newsletters }: RunDashboardPageProps) {
                     </tr>
                     {expandedRunId === run.id ? (
                       <tr className="detail-row">
-                          <td colSpan={9} className="detail-cell">
+                          <td colSpan={11} className="detail-cell">
                           {expandedDetail ? (
                             <div className="run-detail-panel">
                               <div className="run-detail-header">

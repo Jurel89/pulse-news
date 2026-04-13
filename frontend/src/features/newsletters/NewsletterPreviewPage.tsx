@@ -12,7 +12,7 @@ import type { Newsletter } from "./newsletter-types";
 type NewsletterPreviewPageProps = {
   newsletter: Newsletter;
   onBack: () => void;
-  onOpenRuns?: () => void;
+  onOpenRuns?: (runId: number) => void;
 };
 
 export function NewsletterPreviewPage({ newsletter, onBack, onOpenRuns }: NewsletterPreviewPageProps) {
@@ -249,7 +249,7 @@ export function NewsletterPreviewPage({ newsletter, onBack, onOpenRuns }: Newsle
                         <button
                           className="secondary-button"
                           disabled={busy}
-                          onClick={onOpenRuns}
+                          onClick={() => onOpenRuns(revision.generation_run_id!)}
                           type="button"
                         >
                           Open run #{revision.generation_run_id}

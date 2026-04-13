@@ -42,6 +42,7 @@ export default function App() {
   const [showProviderEditor, setShowProviderEditor] = useState(false);
   const [editingApiKey, setEditingApiKey] = useState<ApiKeyDetail | null>(null);
   const [showApiKeyEditor, setShowApiKeyEditor] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 
   const refreshSession = useCallback(async () => {
     try {
@@ -156,6 +157,7 @@ export default function App() {
     setShowProviderEditor(false);
     setEditingApiKey(null);
     setShowApiKeyEditor(false);
+    setSelectedRunId(null);
   }
 
   async function handleChangePassword(currentPassword: string, newPassword: string) {
@@ -547,7 +549,8 @@ export default function App() {
             <NewsletterPreviewPage
               newsletter={previewingNewsletter}
               onBack={() => setPreviewingNewsletter(null)}
-              onOpenRuns={() => {
+              onOpenRuns={(runId) => {
+                setSelectedRunId(runId);
                 setPreviewingNewsletter(null);
                 setActiveView("dashboard");
               }}
@@ -601,7 +604,7 @@ export default function App() {
         );
 
       default:
-        return <RunDashboardPage newsletters={newsletters} />;
+        return <RunDashboardPage newsletters={newsletters} initialRunId={selectedRunId} />;
     }
   }
 

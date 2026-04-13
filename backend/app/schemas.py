@@ -588,6 +588,9 @@ class NewsletterRunSummary(BaseModel):
     newsletter_id: int
     revision_id: int | None = None
     run_type: str | None = None
+    snapshot_newsletter_name: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     trigger_mode: str
     run_status: str
     provider_name: str
