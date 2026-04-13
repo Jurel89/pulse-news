@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import StrEnum
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,6 +11,11 @@ from app.database import Base
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+class OperationMode(StrEnum):
+    LIVE = "live"
+    SIMULATED = "simulated"
 
 
 class TimestampMixin:
@@ -41,6 +47,18 @@ class SystemSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     initialized: Mapped[bool] = mapped_column(default=False, nullable=False)
+    ai_generation_mode: Mapped[str] = mapped_column(
+        String(32),
+        default=OperationMode.LIVE.value,
+        server_default=OperationMode.LIVE.value,
+        nullable=False,
+    )
+    email_delivery_mode: Mapped[str] = mapped_column(
+        String(32),
+        default=OperationMode.LIVE.value,
+        server_default=OperationMode.LIVE.value,
+        nullable=False,
+    )
     operator_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     bootstrap_disabled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
@@ -219,6 +237,7 @@ class Newsletter(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     revisions: Mapped[list[DraftRevision]] = relationship(
+        "DraftRevision",
         back_populates="newsletter",
         cascade="all, delete-orphan",
         foreign_keys="DraftRevision.newsletter_id",
@@ -267,6 +286,7 @@ class DraftRevision(TimestampMixin, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     newsletter: Mapped[Newsletter] = relationship(
+        "Newsletter",
         back_populates="revisions",
         foreign_keys=[newsletter_id],
     )
