@@ -241,8 +241,10 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
 
         # Add User-Agent header for Kimi Code API compatibility
         if _normalized_provider_name(newsletter) == "kimi":
+            existing_headers = completion_kwargs.get("extra_headers", {})
             completion_kwargs["extra_headers"] = {
-                "User-Agent": os.environ.get("LITELLM_USER_AGENT", "claude-code/0.1.0")
+                **existing_headers,
+                "User-Agent": os.environ.get("LITELLM_USER_AGENT", "claude-code/0.1.0"),
             }
 
         response = completion(

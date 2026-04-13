@@ -198,7 +198,7 @@ def _build_email_footer(accent: str = "#5c7a8a") -> str:
         '<td style="padding:8px 0;">'
         f'<p style="margin:0;font-size:12px;color:{accent};opacity:0.7;line-height:1.5;">'
         f'Sent from <a href="{PULSE_NEWS_GITHUB_URL}" '
-        f'style="color:{accent};text-decoration:underline;font-weight:600;">Pulse News</a>'
+        f'style="color:{accent};text-decoration:underline;font-weight:600;">Pulse-News</a>'
         " &mdash; self-hosted newsletter operations</p>"
         "</td>"
         "</tr>"
@@ -217,6 +217,10 @@ def render_custom_template(
     result = result.replace("{{content}}", body_html)
     result = result.replace("{{body_html}}", body_html)
     result = result.replace("{{newsletter_name}}", escape(newsletter_name))
+    footer = _build_email_footer()
+    result = result.replace("{{footer}}", footer)
+    if "{{footer}}" not in html_template and "</body>" in result:
+        result = result.replace("</body>", f"{footer}\n</body>")
     return result
 
 
@@ -246,10 +250,13 @@ def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
             f"Template '{template_key}' was not found and no built-in template matches."
         )
 
+    plain_text_body = render_plain_text(subject, preheader, body)
+    plain_text_body += f"\n\n---\nSent from Pulse-News — {PULSE_NEWS_GITHUB_URL}"
+
     return RenderedNewsletter(
         subject=subject,
         preheader=preheader,
         html=html,
-        plain_text=render_plain_text(subject, preheader, body),
+        plain_text=plain_text_body,
         template_key=template_key,
     )
