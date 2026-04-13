@@ -396,6 +396,7 @@ def _resend_headers(api_key: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "User-Agent": "Pulse-News/1.0",
     }
 
 
@@ -511,32 +512,52 @@ def _send_single_recipient_via_resend(
     if attempt_key:
         headers["Idempotency-Key"] = f"{attempt_key}-{target.email}"
 
-    send_request = request.Request(
-        resend_api_url,
-        data=payload,
-        headers=headers,
-        method="POST",
-    )
+    max_attempts = 3
+    for attempt_number in range(1, max_attempts + 1):
+        send_request = request.Request(
+            resend_api_url,
+            data=payload,
+            headers=headers,
+            method="POST",
+        )
 
-    try:
-        with request.urlopen(send_request, timeout=15) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
-        return RecipientSendOutcome(
-            email=target.email,
-            status="sent",
-            provider_id=response_payload.get("id"),
-            detail="Sent through Resend",
-        )
-    except error.HTTPError as exc:
-        return _failed_outcome(
-            email=target.email,
-            detail=f"Resend HTTP error: {_decode_http_error_detail(exc)}",
-        )
-    except error.URLError as exc:
-        return _failed_outcome(
-            email=target.email,
-            detail=f"Resend connection error: {exc.reason}",
-        )
+        try:
+            with request.urlopen(send_request, timeout=15) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+            return RecipientSendOutcome(
+                email=target.email,
+                status="sent",
+                provider_id=response_payload.get("id"),
+                detail="Sent through Resend",
+            )
+        except error.HTTPError as exc:
+            detail = _decode_http_error_detail(exc)
+            if exc.code in (429, 502, 503, 504) and attempt_number < max_attempts:
+                backoff = min(attempt_number * 2, 10)
+                logger.info(
+                    "Resend retryable error (%d) for %s, retrying in %ds (attempt %d/%d)",
+                    exc.code,
+                    target.email,
+                    backoff,
+                    attempt_number,
+                    max_attempts,
+                )
+                time.sleep(backoff)
+                continue
+            return _failed_outcome(
+                email=target.email,
+                detail=f"Resend HTTP error: {detail}",
+            )
+        except error.URLError as exc:
+            return _failed_outcome(
+                email=target.email,
+                detail=f"Resend connection error: {exc.reason}",
+            )
+
+    return _failed_outcome(
+        email=target.email,
+        detail="Resend delivery exhausted all retry attempts.",
+    )
 
 
 def _batch_headers(
@@ -660,8 +681,18 @@ def _send_recipient_chunk_via_resend_batch(
             )
         except error.HTTPError as exc:
             detail = _decode_http_error_detail(exc)
-            if exc.code == 429 and attempt_number < RESEND_BATCH_MAX_ATTEMPTS:
-                time.sleep(attempt_number)
+            if exc.code in (429, 502, 503, 504) and attempt_number < RESEND_BATCH_MAX_ATTEMPTS:
+                backoff = min(attempt_number * 2, 10)
+                logger.info(
+                    "Resend batch retryable error (%d) for chunk %d, "
+                    "retrying in %ds (attempt %d/%d)",
+                    exc.code,
+                    chunk_index,
+                    backoff,
+                    attempt_number,
+                    RESEND_BATCH_MAX_ATTEMPTS,
+                )
+                time.sleep(backoff)
                 continue
             return [
                 _failed_outcome(
@@ -940,7 +971,7 @@ def retrieve_email_status(
 
     retrieve_request = request.Request(
         f"{settings.resend_api_base_url}/emails/{provider_id}",
-        headers={"Authorization": f"Bearer {api_key}"},
+        headers=_resend_headers(api_key),
         method="GET",
     )
 

@@ -49,7 +49,10 @@ SCHEDULE_ALLOWED_STATUSES = {"active"}
 
 
 def mask_api_key(key_value: str) -> str:
-    decrypted_key_value = decrypt_secret(key_value)
+    try:
+        decrypted_key_value = decrypt_secret(key_value)
+    except Exception:
+        return "****"
     suffix = decrypted_key_value[-4:] if decrypted_key_value else ""
     return f"****{suffix}" if suffix else "****"
 
@@ -511,24 +514,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
 
     models: dict[str, list[str]] = {}
     for provider in providers:
-        provider_models: list[str] = []
-        if provider.default_model:
-            provider_models.append(provider.default_model)
-
-        if provider.configuration:
-            config = provider.configuration
-            if isinstance(config, str):
-                try:
-                    config = json.loads(config)
-                except json.JSONDecodeError:
-                    config = None
-            if isinstance(config, dict):
-                config_models = config.get("models", [])
-                if isinstance(config_models, list):
-                    for model in config_models:
-                        if isinstance(model, str) and model not in provider_models:
-                            provider_models.append(model)
-
+        provider_models = get_provider_models(provider, db=db)
         if provider_models:
             models[str(provider.id)] = provider_models
 
@@ -609,14 +595,6 @@ def _validate_newsletter_entities(
                 ),
             )
 
-        provider_models = get_provider_models(provider)
-        if provider_models and payload.model_name not in provider_models:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"Model '{payload.model_name}' is not enabled for provider '{provider.name}'."
-                ),
-            )
     elif payload.provider_name:
         provider = db.scalar(
             select(Provider).where(
@@ -641,15 +619,6 @@ def _validate_newsletter_entities(
                     f"Provider '{provider.name}' has no active API key configured. "
                     f"Create an API key for provider type "
                     f"'{provider.provider_type}' first."
-                ),
-            )
-
-        provider_models = get_provider_models(provider)
-        if provider_models and payload.model_name not in provider_models:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"Model '{payload.model_name}' is not enabled for provider '{provider.name}'."
                 ),
             )
 

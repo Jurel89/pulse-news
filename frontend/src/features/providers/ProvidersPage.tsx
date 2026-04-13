@@ -224,6 +224,10 @@ export function ProviderEditor({
   const [presetsError, setPresetsError] = useState<string | null>(null);
   const [apiKeys, setApiKeys] = useState<Array<{ id: number; name: string; provider_type: string; is_active: boolean }>>([]);
   const [apiKeysLoading, setApiKeysLoading] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -271,13 +275,13 @@ export function ProviderEditor({
   const hasMatchingApiKey = matchingApiKeys.length > 0;
 
   const availableModels = useMemo(() => {
-    const models = selectedPreset?.recommended_models ?? [];
+    const recommended = selectedPreset?.recommended_models ?? [];
+    const merged = Array.from(new Set([...recommended, ...discoveredModels]));
     if (!form.default_model) {
-      return models;
+      return merged;
     }
-
-    return Array.from(new Set([form.default_model, ...models]));
-  }, [form.default_model, selectedPreset]);
+    return Array.from(new Set([form.default_model, ...merged]));
+  }, [form.default_model, selectedPreset, discoveredModels]);
 
   const title = useMemo(
     () => (initialProvider ? `Edit ${initialProvider.name}` : "Create provider"),
@@ -325,6 +329,59 @@ export function ProviderEditor({
       setTestLoading(false);
     }
   }
+
+  async function handleDiscover() {
+    if (!initialProvider) return;
+    setDiscoverLoading(true);
+    setDiscoverError(null);
+    setVerificationMessage(null);
+    setDiscoveredModels([]);
+    try {
+      const result = await api.providers.getModels(initialProvider.id);
+      setDiscoveredModels(result.models);
+      if (result.verification_message) {
+        setVerificationMessage(result.verification_message);
+      }
+    } catch (error) {
+      setDiscoverError(error instanceof Error ? error.message : "Failed to discover models");
+    } finally {
+      setDiscoverLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (initialProvider || !selectedPreset?.supports_discovery) {
+      setDiscoveredModels([]);
+      setVerificationMessage(null);
+      return;
+    }
+
+    let isActive = true;
+    setDiscoverLoading(true);
+    setDiscoverError(null);
+    setVerificationMessage(null);
+    setDiscoveredModels([]);
+
+    api.providers.listPresetModels(selectedPreset.key)
+      .then((result) => {
+        if (!isActive) return;
+        setDiscoveredModels(result.models);
+        if (result.verification_message) {
+          setVerificationMessage(result.verification_message);
+        }
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        setDiscoverError(error instanceof Error ? error.message : "Failed to discover models");
+      })
+      .finally(() => {
+        if (isActive) setDiscoverLoading(false);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [selectedPreset, initialProvider]);
 
   return (
     <section className="editor-shell">
@@ -429,6 +486,14 @@ export function ProviderEditor({
               </option>
             ))}
           </datalist>
+          {discoverLoading ? (
+            <small>Loading models...</small>
+          ) : availableModels.length > 0 ? (
+            <small>{availableModels.length} models available</small>
+          ) : null}
+          {discoverError ? (
+            <small className="form-error">{discoverError}</small>
+          ) : null}
         </label>
 
         <label className="checkbox-row">
@@ -495,6 +560,28 @@ export function ProviderEditor({
                     </div>
                   </dl>
                 </div>
+              ) : null}
+            </div>
+
+            <hr className="form-divider" />
+            <div className="provider-test-section">
+              <h3>Discover Models</h3>
+              <button
+                className="secondary-button"
+                onClick={handleDiscover}
+                disabled={discoverLoading}
+                type="button"
+              >
+                {discoverLoading ? "Discovering..." : "Discover Models"}
+              </button>
+              {discoveredModels.length > 0 ? (
+                <small>{discoveredModels.length} models available</small>
+              ) : null}
+              {verificationMessage ? (
+                <small className="form-error">Verification: {verificationMessage}</small>
+              ) : null}
+              {discoverError ? (
+                <small className="form-error">{discoverError}</small>
               ) : null}
             </div>
           </>

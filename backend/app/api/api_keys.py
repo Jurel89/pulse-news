@@ -58,12 +58,15 @@ def mask_api_key(key_value: str) -> str:
 
 
 def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
-    decrypted_key_value = decrypt_secret(api_key.key_value)
+    try:
+        decrypted_key_value = decrypt_secret(api_key.key_value)
+    except Exception:
+        decrypted_key_value = None
     return ApiKeyDetail(
         id=api_key.id,
         name=api_key.name,
         provider_type=api_key.provider_type,
-        masked_key=mask_api_key(decrypted_key_value),
+        masked_key=mask_api_key(decrypted_key_value) if decrypted_key_value else "****",
         from_email=api_key.from_email,
         is_active=api_key.is_active,
         last_used_at=api_key.last_used_at,
@@ -295,7 +298,7 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
             masked_key=mask_api_key(decrypted_key_value),
         )
 
-    if not has_enabled_provider:
+    if not has_enabled_provider and api_key.provider_type != "resend":
         return ApiKeyTestResponse(
             status="warning",
             message="API key is active, but there is no enabled provider configured for this type.",
@@ -303,14 +306,24 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
             masked_key=mask_api_key(decrypted_key_value),
         )
 
-    if api_key.provider_type == "resend" and not resend_sender:
+    if api_key.provider_type == "resend":
+        if not resend_sender:
+            return ApiKeyTestResponse(
+                status="warning",
+                message=(
+                    "Resend API key is active, but no sender email is configured. "
+                    "Add a Sender Email to this API key or set PULSE_NEWS_RESEND_FROM_EMAIL. "
+                    "Newsletter sends will fall back to local preview until a sender email "
+                    "is configured."
+                ),
+                provider_type=api_key.provider_type,
+                masked_key=mask_api_key(decrypted_key_value),
+            )
         return ApiKeyTestResponse(
-            status="warning",
+            status="ok",
             message=(
-                "Resend API key is active and matches an enabled provider, but "
-                "no sender email is configured. Add a Sender Email to this API key "
-                "or set PULSE_NEWS_RESEND_FROM_EMAIL. Newsletter sends will "
-                "fall back to local preview until a sender email is configured."
+                f"Resend API key is active with sender '{resend_sender}'. "
+                "Ready to send newsletter emails."
             ),
             provider_type=api_key.provider_type,
             masked_key=mask_api_key(decrypted_key_value),
@@ -318,14 +331,7 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
 
     return ApiKeyTestResponse(
         status="ok",
-        message=(
-            "API key is active and matches an enabled provider configuration."
-            if api_key.provider_type != "resend"
-            else (
-                "Resend API key is active, matches an enabled provider configuration, "
-                f"and will use sender '{resend_sender}'."
-            )
-        ),
+        message="API key is active and matches an enabled provider configuration.",
         provider_type=api_key.provider_type,
         masked_key=mask_api_key(decrypted_key_value),
     )

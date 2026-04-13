@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
 from app.database import get_session_maker
 from app.models import NewsletterRecipient, utc_now
@@ -69,8 +69,11 @@ def unsubscribe_recipient_get(token: str) -> HTMLResponse:
 
 
 @public_router.post("/unsubscribe/{token}")
-def unsubscribe_recipient_post(token: str, request: Request) -> HTMLResponse:
+def unsubscribe_recipient_post(token: str, request: Request) -> Response:
     _perform_unsubscribe(token)
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "form" not in content_type:
+        return PlainTextResponse(content="", status_code=status.HTTP_200_OK)
     return HTMLResponse(
         content="<html><body><h2>Unsubscribed</h2>"
         "<p>You have been successfully unsubscribed from this newsletter.</p>"
