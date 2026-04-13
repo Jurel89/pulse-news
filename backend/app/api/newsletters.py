@@ -1180,7 +1180,7 @@ def generate_draft(
 ) -> NewsletterGenerationResponse:
     user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    generated = generate_newsletter_draft(newsletter)
+    generated = generate_newsletter_draft(newsletter, db_session=db)
     source_bundle_snapshot_json = serialize_source_bundle(build_source_bundle(newsletter))
     revision = _create_revision(
         newsletter,

@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.models import OperationMode
+
 try:  # pragma: no cover - depends on local environment extras
     import email_validator  # noqa: F401
 except ImportError:  # pragma: no cover - exercised in the repo test venv
@@ -85,7 +87,12 @@ def _validate_supported_provider_name(value: str, *, field_name: str) -> str:
     return normalized
 
 
-class HealthResponse(BaseModel):
+class OperationModeStatus(BaseModel):
+    ai_generation_mode: OperationMode
+    email_delivery_mode: OperationMode
+
+
+class HealthResponse(OperationModeStatus):
     status: str
     app: str
     environment: str
@@ -120,10 +127,25 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
-class SessionResponse(BaseModel):
+class SessionResponse(OperationModeStatus):
     initialized: bool
     authenticated: bool
     user: UserSummary | None = None
+
+
+class SystemSettingsResponse(OperationModeStatus):
+    initialized: bool
+
+
+class SystemSettingsUpdateRequest(BaseModel):
+    ai_generation_mode: OperationMode | None = None
+    email_delivery_mode: OperationMode | None = None
+
+    @model_validator(mode="after")
+    def validate_mode_update(self) -> SystemSettingsUpdateRequest:
+        if self.ai_generation_mode is None and self.email_delivery_mode is None:
+            raise ValueError("At least one operation mode must be provided.")
+        return self
 
 
 class NewsletterSummary(BaseModel):

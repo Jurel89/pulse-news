@@ -7,11 +7,13 @@ from app.auth import (
     claim_bootstrap,
     clear_authenticated_session,
     get_authenticated_user,
+    get_operation_mode_state,
     get_user_by_email,
     mark_bootstrap_complete,
     normalize_email,
     require_authenticated_user,
     set_authenticated_session,
+    update_system_settings_operation_modes,
 )
 from app.config import get_settings
 from app.deps import DbSession
@@ -22,6 +24,8 @@ from app.schemas import (
     ChangePasswordRequest,
     LoginRequest,
     SessionResponse,
+    SystemSettingsResponse,
+    SystemSettingsUpdateRequest,
     UserSummary,
 )
 from app.security import hash_password, verify_password
@@ -29,14 +33,34 @@ from app.security import hash_password, verify_password
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@auth_router.get("/session", response_model=SessionResponse)
-def session_status(request: Request, db: DbSession) -> SessionResponse:
-    user = get_authenticated_user(request, db)
+def _operation_mode_payload(db: DbSession) -> dict[str, str]:
+    operation_modes = get_operation_mode_state(db)
+    return {
+        "ai_generation_mode": operation_modes.ai_generation_mode,
+        "email_delivery_mode": operation_modes.email_delivery_mode,
+    }
+
+
+def _system_settings_response(db: DbSession) -> SystemSettingsResponse:
+    return SystemSettingsResponse(
+        initialized=not bootstrap_enabled(db),
+        **_operation_mode_payload(db),
+    )
+
+
+def _session_response(*, db: DbSession, user: User | None) -> SessionResponse:
     return SessionResponse(
         initialized=not bootstrap_enabled(db),
         authenticated=user is not None,
         user=UserSummary.model_validate(user) if user else None,
+        **_operation_mode_payload(db),
     )
+
+
+@auth_router.get("/session", response_model=SessionResponse)
+def session_status(request: Request, db: DbSession) -> SessionResponse:
+    user = get_authenticated_user(request, db)
+    return _session_response(db=db, user=user)
 
 
 @auth_router.post("/bootstrap", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -77,11 +101,7 @@ def bootstrap_operator(
     db.refresh(user)
 
     set_authenticated_session(request, user)
-    return SessionResponse(
-        initialized=True,
-        authenticated=True,
-        user=UserSummary.model_validate(user),
-    )
+    return _session_response(db=db, user=user)
 
 
 @auth_router.post("/login", response_model=SessionResponse)
@@ -94,11 +114,23 @@ def login_operator(payload: LoginRequest, request: Request, db: DbSession) -> Se
         )
 
     set_authenticated_session(request, user)
-    return SessionResponse(
-        initialized=True,
-        authenticated=True,
-        user=UserSummary.model_validate(user),
+    return _session_response(db=db, user=user)
+
+
+@auth_router.patch("/system-settings", response_model=SystemSettingsResponse)
+def update_system_settings(
+    payload: SystemSettingsUpdateRequest,
+    request: Request,
+    db: DbSession,
+) -> SystemSettingsResponse:
+    require_authenticated_user(request, db)
+    update_system_settings_operation_modes(
+        db,
+        ai_generation_mode=payload.ai_generation_mode,
+        email_delivery_mode=payload.email_delivery_mode,
     )
+    db.commit()
+    return _system_settings_response(db)
 
 
 @auth_router.post("/logout", response_model=AuthActionResponse)

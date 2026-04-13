@@ -93,4 +93,4 @@ def test_init_database_applies_sqlite_safe_relationship_migration(tmp_path, monk
             sa.text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert version == "8a9b0c1d2e3f"
+    assert version == "9b0c1d2e3f4a"

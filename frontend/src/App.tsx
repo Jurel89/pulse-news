@@ -167,6 +167,29 @@ export default function App() {
     });
   }
 
+  async function handleChangeOperationModes(modes: {
+    ai_generation_mode?: "live" | "simulated";
+    email_delivery_mode?: "live" | "simulated";
+  }) {
+    await runAuthAction(async () => {
+      const updatedSettings = await api.updateSystemSettings(modes);
+      setSession((current) =>
+        asLoadedSession({
+          ...current,
+          ai_generation_mode: updatedSettings.ai_generation_mode,
+          email_delivery_mode: updatedSettings.email_delivery_mode,
+        }),
+      );
+
+      const modesChanged = [
+        modes.ai_generation_mode ? `AI generation: ${updatedSettings.ai_generation_mode}` : null,
+        modes.email_delivery_mode ? `Email delivery: ${updatedSettings.email_delivery_mode}` : null,
+      ].filter(Boolean);
+
+      setNotice(`System settings updated (${modesChanged.join(", ")}).`);
+    });
+  }
+
   const navItems = useMemo(
     () => [
       { id: "dashboard" as const, label: "Dashboard" },
@@ -421,7 +444,10 @@ export default function App() {
             currentUser={currentUser}
             error={error}
             notice={notice}
+            aiGenerationMode={session.ai_generation_mode}
+            emailDeliveryMode={session.email_delivery_mode}
             onChangePassword={handleChangePassword}
+            onChangeOperationModes={handleChangeOperationModes}
             onLogout={handleLogout}
           />
         );

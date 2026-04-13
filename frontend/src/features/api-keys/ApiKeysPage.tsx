@@ -274,20 +274,18 @@ export function ApiKeyEditor({
 
         <label>
           <span>Provider</span>
-          <input
-            list="api-key-provider-options"
+          <select
             onChange={(event) => updateField("provider_type", event.target.value)}
             required
             value={form.provider_type}
-            placeholder="openai"
-          />
-          <datalist id="api-key-provider-options">
+          >
+            <option value="">Select a provider...</option>
             {providerOptions.map((type) => (
               <option key={type.value} value={type.value}>
                 {type.label}
               </option>
             ))}
-          </datalist>
+          </select>
         </label>
 
         <label>

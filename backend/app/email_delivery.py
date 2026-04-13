@@ -8,10 +8,11 @@ from dataclasses import dataclass
 from html import escape
 from urllib import error, request
 
+from app.auth import get_email_delivery_mode
 from app.config import Settings
 from app.crypto import decrypt_secret
 from app.email_templates import RenderedNewsletter
-from app.models import ApiKey, Newsletter
+from app.models import ApiKey, Newsletter, OperationMode
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,6 @@ class ResendConfigurationResolution:
 
 RESEND_BATCH_CHUNK_SIZE = 100
 RESEND_BATCH_MAX_ATTEMPTS = 3
-SIMULATED_EMAIL_DELIVERY_ENV_VAR = "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY"
 
 
 def _normalize_config_value(value: str | None) -> str | None:
@@ -665,6 +665,7 @@ def send_test_email(
     newsletter: Newsletter | None = None,
     db_session=None,
 ) -> TestSendResult:
+    delivery_mode = get_email_delivery_mode(db_session=db_session)
     resend_configuration = _resolve_resend_configuration(
         settings,
         newsletter,
@@ -681,12 +682,7 @@ def send_test_email(
             missing_parts.append("sender email address")
         missing_str = " and ".join(missing_parts)
 
-        if settings.environment == "production":
-            raise RuntimeError(
-                f"Cannot test-send in production without {missing_str}. "
-                f"{resend_configuration.detail}"
-            )
-        if settings.allow_simulated_email_delivery:
+        if delivery_mode == OperationMode.SIMULATED.value:
             logger.info(
                 "Returning explicit local preview test-send result for %s: missing %s. Detail: %s",
                 to_email,
@@ -697,22 +693,28 @@ def send_test_email(
                 status="simulated",
                 mode="local-preview",
                 message=(
-                    f"Email delivery simulation is enabled via "
-                    f"{SIMULATED_EMAIL_DELIVERY_ENV_VAR}=true. Missing {missing_str}. "
+                    "Email delivery mode is set to simulated in system settings. "
+                    f"Missing {missing_str}. "
                     f"{resend_configuration.detail} No email was sent."
                 ),
                 provider_id=None,
                 to_email=to_email,
             )
+        if settings.environment == "production":
+            raise RuntimeError(
+                "Cannot test-send in production while email delivery mode is live and "
+                f"delivery configuration is incomplete (missing {missing_str}). "
+                f"{resend_configuration.detail}"
+            )
         return TestSendResult(
             status="error",
             mode="none",
             message=(
-                f"Resend test send is blocked: missing {missing_str}. "
+                f"Resend test send is blocked in live mode: missing {missing_str}. "
                 f"{resend_configuration.detail} Configure a valid newsletter-specific Resend key, "
                 "or set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL. "
-                "For non-production local preview only, set "
-                f"{SIMULATED_EMAIL_DELIVERY_ENV_VAR}=true."
+                "For local preview-only flows, switch email delivery mode to simulated in "
+                "system settings."
             ),
             provider_id=None,
             to_email=to_email,
@@ -785,6 +787,7 @@ def send_newsletter_email(
     newsletter: Newsletter | None = None,
     db_session=None,
 ) -> ManualSendResult:
+    delivery_mode = get_email_delivery_mode(db_session=db_session)
     resend_configuration = _resolve_resend_configuration(
         settings,
         newsletter,
@@ -793,17 +796,6 @@ def send_newsletter_email(
     api_key = resend_configuration.api_key
     from_email = resend_configuration.from_email
 
-    if settings.environment == "production" and (not api_key or not from_email):
-        missing_parts = []
-        if not api_key:
-            missing_parts.append("Resend API key")
-        if not from_email:
-            missing_parts.append("sender email address")
-        missing_str = " and ".join(missing_parts)
-        raise RuntimeError(
-            f"Cannot send emails in production without {missing_str}. {resend_configuration.detail}"
-        )
-
     if not api_key or not from_email:
         missing_parts = []
         if not api_key:
@@ -811,7 +803,7 @@ def send_newsletter_email(
         if not from_email:
             missing_parts.append("sender email address")
         missing_str = " and ".join(missing_parts)
-        if settings.allow_simulated_email_delivery:
+        if delivery_mode == OperationMode.SIMULATED.value:
             logger.info(
                 "Returning explicit local preview delivery for newsletter id=%s: "
                 "missing %s. Detail: %s",
@@ -823,8 +815,8 @@ def send_newsletter_email(
                 status="fallback",
                 mode="local-preview",
                 message=(
-                    f"Email delivery simulation is enabled via "
-                    f"{SIMULATED_EMAIL_DELIVERY_ENV_VAR}=true. Missing {missing_str}. "
+                    "Email delivery mode is set to simulated in system settings. "
+                    f"Missing {missing_str}. "
                     f"{resend_configuration.detail} No email was sent."
                 ),
                 recipient_outcomes=[
@@ -832,23 +824,26 @@ def send_newsletter_email(
                         email=target.email,
                         status="simulated",
                         provider_id=None,
-                        detail=(
-                            "Local preview simulation enabled via "
-                            f"{SIMULATED_EMAIL_DELIVERY_ENV_VAR}=true"
-                        ),
+                        detail="Local preview simulation enabled in system settings.",
                     )
                     for target in recipient_targets
                 ],
+            )
+        if settings.environment == "production":
+            raise RuntimeError(
+                "Cannot send emails in production while email delivery mode is live and "
+                f"delivery configuration is incomplete (missing {missing_str}). "
+                f"{resend_configuration.detail}"
             )
         return ManualSendResult(
             status="failed",
             mode="none",
             message=(
-                f"Resend delivery is blocked: missing {missing_str}. "
+                f"Resend delivery is blocked in live mode: missing {missing_str}. "
                 f"{resend_configuration.detail} Configure a valid newsletter-specific Resend key, "
                 "or set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL. "
-                "For non-production local preview only, set "
-                f"{SIMULATED_EMAIL_DELIVERY_ENV_VAR}=true."
+                "For local preview-only flows, switch email delivery mode to simulated in "
+                "system settings."
             ),
             recipient_outcomes=[
                 RecipientSendOutcome(

@@ -23,20 +23,6 @@ class Settings(BaseSettings):
     resend_api_key: str | None = Field(default=None)
     resend_from_email: str | None = Field(default=None)
     resend_webhook_secret: str | None = Field(default=None)
-    allow_simulated_ai_generation: bool = Field(
-        default=False,
-        description=(
-            "Enable local simulated newsletter draft generation in non-production when "
-            "live provider generation cannot run."
-        ),
-    )
-    allow_simulated_email_delivery: bool = Field(
-        default=False,
-        description=(
-            "Enable local preview email delivery simulation in non-production when "
-            "Resend credentials are incomplete."
-        ),
-    )
     resend_api_base_url: str = Field(default="https://api.resend.com")
     resend_api_url: str = Field(default="https://api.resend.com/emails")
     data_dir: Path = Field(default=PROJECT_ROOT / "data")
@@ -62,14 +48,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "PULSE_NEWS_SECRET_KEY must be set to a secure value in production. "
                 "The default value is not allowed."
-            )
-        if self.environment == "production" and self.allow_simulated_ai_generation:
-            raise ValueError(
-                "PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION cannot be enabled in production."
-            )
-        if self.environment == "production" and self.allow_simulated_email_delivery:
-            raise ValueError(
-                "PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY cannot be enabled in production."
             )
         return self
 

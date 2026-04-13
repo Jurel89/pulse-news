@@ -20,6 +20,19 @@ export type SessionResponse = {
   initialized: boolean;
   authenticated: boolean;
   user: UserSummary | null;
+  ai_generation_mode: "live" | "simulated";
+  email_delivery_mode: "live" | "simulated";
+};
+
+export type SystemSettingsResponse = {
+  initialized: boolean;
+  ai_generation_mode: "live" | "simulated";
+  email_delivery_mode: "live" | "simulated";
+};
+
+export type SystemSettingsUpdateRequest = {
+  ai_generation_mode?: "live" | "simulated";
+  email_delivery_mode?: "live" | "simulated";
 };
 
 export type NewsletterPreview = {
@@ -265,6 +278,11 @@ export const api = {
     request<{ message: string }>("/auth/change-password", {
       method: "POST",
       jsonBody: { current_password: currentPassword, new_password: newPassword }
+    }),
+  updateSystemSettings: (payload: SystemSettingsUpdateRequest) =>
+    request<SystemSettingsResponse>("/auth/system-settings", {
+      method: "PATCH",
+      jsonBody: payload
     }),
   listNewsletters: () => request<NewsletterSummary[]>("/newsletters"),
   getNewsletter: (newsletterId: number) =>

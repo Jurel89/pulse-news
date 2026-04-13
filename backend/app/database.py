@@ -90,6 +90,13 @@ def _repair_invalid_provider_state(session: Session) -> None:
         logger.info(f"Disabled {disabled_count} provider(s) due to missing API keys")
 
 
+def _ensure_system_settings_row(session: Session) -> None:
+    from app.auth import get_or_create_system_settings
+
+    get_or_create_system_settings(session)
+    session.commit()
+
+
 def init_database() -> None:
     get_settings()
 
@@ -98,3 +105,4 @@ def init_database() -> None:
 
     with get_session_maker()() as session:
         _repair_invalid_provider_state(session)
+        _ensure_system_settings_row(session)

@@ -7,9 +7,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.config import get_settings
+from app.auth import get_ai_generation_mode
 from app.crypto import decrypt_secret
-from app.models import Newsletter
+from app.models import Newsletter, OperationMode
 from app.source_pipeline.service import build_source_bundle, has_usable_source_bundle
 
 try:  # pragma: no cover - exercised conditionally when dependency is present and configured
@@ -46,7 +46,6 @@ PRESET_BASE_URLS: dict[str, str] = {
     "zai": "https://api.z.ai/api/paas/v4/",
     "kimi": "https://api.kimi.com/coding/v1",
 }
-SIMULATED_AI_GENERATION_ENV_VAR = "PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION"
 
 
 @dataclass(frozen=True)
@@ -342,7 +341,7 @@ def _fallback_generate(newsletter: Newsletter, *, reason: str) -> GeneratedDraft
     preheader = (
         newsletter.draft_preheader
         or newsletter.description
-        or "Generated locally because explicit AI simulation is enabled."
+        or "Generated locally because AI generation mode is set to simulated."
     ).strip()
     body_text = newsletter.draft_body_text.strip() or (
         "Fallback draft outline:\n"
@@ -355,7 +354,7 @@ def _fallback_generate(newsletter: Newsletter, *, reason: str) -> GeneratedDraft
         mode="local-generator",
         message=(
             f"Generated a local simulated draft because {reason} "
-            f"Simulation is explicitly enabled via {SIMULATED_AI_GENERATION_ENV_VAR}=true."
+            "AI generation mode is set to simulated in system settings."
         ),
         subject=subject,
         preheader=preheader,
@@ -439,9 +438,9 @@ def _parse_structured_generation_output(
     )
 
 
-def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
+def generate_newsletter_draft(newsletter: Newsletter, *, db_session=None) -> GeneratedDraft:
     provider_name = _normalized_provider_name(newsletter)
-    settings = get_settings()
+    ai_generation_mode = get_ai_generation_mode(db_session=db_session)
 
     # Enforce provider enabled at generation time
     provider = _get_newsletter_provider(newsletter)
@@ -475,12 +474,12 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
 
     if completion is None:
         message = "LiteLLM is not available, so live AI generation cannot run."
-        if settings.allow_simulated_ai_generation:
+        if ai_generation_mode == OperationMode.SIMULATED.value:
             return _fallback_generate(newsletter, reason=message)
         return _error_generate(newsletter, message)
 
     if credential_resolution.api_key is None:
-        if settings.allow_simulated_ai_generation:
+        if ai_generation_mode == OperationMode.SIMULATED.value:
             return _fallback_generate(newsletter, reason=credential_resolution.detail)
         return _error_generate(newsletter, credential_resolution.detail)
 
@@ -555,7 +554,7 @@ def generate_newsletter_draft(newsletter: Newsletter) -> GeneratedDraft:
         detail = (
             f"Live generation failed for provider '{provider_name}': {type(exc).__name__}: {exc}"
         )
-        if settings.allow_simulated_ai_generation:
+        if ai_generation_mode == OperationMode.SIMULATED.value:
             return _fallback_generate(newsletter, reason=detail)
         return _error_generate(newsletter, detail)
 
