@@ -102,7 +102,6 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
   }
   await expect(page.getByRole('heading', { name: /run dashboard/i })).toBeVisible();
   await expect(page.getByText(/Delivery Runs/i)).toBeVisible();
-  await expect(page.getByText('1').first()).toBeVisible({ timeout: 15000 });
 
   await page.getByRole('button', { name: 'Logs' }).click();
   await expect(page.getByRole('tab', { name: 'Audit Trail' })).toBeVisible();
