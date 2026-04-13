@@ -286,3 +286,40 @@ def test_kimi_provider_uses_coding_api_base_url(client: TestClient, monkeypatch)
     assert completion_mock.call_args.kwargs["model"] == "moonshot/kimi-k2.5"
     assert completion_mock.call_args.kwargs["api_base"] == "https://api.kimi.com/coding/v1"
     assert completion_mock.call_args.kwargs["extra_headers"]["User-Agent"] == "claude-code/0.1.0"
+
+
+def test_kimi_user_agent_merges_with_existing_extra_headers(client: TestClient, monkeypatch):
+    import app.ai_generation
+    from app.models import Provider
+
+    newsletter = build_newsletter(provider_name="kimi", model_name="kimi-k2.5")
+    provider = Provider(
+        name="Kimi",
+        provider_type="kimi",
+        is_enabled=True,
+        default_model="kimi-k2.5",
+        configuration='{"extra_headers": {"X-Custom": "value"}}',
+    )
+    newsletter.provider = provider
+    newsletter.provider_id = None
+
+    completion_mock = Mock(
+        return_value=make_completion_response("SUBJECT: T\nPREHEADER: T\nBODY:\nC")
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_has_live_provider_credentials",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_get_api_key_for_newsletter",
+        Mock(return_value="test-key"),
+    )
+
+    app.ai_generation.generate_newsletter_draft(newsletter)
+
+    headers = completion_mock.call_args.kwargs["extra_headers"]
+    assert headers["User-Agent"] == "claude-code/0.1.0"
+    assert headers["X-Custom"] == "value"

@@ -1531,7 +1531,7 @@ class ProviderAdapter(Protocol):
   "preset_key": "kimi",
   "display_name": "Kimi",
   "adapter_key": "openai_compatible",
-  "default_base_url": "https://api.moonshot.ai/v1",
+  "default_base_url": "https://api.kimi.com/coding/v1",
   "secret_type": "bearer",
   "supports_model_discovery": false,
   "recommended_models": ["kimi-k2.5"]
@@ -2296,7 +2296,7 @@ The point is not imitation. The point is using proven patterns that reduce maint
    Relevant point: Z.AI documents standard HTTP API usage and bearer-token authentication.
 
 5. Kimi API quickstart: <https://platform.kimi.ai/docs/guide/start-using-kimi-api>  
-   Relevant point: Kimi’s official quickstart shows usage through the OpenAI SDK with `https://api.moonshot.ai/v1` and states that the API is fully compatible with the OpenAI API format.
+   Relevant point: Kimi’s official quickstart shows usage through the OpenAI SDK with `https://api.kimi.com/coding/v1` and states that the API is fully compatible with the OpenAI API format.
 
 6. Kimi API overview: <https://platform.kimi.ai/docs/overview>  
    Relevant point: Kimi exposes a formal API platform and documented model access.
