@@ -491,9 +491,11 @@ class NewsletterPreviewResponse(BaseModel):
 
 class NewsletterTestSendRequest(BaseModel):
     to_email: EmailStr
+    revision_id: int | None = None
 
 
 class NewsletterSendRequest(BaseModel):
+    revision_id: int | None = None
     idempotency_key: str | None = None
 
 

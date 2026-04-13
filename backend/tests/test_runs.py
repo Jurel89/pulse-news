@@ -132,7 +132,10 @@ def test_run_dashboard_filters_and_details(client: TestClient):
     generate_response = client.post(f"/api/newsletters/{newsletter['id']}/generate-draft")
     assert generate_response.status_code == 200
 
-    send_response = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    send_response = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
     assert send_response.status_code == 200
     send_run_id = send_response.json()["run"]["id"]
 
@@ -166,11 +169,17 @@ def test_duplicate_manual_send_reuses_existing_run(client: TestClient):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
 
-    first_send = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    first_send = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
     assert first_send.status_code == 200
     first_run = first_send.json()["run"]
 
-    second_send = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    second_send = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
     assert second_send.status_code == 200
     second_run = second_send.json()["run"]
 
@@ -215,7 +224,10 @@ def test_operational_events_endpoint_defaults_to_run_events_only(client: TestCli
     generate_response = client.post(f"/api/newsletters/{newsletter['id']}/generate-draft")
     assert generate_response.status_code == 200
 
-    send_response = client.post(f"/api/newsletters/{newsletter['id']}/send")
+    send_response = client.post(
+        f"/api/newsletters/{newsletter['id']}/send",
+        json={"revision_id": newsletter["approved_revision_id"]},
+    )
     assert send_response.status_code == 200
     send_run = send_response.json()["run"]
 

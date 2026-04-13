@@ -941,16 +941,21 @@ def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> Newsl
 @newsletters_router.get("/{newsletter_id}/preview", response_model=NewsletterPreviewResponse)
 def preview_newsletter(
     newsletter_id: int,
+    revision_id: int | None,
     request: Request,
     db: DbSession,
 ) -> NewsletterPreviewResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = _draft_revision(newsletter)
-    if revision is None:
+    if revision_id is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No draft revision found."
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "revision_id is required. Use an explicit revision preview endpoint or "
+                "provide a revision_id."
+            ),
         )
+    revision = get_revision_or_404(db, newsletter, revision_id)
     rendered = render_newsletter_content(
         newsletter,
         subject=revision.subject,
@@ -1003,11 +1008,15 @@ def test_send_newsletter(
 ) -> NewsletterTestSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = _draft_revision(newsletter)
-    if revision is None:
+    if payload.revision_id is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No draft revision found."
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "revision_id is required. Use an explicit revision test-send endpoint or "
+                "provide a revision_id."
+            ),
         )
+    revision = get_revision_or_404(db, newsletter, payload.revision_id)
     rendered = render_newsletter_content(
         newsletter,
         subject=revision.subject,
@@ -1322,12 +1331,26 @@ def send_newsletter(
 ) -> NewsletterSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
+    if payload is None or payload.revision_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "revision_id is required. Use an explicit revision send endpoint or provide "
+                "a revision_id."
+            ),
+        )
+    revision = get_revision_or_404(db, newsletter, payload.revision_id)
+    if revision.id != (newsletter.approved_revision_id or 0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only the approved revision can be sent. Approve the revision first.",
+        )
     response, _run = execute_newsletter_send(
         db,
         newsletter,
-        revision=_approved_revision(newsletter),
+        revision=revision,
         trigger_mode="manual-send",
-        idempotency_key=payload.idempotency_key if payload else None,
+        idempotency_key=payload.idempotency_key,
     )
     return response
 

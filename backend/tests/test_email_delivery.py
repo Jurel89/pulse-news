@@ -692,7 +692,7 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
     import app.config
     import app.database
     import app.email_delivery
-    from app.models import DeliveryProfile, Newsletter
+    from app.models import DeliveryProfile, DraftRevision, Newsletter
 
     bootstrap_operator(client)
     monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re-env-key")
@@ -720,6 +720,20 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
         )
         session.add(newsletter)
         session.flush()
+        revision = DraftRevision(
+            newsletter_id=newsletter.id,
+            version_number=1,
+            state="approved",
+            origin="imported",
+            subject=newsletter.draft_subject,
+            preheader=newsletter.draft_preheader,
+            body_text=newsletter.draft_body_text,
+            prompt_snapshot=newsletter.prompt,
+        )
+        session.add(revision)
+        session.flush()
+        newsletter.approved_revision_id = revision.id
+        newsletter.draft_head_revision_id = revision.id
         delivery_profile = DeliveryProfile(
             name="System Default Delivery",
             provider_type="resend",
@@ -730,6 +744,7 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
         newsletter.delivery_profile_id = delivery_profile.id
         session.commit()
         newsletter_id = newsletter.id
+        approved_revision_id = newsletter.approved_revision_id
     finally:
         session.close()
 
@@ -744,7 +759,7 @@ def test_newsletter_test_send_endpoint_returns_provider_error_detail(
 
     response = client.post(
         f"/api/newsletters/{newsletter_id}/test-send",
-        json={"to_email": "qa@example.com"},
+        json={"to_email": "qa@example.com", "revision_id": approved_revision_id},
     )
 
     assert response.status_code == 502

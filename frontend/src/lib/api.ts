@@ -261,8 +261,8 @@ export const api = {
   listNewsletters: () => request<NewsletterSummary[]>("/newsletters"),
   getNewsletter: (newsletterId: number) =>
     request<NewsletterDetail>(`/newsletters/${newsletterId}`),
-  previewNewsletter: (newsletterId: number) =>
-    request<NewsletterPreview>(`/newsletters/${newsletterId}/preview`),
+  previewNewsletter: (newsletterId: number, revisionId: number) =>
+    request<NewsletterPreview>(`/newsletters/${newsletterId}/preview?revision_id=${revisionId}`),
   previewNewsletterRevision: (newsletterId: number, revisionId: number) =>
     request<NewsletterPreview>(`/newsletters/${newsletterId}/revisions/${revisionId}/preview`),
   generateNewsletter: (newsletterId: number) =>
@@ -276,20 +276,23 @@ export const api = {
       method: "POST"
     }),
 
-  testSendNewsletter: (newsletterId: number, toEmail: string) =>
+  testSendNewsletter: (newsletterId: number, revisionId: number, toEmail: string) =>
     request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/test-send`, {
       method: "POST",
-      jsonBody: { to_email: toEmail }
+      jsonBody: { to_email: toEmail, revision_id: revisionId }
     }),
   testSendNewsletterRevision: (newsletterId: number, revisionId: number, toEmail: string) =>
     request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/test-send`, {
       method: "POST",
       jsonBody: { to_email: toEmail }
     }),
-  sendNewsletter: (newsletterId: number, idempotencyKey?: string) =>
+  sendNewsletter: (newsletterId: number, revisionId: number, idempotencyKey?: string) =>
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
       method: "POST",
-      jsonBody: idempotencyKey ? { idempotency_key: idempotencyKey } : undefined,
+      jsonBody: {
+        revision_id: revisionId,
+        ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+      },
     }),
   sendNewsletterRevision: (newsletterId: number, revisionId: number, idempotencyKey?: string) =>
     request<NewsletterSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/send`, {

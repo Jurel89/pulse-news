@@ -37,10 +37,10 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
     const nextSelectedRevisionId = approved?.id ?? nextDraftHeadRevisionId;
     setSelectedRevisionId((current) => current ?? nextSelectedRevisionId);
 
-    const nextPreview = nextSelectedRevisionId
-      ? await api.previewNewsletterRevision(newsletter.id, nextSelectedRevisionId)
-      : await api.previewNewsletter(newsletter.id);
-    setPreview(nextPreview);
+    if (nextSelectedRevisionId) {
+      const nextPreview = await api.previewNewsletterRevision(newsletter.id, nextSelectedRevisionId);
+      setPreview(nextPreview);
+    }
   }, [newsletter.id]);
 
   async function handleSelectRevision(revisionId: number) {
@@ -76,9 +76,10 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
     setManualSendResult(null);
     try {
       const targetRevisionId = selectedRevisionId ?? draftHeadRevisionId;
-      const result = targetRevisionId
-        ? await api.testSendNewsletterRevision(newsletter.id, targetRevisionId, testAddress)
-        : await api.testSendNewsletter(newsletter.id, testAddress);
+      if (!targetRevisionId) {
+        throw new Error("No revision selected for test send.");
+      }
+      const result = await api.testSendNewsletterRevision(newsletter.id, targetRevisionId, testAddress);
       setTestSendResult(result);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send test email.");
@@ -111,9 +112,10 @@ export function NewsletterPreviewPage({ newsletter, onBack }: NewsletterPreviewP
       }
       const targetRevisionId = selectedRevisionId ?? approvedRevisionId;
       const idempotencyKey = crypto.randomUUID();
-      const result = targetRevisionId
-        ? await api.sendNewsletterRevision(newsletter.id, targetRevisionId, idempotencyKey)
-        : await api.sendNewsletter(newsletter.id, idempotencyKey);
+      if (!targetRevisionId) {
+        throw new Error("No approved revision selected for send.");
+      }
+      const result = await api.sendNewsletterRevision(newsletter.id, targetRevisionId, idempotencyKey);
       setManualSendResult(result);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send newsletter.");
