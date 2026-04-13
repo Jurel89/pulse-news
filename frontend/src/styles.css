@@ -345,6 +345,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 /* ===== Form Elements ===== */
 .auth-form input,
 .auth-form textarea,
+.auth-form select,
 .editor-form textarea,
 .editor-form input,
 .editor-form select {
@@ -361,6 +362,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 
 .auth-form input:focus,
 .auth-form textarea:focus,
+.auth-form select:focus,
 .editor-form textarea:focus,
 .editor-form input:focus,
 .editor-form select:focus {
@@ -971,6 +973,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 }
 
 /* ===== Enhanced Select ===== */
+.auth-form select,
 .editor-form select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
@@ -979,6 +982,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
   padding-right: 36px;
 }
 
+.auth-form select:disabled,
 .editor-form select:disabled {
   opacity: 0.6;
   cursor: not-allowed;
