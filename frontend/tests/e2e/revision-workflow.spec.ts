@@ -99,8 +99,8 @@ test('revision workflow reaches runs and logs', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Dashboard' }).click();
   await expect(page.getByRole('heading', { name: /run dashboard/i })).toBeVisible();
-  await expect(page.getByText(/Run ID/i)).toBeVisible();
   await expect(page.getByText(/Delivery Runs/i)).toBeVisible();
+  await expect(page.locator('table tbody tr').first()).toBeVisible();
 
   await page.getByRole('button', { name: 'Logs' }).click();
   await expect(page.getByRole('tab', { name: 'Audit Trail' })).toBeVisible();
