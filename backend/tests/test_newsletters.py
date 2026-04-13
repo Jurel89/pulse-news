@@ -220,6 +220,9 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     latest_revision = revisions_response.json()["items"][0]
     assert latest_revision["id"] == result["revision_id"]
     assert "https://example.com/source" in (latest_revision["source_bundle_snapshot_json"] or "")
+    if result["mode"] == "litellm":
+        assert latest_revision["highlights_json"] is not None
+        assert latest_revision["source_references_json"] is not None
     assert latest_revision["provider_snapshot_json"] is not None
     assert "openai/" in latest_revision["provider_snapshot_json"]
     if result["mode"] == "litellm":

@@ -26,6 +26,8 @@ class GeneratedDraft:
     subject: str
     preheader: str
     body_text: str
+    highlights_json: str | None = None
+    source_references_json: str | None = None
     provider_snapshot_json: str | None = None
     token_usage_json: str | None = None
     raw_response_hash: str | None = None
@@ -378,6 +380,8 @@ def _parse_structured_generation_output(
     subject = str(parsed.get("subject") or newsletter.name).strip() or newsletter.name
     preheader = str(parsed.get("preheader") or newsletter.description or "").strip()
     body_text = str(parsed.get("body_markdown") or parsed.get("body_text") or "").strip()
+    highlights = parsed.get("highlights")
+    source_references = parsed.get("source_references")
     if not body_text:
         return GeneratedDraft(
             status="error",
@@ -410,6 +414,10 @@ def _parse_structured_generation_output(
         subject=subject,
         preheader=preheader,
         body_text=body_text,
+        highlights_json=json.dumps(highlights) if isinstance(highlights, list) else None,
+        source_references_json=(
+            json.dumps(source_references) if isinstance(source_references, list) else None
+        ),
         provider_snapshot_json=_provider_snapshot_json(newsletter),
     )
 

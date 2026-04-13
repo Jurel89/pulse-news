@@ -322,6 +322,8 @@ class DraftRevisionSummary(BaseModel):
     preheader: str | None = None
     body_text: str
     source_bundle_snapshot_json: str | None = None
+    highlights_json: str | None = None
+    source_references_json: str | None = None
     provider_snapshot_json: str | None = None
     token_usage_json: str | None = None
     raw_response_hash: str | None = None

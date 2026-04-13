@@ -123,7 +123,9 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
             "{"
             '"subject":"Founder Radar",'
             '"preheader":"The week in startup infrastructure",'
-            '"body_markdown":"- Fundraising signals\\n- Ops playbook updates"'
+            '"body_markdown":"- Fundraising signals\\n- Ops playbook updates",'
+            '"highlights":["Fundraising signals"],'
+            '"source_references":[{"source_id":"src_1","claim":"Fundraising signals"}]'
             "}"
         )
     )
@@ -141,6 +143,8 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
     assert result.subject == "Founder Radar"
     assert result.preheader == "The week in startup infrastructure"
     assert result.body_text == "- Fundraising signals\n- Ops playbook updates"
+    assert result.highlights_json is not None
+    assert result.source_references_json is not None
     completion_mock.assert_called_once()
     assert completion_mock.call_args.kwargs["model"] == "openai/gpt-4o-mini"
     prompt_text = completion_mock.call_args.kwargs["messages"][0]["content"]
@@ -294,7 +298,9 @@ def test_generate_newsletter_draft_accepts_structured_json_output(
             "{"
             '"subject":"Operator Watch",'
             '"preheader":"Signals worth scanning",'
-            '"body_markdown":"First section\\n\\nSecond section"'
+            '"body_markdown":"First section\\n\\nSecond section",'
+            '"highlights":["First section"],'
+            '"source_references":[{"source_id":"src_1","claim":"First section"}]'
             "}"
         )
     )
@@ -324,7 +330,9 @@ def test_generate_newsletter_draft_rejects_subjects_longer_than_limit(
             "{"
             f'"subject":"{"x" * 121}",'
             '"preheader":"Signals worth scanning",'
-            '"body_markdown":"- Section one"'
+            '"body_markdown":"- Section one",'
+            '"highlights":["Section one"],'
+            '"source_references":[{"source_id":"src_1","claim":"Section one"}]'
             "}"
         )
     )
@@ -353,7 +361,9 @@ def test_generate_newsletter_draft_rejects_unsupported_template_variables(
             "{"
             '"subject":"Operator Watch",'
             '"preheader":"Signals worth scanning",'
-            '"body_markdown":"- Hello %recipient_name%"'
+            '"body_markdown":"- Hello %recipient_name%",'
+            '"highlights":["Hello"],'
+            '"source_references":[{"source_id":"src_1","claim":"Hello"}]'
             "}"
         )
     )
@@ -407,7 +417,9 @@ def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_ke
             "{"
             '"subject":"Provider Defaults",'
             '"preheader":"Configured by provider",'
-            '"body_markdown":"- Uses the provider default model"'
+            '"body_markdown":"- Uses the provider default model",'
+            '"highlights":["Provider default model"],'
+            '"source_references":[{"source_id":"src_1","claim":"Provider default model"}]'
             "}"
         )
     )
