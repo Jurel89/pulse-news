@@ -70,6 +70,8 @@ test('create newsletter through the UI', async ({ page }) => {
 
   await ensureJobsNav(page);
   await page.getByRole('button', { name: 'Jobs' }).click();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: /new newsletter/i })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: /new newsletter/i }).click();
   await expect(page.getByLabel('Name')).toBeVisible({ timeout: 15000 });
   await page.getByLabel('Name').fill('UI Created Newsletter');
