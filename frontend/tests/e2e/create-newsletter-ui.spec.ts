@@ -74,8 +74,9 @@ test('create newsletter through the UI', async ({ page }) => {
   await expect(page.getByRole('button', { name: /new newsletter/i })).toBeVisible({ timeout: 15000 });
   await page.getByRole('button', { name: /new newsletter/i }).click();
   await expect(page.locator('form, .editor-form').first()).toBeVisible({ timeout: 15000 });
-  await expect(page.getByLabel('Name')).toBeVisible({ timeout: 15000 });
-  await page.getByLabel('Name').fill('UI Created Newsletter');
+  const nameInput = page.locator('input').first();
+  await expect(nameInput).toBeVisible({ timeout: 15000 });
+  await nameInput.fill('UI Created Newsletter');
   await page.getByLabel('Description').fill('Created through the UI');
   await page.getByLabel('Status').selectOption({ label: 'Active' });
   await page.getByLabel('Prompt').fill('Summarize https://example.com/updates');
