@@ -91,6 +91,21 @@ def build_newsletter(**overrides):
     return Newsletter(**values)
 
 
+def persist_operation_modes(*, ai_generation_mode="live", email_delivery_mode="live") -> None:
+    import app.database
+    from app.auth import get_or_create_system_settings
+
+    session = app.database.get_session_maker()()
+    try:
+        settings = get_or_create_system_settings(session)
+        settings.ai_generation_mode = ai_generation_mode
+        settings.email_delivery_mode = email_delivery_mode
+        session.add(settings)
+        session.commit()
+    finally:
+        session.close()
+
+
 def make_completion_response(content: str) -> Mock:
     message = Mock()
     message.content = content
@@ -182,14 +197,13 @@ def test_generate_newsletter_draft_returns_error_when_litellm_raises_by_default(
     assert result.body_text == ""
 
 
-def test_generate_newsletter_draft_returns_explicit_simulation_when_enabled(
+def test_generate_newsletter_draft_returns_explicit_simulation_when_db_mode_is_simulated(
     client: TestClient,
     monkeypatch,
 ):
     import app.ai_generation
 
-    monkeypatch.setenv("PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION", "true")
-    app.ai_generation.get_settings.cache_clear()
+    persist_operation_modes(ai_generation_mode="simulated")
 
     newsletter = build_newsletter()
     monkeypatch.setattr(app.ai_generation, "completion", Mock())
@@ -208,7 +222,7 @@ def test_generate_newsletter_draft_returns_explicit_simulation_when_enabled(
 
     assert result.status == "fallback"
     assert result.mode == "local-generator"
-    assert "PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION=true" in result.message
+    assert "AI generation mode is set to simulated in system settings." in result.message
     assert "inactive" in result.message
     assert "Fallback draft outline" in result.body_text
 
