@@ -35,6 +35,7 @@ class NewsletterStatus(StrEnum):
 class TemplateKey(StrEnum):
     SIGNAL = "signal"
     LEDGER = "ledger"
+    CORPORATE = "corporate"
 
 
 class SupportedProvider(StrEnum):

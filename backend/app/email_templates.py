@@ -152,7 +152,7 @@ def render_signal_template(subject: str, preheader: str, body_html: str) -> str:
             "  </head>",
             "  <body style=\"margin:0;padding:0;background:#eef3f7;font-family:'IBM Plex Sans','Segoe UI',system-ui,-apple-system,sans-serif;color:#18324a;-webkit-font-smoothing:antialiased;\">",
             '    <center style="width:100%;background:#eef3f7;">',
-            '      <div style="max-width:640px;margin:0 auto;padding:32px 18px;">',
+            '      <div style="max-width:760px;margin:0 auto;padding:32px 20px;">',
             '        <div style="background:linear-gradient(135deg,#18324a,#2f5f7a);color:#f7f5ef;border-radius:28px;padding:36px 32px;">',
             '          <p style="margin:0 0 14px;font-size:11px;letter-spacing:2.5px;text-transform:uppercase;opacity:0.75;font-weight:500;">Pulse News</p>',
             f'          <h1 style="margin:0;font-size:28px;line-height:1.2;font-weight:700;letter-spacing:-0.3px;">{escape(subject)}</h1>',
@@ -190,6 +190,37 @@ def render_ledger_template(subject: str, preheader: str, body_html: str) -> str:
             f"          {body_html}",
             "        </div>",
             _build_email_footer(accent="#8b5e1b"),
+            "      </div>",
+            "    </center>",
+            "  </body>",
+            "</html>",
+        ]
+    )
+
+
+def render_corporate_template(subject: str, preheader: str, body_html: str) -> str:
+    return "\n".join(
+        [
+            "<!doctype html>",
+            "<html>",
+            "  <head>",
+            '    <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+            "  </head>",
+            "  <body style=\"margin:0;padding:0;background:#eaf0f7;font-family:'Helvetica Neue','Segoe UI',Arial,sans-serif;color:#0a2e5c;-webkit-font-smoothing:antialiased;\">",
+            '    <center style="width:100%;background:#eaf0f7;">',
+            '      <div style="max-width:760px;margin:0 auto;padding:28px 20px;">',
+            '        <div style="background:#ffffff;border-top:6px solid #ef7b21;border-radius:4px;overflow:hidden;box-shadow:0 6px 24px rgba(10,46,92,0.12);">',
+            '          <div style="background:linear-gradient(135deg,#003b7f 0%,#0a5ab5 100%);color:#ffffff;padding:40px 36px;">',
+            '            <p style="margin:0 0 12px;font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#ef7b21;font-weight:700;">Pulse News</p>',
+            f'            <h1 style="margin:0;font-size:30px;line-height:1.2;font-weight:700;letter-spacing:-0.2px;color:#ffffff;">{escape(subject)}</h1>',
+            f'            <p style="margin:14px 0 0;font-size:15px;line-height:1.55;color:#d6e4f5;">{escape(preheader)}</p>',
+            "          </div>",
+            '          <div style="padding:36px 36px 28px;background:#ffffff;">',
+            f"            {body_html}",
+            "          </div>",
+            '          <div style="height:4px;background:linear-gradient(to right,#003b7f 0%,#003b7f 60%,#ef7b21 60%,#ef7b21 100%);"></div>',
+            "        </div>",
+            _build_email_footer(accent="#003b7f"),
             "      </div>",
             "    </center>",
             "  </body>",
@@ -280,6 +311,8 @@ def render_newsletter_content(
         html = render_signal_template(subject, preheader, body_html)
     elif template_key == "ledger":
         html = render_ledger_template(subject, preheader, body_html)
+    elif template_key == "corporate":
+        html = render_corporate_template(subject, preheader, body_html)
     else:
         raise ValueError(
             f"Template '{template_key}' was not found and no built-in template matches."

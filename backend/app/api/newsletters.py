@@ -534,6 +534,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
     built_in_templates = [
         {"key": "signal", "name": "Signal", "is_system": True},
         {"key": "ledger", "name": "Ledger", "is_system": True},
+        {"key": "corporate", "name": "Corporate", "is_system": True},
     ]
 
     existing_keys = {t["key"] for t in template_options}
