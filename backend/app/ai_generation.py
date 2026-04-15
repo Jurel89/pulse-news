@@ -3,17 +3,34 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from app.crypto import decrypt_secret
+from app.generation import parser as _parser
+from app.generation import tool_loop as _tool_loop
+from app.generation import tool_registry as _tool_registry
+from app.generation import usage as _usage
+from app.generation import web_search as _web_search_tool
 from app.models import Newsletter
 
 try:  # pragma: no cover - exercised conditionally when dependency is present and configured
     from litellm import completion
 except Exception:  # pragma: no cover - local fallback path handles absence
     completion = None
+
+# Compatibility re-exports: tests and external callers import these names
+# directly from ``app.ai_generation``. Keep the surface stable even though the
+# real implementations live in ``app.generation.*``.
+CLIENT_WEB_SEARCH_TOOL_NAME = _web_search_tool.TOOL_NAME
+CLIENT_WEB_SEARCH_TOOL_SCHEMA = _web_search_tool.TOOL_SCHEMA
+_strip_json_fences = _parser.strip_json_fences
+_extract_json_object_substring = _parser.extract_json_object_substring
+_validate_generated_content = _parser.validate_generated_content
+_serialize_token_usage = _usage.serialize
+_aggregate_token_usage_json = _usage.aggregate_from_trace
+_provider_web_search_tools = _tool_registry.web_search_tools_for
+_provider_requires_client_side_tool_resolution = _tool_registry.requires_client_side_resolution
 
 
 @dataclass
@@ -66,219 +83,27 @@ def _run_completion_with_tool_loop(
     max_iterations: int = 3,
     client_side_tools: bool = False,
 ) -> tuple[Any, list[dict[str, Any]]]:
-    """Run the completion call, round-tripping tool_calls when the model asks
-    us to execute a (Kimi-style) builtin function.
-
-    Kimi's ``$web_search`` is not one-shot: the first response comes back with
-    ``finish_reason="tool_calls"`` and the caller has to echo each
-    ``tool_call.function.arguments`` back as a ``role="tool"`` message. Kimi
-    then runs the actual search server-side and returns final content.
-
-    Providers that server-resolve in a single round (Anthropic web_search,
-    Gemini google_search) simply return ``finish_reason="stop"`` immediately
-    and the loop exits on the first iteration — no special-casing needed.
-
-    Returns (final_response, trace) where trace records per-iteration
-    diagnostics so operators can see from the Logs page whether the tool was
-    actually invoked or silently ignored.
-    """
-    import copy
-
-    conversation = list(messages)
-    last_response = None
-    trace: list[dict[str, Any]] = []
-    for iteration in range(max_iterations + 1):
-        last_response = completion(
-            model=model,
-            messages=conversation,
-            api_key=api_key,
-            **completion_kwargs,
-        )
-        choice = last_response.choices[0]
-        message = choice.message
-        finish_reason = getattr(choice, "finish_reason", None)
-        tool_calls_raw = getattr(message, "tool_calls", None)
-        tool_calls = tool_calls_raw if isinstance(tool_calls_raw, list) else []
-
-        usage = getattr(last_response, "usage", None)
-        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage is not None else None
-        completion_tokens = getattr(usage, "completion_tokens", None) if usage is not None else None
-        trace.append(
-            {
-                "iteration": iteration,
-                "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
-                "tool_calls_count": len(tool_calls),
-                "prompt_tokens": prompt_tokens if isinstance(prompt_tokens, int) else None,
-                "completion_tokens": completion_tokens
-                if isinstance(completion_tokens, int)
-                else None,
-            }
-        )
-
-        if finish_reason != "tool_calls" or not tool_calls:
-            return last_response, trace
-
-        assistant_entry: dict[str, Any] = {
-            "role": "assistant",
-            "content": getattr(message, "content", None) or "",
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in tool_calls
-            ],
-        }
-        conversation = copy.deepcopy(conversation)
-        conversation.append(assistant_entry)
-
-        # Client-side path (Kimi Coding plan): we execute each tool call
-        # ourselves and feed the actual result back. The server echo-back
-        # pattern only applied to Moonshot's $web_search builtin, which is not
-        # available on api.kimi.com/coding/v1.
-        #
-        # When client_side_tools is False (Anthropic / Gemini), we wouldn't
-        # normally reach this branch because those providers server-resolve in
-        # one round. Fall back to echoing arguments for safety.
-        for tc in tool_calls:
-            if client_side_tools:
-                tool_content = _execute_client_side_tool_call(
-                    tc.function.name, tc.function.arguments
-                )
-            else:
-                tool_content = tc.function.arguments
-            conversation.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "name": tc.function.name,
-                    "content": tool_content,
-                }
-            )
-
-    return last_response, trace
-
-
-CLIENT_WEB_SEARCH_TOOL_NAME = "web_search"
-
-CLIENT_WEB_SEARCH_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": CLIENT_WEB_SEARCH_TOOL_NAME,
-        "description": (
-            "Search the open web and return the most relevant recent results. "
-            "Use this before writing the newsletter so every claim is grounded in "
-            "real, citable sources from the last few days. Call it multiple times "
-            "with different queries when you need broader coverage."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query. Keep it specific and keyword-rich.",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Number of results to return (1-10).",
-                    "default": 5,
-                    "minimum": 1,
-                    "maximum": 10,
-                },
-            },
-            "required": ["query"],
-        },
-    },
-}
-
-
-def _provider_web_search_tools(provider_name: str) -> list[dict] | None:
-    """Return the provider-specific tool payload that enables real-time web
-    search on the generation call, or None if the provider has no tool support.
-
-    This is a newsletter platform — giving the model web access by default is
-    the only way content stays current.
-
-    Different providers need wildly different shapes:
-
-    - **Kimi (api.kimi.com/coding/v1)** has NO server-resolved web search.
-      Its $web_search builtin only works against api.moonshot.ai/v1, which the
-      Kimi Coding plan subscription does NOT grant access to. To make web
-      search work on this endpoint, we declare a regular client-side
-      ``web_search`` function tool and execute the search ourselves inside the
-      tool loop (see ``_execute_client_side_tool_call``).
-
-    - **Anthropic Claude** has a true server-resolved tool that runs the
-      search on Anthropic's side and returns final content in one round.
-
-    - **Gemini** grounds via Google Search, also server-side / one-shot.
-
-    OpenAI, OpenRouter and Z.ai are deferred: each needs its own path.
-    """
-    normalized = provider_name.lower()
-    if normalized in {"kimi", "moonshot"}:
-        return [CLIENT_WEB_SEARCH_TOOL_SCHEMA]
-    if normalized == "anthropic":
-        return [{"type": "web_search_20250305", "name": "web_search"}]
-    if normalized in {"gemini", "google"}:
-        return [{"google_search": {}}]
-    return None
-
-
-def _provider_requires_client_side_tool_resolution(provider_name: str) -> bool:
-    """True when the provider's web search has to be executed by us, client-side
-    (Kimi Coding API). False when the provider server-resolves in one round
-    (Anthropic, Gemini) or has no tool support at all."""
-    return provider_name.lower() in {"kimi", "moonshot"}
+    """Compatibility wrapper over ``app.generation.tool_loop.run``. Existing
+    tests monkeypatch ``app.ai_generation.completion`` and
+    ``_execute_client_side_tool_call``; keep those resolved from this module's
+    namespace so the patches still take effect."""
+    return _tool_loop.run(
+        completion=completion,
+        model=model,
+        messages=messages,
+        api_key=api_key,
+        completion_kwargs=completion_kwargs,
+        max_iterations=max_iterations,
+        tool_executor=_execute_client_side_tool_call if client_side_tools else None,
+    )
 
 
 def _execute_client_side_tool_call(tool_name: str, arguments_json: str) -> str:
-    """Run the client-side tool and return a string suitable for sending back
-    as the ``role=tool`` message content. Never raise — always return a
-    human-readable error string so the model can recover gracefully."""
-    if tool_name != CLIENT_WEB_SEARCH_TOOL_NAME:
-        return json.dumps({"error": f"unknown tool: {tool_name}"})
-
-    try:
-        payload = json.loads(arguments_json or "{}")
-    except json.JSONDecodeError as exc:
-        return json.dumps({"error": f"invalid tool arguments json: {exc}"})
-
-    query = str(payload.get("query") or "").strip()
-    if not query:
-        return json.dumps({"error": "missing required argument: query"})
-
-    raw_max = payload.get("max_results", 5)
-    try:
-        max_results = max(1, min(int(raw_max), 10))
-    except (TypeError, ValueError):
-        max_results = 5
-
-    try:
-        from ddgs import DDGS  # type: ignore[import-not-found]
-    except ImportError:  # pragma: no cover - ddgs is a hard dependency
-        return json.dumps({"error": "ddgs package is not installed"})
-
-    try:
-        with DDGS() as ddg:
-            raw_results = list(ddg.text(query, max_results=max_results))
-    except Exception as exc:  # DDGS surfaces network/rate-limit errors as Exception
-        return json.dumps({"error": f"search failed: {type(exc).__name__}: {exc}"})
-
-    normalized = [
-        {
-            "title": (item.get("title") or "").strip(),
-            "url": (item.get("href") or item.get("url") or "").strip(),
-            "snippet": (item.get("body") or item.get("snippet") or "").strip(),
-        }
-        for item in raw_results
-        if isinstance(item, dict)
-    ]
-    return json.dumps({"query": query, "results": normalized})
+    """Thin compatibility wrapper. Real implementation lives in
+    ``app.generation.web_search.execute`` — kept here so existing tests that
+    monkeypatch ``app.ai_generation._execute_client_side_tool_call`` still
+    work unchanged."""
+    return _web_search_tool.execute(tool_name, arguments_json)
 
 
 @dataclass(frozen=True)
@@ -503,50 +328,13 @@ def _error_generate(newsletter: Newsletter, message: str) -> GeneratedContent:
     )
 
 
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL)
-
-
-def _strip_json_fences(content: str) -> str:
-    """Strip markdown code fences around JSON so models that wrap output still parse."""
-    stripped = content.strip()
-    match = _JSON_FENCE_RE.match(stripped)
-    if match is not None:
-        return match.group(1).strip()
-    return stripped
-
-
-def _extract_json_object_substring(content: str) -> str | None:
-    """Return the largest balanced ``{...}`` substring in ``content`` so we can
-    rescue a strict-JSON payload even when the model wraps it in prose or
-    bullets. Returns None when no balanced object is found."""
-    first_brace = content.find("{")
-    last_brace = content.rfind("}")
-    if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
-        return None
-    return content[first_brace : last_brace + 1]
-
-
 def _parse_structured_generation_output(
     newsletter: Newsletter,
     *,
     content: str,
 ) -> GeneratedContent | None:
-    stripped = _strip_json_fences(content)
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        # Some models (especially Kimi after a search round-trip) wrap the
-        # JSON in a preface like "Here is the newsletter:" or trailing prose.
-        # Try to recover by extracting the outermost braced object.
-        candidate = _extract_json_object_substring(stripped)
-        if candidate is None:
-            return None
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
-
-    if not isinstance(parsed, dict):
+    parsed = _parser.parse_json_loose(content)
+    if parsed is None:
         return None
 
     subject = str(parsed.get("subject") or newsletter.name).strip() or newsletter.name
@@ -727,20 +515,6 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
     )
 
 
-def _validate_generated_content(*, subject: str, preheader: str, body_text: str) -> str | None:
-    if len(subject) > 120:
-        return "Generated subject exceeds the 120 character limit."
-    if not preheader.strip():
-        return "Generated output is missing a preheader."
-    if not body_text.strip():
-        return "Generated output is missing the body content."
-    if "{{" in body_text or "}}" in body_text or "[[" in body_text or "]]" in body_text:
-        return "Generated output contains unresolved placeholder markup."
-    if "%recipient_" in body_text or "%unsubscribe_" in body_text:
-        return "Generated output contains unsupported template variables."
-    return None
-
-
 def _provider_snapshot_json(newsletter: Newsletter) -> str:
     return json.dumps(
         {
@@ -748,51 +522,6 @@ def _provider_snapshot_json(newsletter: Newsletter) -> str:
             "model_name": _provider_model_name(newsletter),
         }
     )
-
-
-def _aggregate_token_usage_json(
-    trace: list[dict[str, Any]], *, fallback_usage: Any = None
-) -> str | None:
-    """Sum prompt/completion tokens across every tool-loop iteration so the
-    programmatic footer reports the true cost of a generation rather than only
-    the last round-trip (which, for Kimi web_search, is the smallest one)."""
-    if not trace:
-        return _serialize_token_usage(fallback_usage)
-
-    prompt_total = 0
-    completion_total = 0
-    for entry in trace:
-        prompt = entry.get("prompt_tokens")
-        if isinstance(prompt, int):
-            prompt_total += prompt
-        completion_val = entry.get("completion_tokens")
-        if isinstance(completion_val, int):
-            completion_total += completion_val
-
-    if prompt_total == 0 and completion_total == 0:
-        return _serialize_token_usage(fallback_usage)
-
-    return json.dumps(
-        {
-            "prompt_tokens": prompt_total,
-            "completion_tokens": completion_total,
-            "total_tokens": prompt_total + completion_total,
-        }
-    )
-
-
-def _serialize_token_usage(usage: Any) -> str | None:
-    if usage is None:
-        return None
-    if isinstance(usage, dict):
-        return json.dumps(usage)
-
-    data = {
-        key: value
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-        if isinstance((value := getattr(usage, key, None)), (int, float))
-    }
-    return json.dumps(data) if data else None
 
 
 def _strip_model_prefix(raw_model: str, provider_type: str) -> str:
