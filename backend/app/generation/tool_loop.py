@@ -31,7 +31,7 @@ def run(
     messages: list[dict[str, Any]],
     api_key: str,
     completion_kwargs: dict[str, Any],
-    max_iterations: int = 8,
+    max_iterations: int = 15,
     tool_executor: ToolExecutor | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Drive a chat-completion conversation until the model stops emitting
