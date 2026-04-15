@@ -778,9 +778,7 @@ def run_newsletter(
     try:
         generated = generate_newsletter_content(newsletter, db_session=db)
     except Exception as exc:
-        _mark_generation_failed(
-            db, generation_run, message=f"{type(exc).__name__}: {exc}"
-        )
+        _mark_generation_failed(db, generation_run, message=f"{type(exc).__name__}: {exc}")
         raise
 
     if generated.status == "error":
