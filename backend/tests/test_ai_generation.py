@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from importlib import reload
 from unittest.mock import Mock
 
@@ -244,13 +245,38 @@ def test_generate_newsletter_content_accepts_structured_json_output(
     assert result.body_text == "First section\n\nSecond section"
 
 
+def test_generate_newsletter_content_enables_client_side_web_search_for_kimi(
+    client: TestClient,
+    monkeypatch,
+):
+    """The Kimi Coding API has no server-resolved web search. We declare a
+    plain function tool that we resolve client-side instead."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(provider_name="kimi", model_name="kimi-k2.5")
+    completion_mock = Mock(
+        return_value=make_completion_response('{"subject":"s","preheader":"p","body_markdown":"b"}')
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    app.ai_generation.generate_newsletter_content(newsletter)
+
+    tools = completion_mock.call_args.kwargs.get("tools")
+    assert tools is not None and len(tools) == 1
+    tool = tools[0]
+    assert tool["type"] == "function"
+    assert tool["function"]["name"] == "web_search"
+    assert "query" in tool["function"]["parameters"]["properties"]
+
+
 @pytest.mark.parametrize(
     "provider_type, expected_tool",
     [
-        (
-            "kimi",
-            {"type": "builtin_function", "function": {"name": "$web_search"}},
-        ),
         (
             "anthropic",
             {"type": "web_search_20250305", "name": "web_search"},
@@ -261,7 +287,7 @@ def test_generate_newsletter_content_accepts_structured_json_output(
         ),
     ],
 )
-def test_generate_newsletter_content_enables_web_search_tool_per_provider(
+def test_generate_newsletter_content_uses_native_server_resolved_tool_for_one_shot_providers(
     client: TestClient,
     monkeypatch,
     provider_type: str,
@@ -286,39 +312,13 @@ def test_generate_newsletter_content_enables_web_search_tool_per_provider(
     assert tools == [expected_tool]
 
 
-def test_generate_newsletter_content_disables_thinking_mode_for_kimi_web_search(
+def test_generate_newsletter_content_executes_client_side_web_search_for_kimi(
     client: TestClient,
     monkeypatch,
 ):
-    """Kimi K2.5's ``$web_search`` builtin is incompatible with thinking mode;
-    the generator must disable thinking whenever the tool is attached."""
-    import app.ai_generation
-
-    newsletter = build_newsletter(provider_name="kimi", model_name="kimi-k2.5")
-    completion_mock = Mock(
-        return_value=make_completion_response('{"subject":"s","preheader":"p","body_markdown":"b"}')
-    )
-    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
-    monkeypatch.setattr(
-        app.ai_generation,
-        "_resolve_api_key_for_newsletter",
-        Mock(return_value=make_api_key_resolution(api_key="test-key")),
-    )
-
-    app.ai_generation.generate_newsletter_content(newsletter)
-
-    extra_body = completion_mock.call_args.kwargs.get("extra_body") or {}
-    assert extra_body.get("thinking") == {"type": "disabled"}
-
-
-def test_generate_newsletter_content_round_trips_kimi_web_search_tool_calls(
-    client: TestClient,
-    monkeypatch,
-):
-    """Kimi's $web_search is not one-shot — the model emits tool_calls, the
-    client must echo ``function.arguments`` back as a role=tool message, and
-    only then does the model run the search and return final content.
-    The generator has to do that round-trip on our behalf."""
+    """When Kimi returns tool_calls for our web_search function, we must
+    actually run the search (DDG) and feed real results back — not echo the
+    arguments like the Moonshot $web_search builtin required."""
     import app.ai_generation
 
     newsletter = build_newsletter(provider_name="kimi", model_name="kimi-k2.5")
@@ -326,8 +326,8 @@ def test_generate_newsletter_content_round_trips_kimi_web_search_tool_calls(
     tool_call = Mock()
     tool_call.id = "call_abc"
     tool_call.function = Mock()
-    tool_call.function.name = "$web_search"
-    tool_call.function.arguments = '{"query": "latest AI news"}'
+    tool_call.function.name = "web_search"
+    tool_call.function.arguments = '{"query": "latest AI news", "max_results": 3}'
 
     # First round: model asks us to run the search.
     first_message = Mock()
@@ -340,7 +340,7 @@ def test_generate_newsletter_content_round_trips_kimi_web_search_tool_calls(
     first_response.choices = [first_choice]
     first_response.usage = None
 
-    # Second round: model produces the final newsletter after the search ran.
+    # Second round: model produces the final newsletter with the search data.
     second_response = make_completion_response(
         '{"subject":"From Web","preheader":"Real news","body_markdown":"Recent stuff."}'
     )
@@ -353,6 +353,20 @@ def test_generate_newsletter_content_round_trips_kimi_web_search_tool_calls(
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
+    # Stub out the real DDG call so tests run offline and deterministically.
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_execute_client_side_tool_call",
+        Mock(
+            return_value=(
+                '{"query": "latest AI news", "results": ['
+                '{"title": "Big AI launch", "url": "https://example.com/ai", '
+                '"snippet": "A major AI company shipped X today."}'
+                "]}"
+            )
+        ),
+    )
+
     result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "generated"
@@ -360,17 +374,68 @@ def test_generate_newsletter_content_round_trips_kimi_web_search_tool_calls(
     assert completion_mock.call_count == 2
 
     second_call_messages = completion_mock.call_args_list[1].kwargs["messages"]
-    has_replayed_assistant_turn = any(
-        m.get("role") == "assistant" and m.get("tool_calls") for m in second_call_messages
-    )
-    assert has_replayed_assistant_turn, (
-        "Second completion call must replay the assistant turn that contained tool_calls."
-    )
     tool_message = next(m for m in second_call_messages if m.get("role") == "tool")
     assert tool_message["tool_call_id"] == "call_abc"
-    assert tool_message["name"] == "$web_search"
-    # Per Kimi docs: echo tool_call.function.arguments back unchanged.
-    assert tool_message["content"] == '{"query": "latest AI news"}'
+    assert tool_message["name"] == "web_search"
+    # The tool message content should be the *executed* search result, not
+    # an echo of the arguments — that's the whole point of this round-trip.
+    assert "Big AI launch" in tool_message["content"]
+    assert tool_message["content"] != '{"query": "latest AI news", "max_results": 3}'
+
+
+def test_execute_client_side_tool_call_returns_error_on_invalid_json(
+    client: TestClient,
+):
+    import app.ai_generation
+
+    result = app.ai_generation._execute_client_side_tool_call("web_search", "{not json")
+    assert "invalid tool arguments json" in result
+
+
+def test_execute_client_side_tool_call_rejects_unknown_tool_names(
+    client: TestClient,
+):
+    import app.ai_generation
+
+    result = app.ai_generation._execute_client_side_tool_call("sudo_rm_rf", '{"x":1}')
+    assert "unknown tool" in result
+
+
+def test_execute_client_side_tool_call_runs_ddg_and_shapes_results(
+    client: TestClient,
+    monkeypatch,
+):
+    """The executor must call DDGS().text() with the query and return a
+    compact JSON string the model can use as tool output."""
+    import app.ai_generation
+
+    fake_ddgs = Mock()
+    fake_ddgs.__enter__ = Mock(return_value=fake_ddgs)
+    fake_ddgs.__exit__ = Mock(return_value=False)
+    fake_ddgs.text = Mock(
+        return_value=[
+            {
+                "title": "Big AI launch",
+                "href": "https://example.com/ai",
+                "body": "A major launch this week.",
+            }
+        ]
+    )
+    monkeypatch.setattr("ddgs.DDGS", lambda: fake_ddgs)
+
+    result = app.ai_generation._execute_client_side_tool_call(
+        "web_search", '{"query": "ai news", "max_results": 3}'
+    )
+    parsed = json.loads(result)
+    assert parsed["query"] == "ai news"
+    assert parsed["results"] == [
+        {
+            "title": "Big AI launch",
+            "url": "https://example.com/ai",
+            "snippet": "A major launch this week.",
+        }
+    ]
+    fake_ddgs.text.assert_called_once_with("ai news", max_results=3)
 
 
 def test_generate_newsletter_content_does_not_pass_tools_for_unsupported_provider(

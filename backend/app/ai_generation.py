@@ -46,14 +46,14 @@ PRESET_BASE_URLS: dict[str, str] = {
 
 
 def _provider_extra_body_for_web_search(provider_name: str) -> dict | None:
-    """Provider-specific ``extra_body`` needed to make web search work.
+    """Hook for provider-specific ``extra_body`` needed when tools are attached.
 
-    Kimi K2.5 ships with thinking mode on by default, and Kimi's own docs state
-    the ``$web_search`` builtin is incompatible with thinking mode — thinking
-    has to be disabled for the search tool to actually fire.
+    Previously disabled Kimi's thinking mode because that was documented as
+    incompatible with the Moonshot ``$web_search`` builtin. Our Kimi path is
+    now a plain client-side ``web_search`` function tool, which thinking mode
+    does not conflict with, so no extra body is required. Keeping the hook in
+    place so future providers have an obvious place to opt in.
     """
-    if provider_name.lower() in {"kimi", "moonshot"}:
-        return {"thinking": {"type": "disabled"}}
     return None
 
 
@@ -64,6 +64,7 @@ def _run_completion_with_tool_loop(
     api_key: str,
     completion_kwargs: dict[str, Any],
     max_iterations: int = 3,
+    client_side_tools: bool = False,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Run the completion call, round-tripping tool_calls when the model asks
     us to execute a (Kimi-style) builtin function.
@@ -135,45 +136,149 @@ def _run_completion_with_tool_loop(
         conversation = copy.deepcopy(conversation)
         conversation.append(assistant_entry)
 
-        # Per Kimi docs for the $web_search builtin: the caller must submit
-        # ``tool_call.function.arguments`` back as the tool response content,
-        # unchanged. Kimi then executes the search server-side.
+        # Client-side path (Kimi Coding plan): we execute each tool call
+        # ourselves and feed the actual result back. The server echo-back
+        # pattern only applied to Moonshot's $web_search builtin, which is not
+        # available on api.kimi.com/coding/v1.
+        #
+        # When client_side_tools is False (Anthropic / Gemini), we wouldn't
+        # normally reach this branch because those providers server-resolve in
+        # one round. Fall back to echoing arguments for safety.
         for tc in tool_calls:
+            if client_side_tools:
+                tool_content = _execute_client_side_tool_call(
+                    tc.function.name, tc.function.arguments
+                )
+            else:
+                tool_content = tc.function.arguments
             conversation.append(
                 {
                     "role": "tool",
                     "tool_call_id": tc.id,
                     "name": tc.function.name,
-                    "content": tc.function.arguments,
+                    "content": tool_content,
                 }
             )
 
     return last_response, trace
 
 
+CLIENT_WEB_SEARCH_TOOL_NAME = "web_search"
+
+CLIENT_WEB_SEARCH_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": CLIENT_WEB_SEARCH_TOOL_NAME,
+        "description": (
+            "Search the open web and return the most relevant recent results. "
+            "Use this before writing the newsletter so every claim is grounded in "
+            "real, citable sources from the last few days. Call it multiple times "
+            "with different queries when you need broader coverage."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query. Keep it specific and keyword-rich.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Number of results to return (1-10).",
+                    "default": 5,
+                    "minimum": 1,
+                    "maximum": 10,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
 def _provider_web_search_tools(provider_name: str) -> list[dict] | None:
     """Return the provider-specific tool payload that enables real-time web
-    search on the generation call, or None if the provider has no supported
-    server-resolved web-search tool.
+    search on the generation call, or None if the provider has no tool support.
 
     This is a newsletter platform — giving the model web access by default is
-    the only way content stays current. Client-resolved tool loops (OpenAI
-    Responses API, OpenRouter `:online` routing) are intentionally left out of
-    this v1 because they need separate plumbing.
+    the only way content stays current.
+
+    Different providers need wildly different shapes:
+
+    - **Kimi (api.kimi.com/coding/v1)** has NO server-resolved web search.
+      Its $web_search builtin only works against api.moonshot.ai/v1, which the
+      Kimi Coding plan subscription does NOT grant access to. To make web
+      search work on this endpoint, we declare a regular client-side
+      ``web_search`` function tool and execute the search ourselves inside the
+      tool loop (see ``_execute_client_side_tool_call``).
+
+    - **Anthropic Claude** has a true server-resolved tool that runs the
+      search on Anthropic's side and returns final content in one round.
+
+    - **Gemini** grounds via Google Search, also server-side / one-shot.
+
+    OpenAI, OpenRouter and Z.ai are deferred: each needs its own path.
     """
     normalized = provider_name.lower()
     if normalized in {"kimi", "moonshot"}:
-        # Moonshot's server-resolved $web_search builtin works via both the
-        # Moonshot chat API and the Kimi Code API (api.kimi.com/coding/v1).
-        return [{"type": "builtin_function", "function": {"name": "$web_search"}}]
+        return [CLIENT_WEB_SEARCH_TOOL_SCHEMA]
     if normalized == "anthropic":
-        # Claude native server-side web search tool.
         return [{"type": "web_search_20250305", "name": "web_search"}]
     if normalized in {"gemini", "google"}:
-        # Gemini grounding via Google Search; LiteLLM forwards this tool shape
-        # to the Gemini API which resolves the search server-side.
         return [{"google_search": {}}]
     return None
+
+
+def _provider_requires_client_side_tool_resolution(provider_name: str) -> bool:
+    """True when the provider's web search has to be executed by us, client-side
+    (Kimi Coding API). False when the provider server-resolves in one round
+    (Anthropic, Gemini) or has no tool support at all."""
+    return provider_name.lower() in {"kimi", "moonshot"}
+
+
+def _execute_client_side_tool_call(tool_name: str, arguments_json: str) -> str:
+    """Run the client-side tool and return a string suitable for sending back
+    as the ``role=tool`` message content. Never raise — always return a
+    human-readable error string so the model can recover gracefully."""
+    if tool_name != CLIENT_WEB_SEARCH_TOOL_NAME:
+        return json.dumps({"error": f"unknown tool: {tool_name}"})
+
+    try:
+        payload = json.loads(arguments_json or "{}")
+    except json.JSONDecodeError as exc:
+        return json.dumps({"error": f"invalid tool arguments json: {exc}"})
+
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return json.dumps({"error": "missing required argument: query"})
+
+    raw_max = payload.get("max_results", 5)
+    try:
+        max_results = max(1, min(int(raw_max), 10))
+    except (TypeError, ValueError):
+        max_results = 5
+
+    try:
+        from ddgs import DDGS  # type: ignore[import-not-found]
+    except ImportError:  # pragma: no cover - ddgs is a hard dependency
+        return json.dumps({"error": "ddgs package is not installed"})
+
+    try:
+        with DDGS() as ddg:
+            raw_results = list(ddg.text(query, max_results=max_results))
+    except Exception as exc:  # DDGS surfaces network/rate-limit errors as Exception
+        return json.dumps({"error": f"search failed: {type(exc).__name__}: {exc}"})
+
+    normalized = [
+        {
+            "title": (item.get("title") or "").strip(),
+            "url": (item.get("href") or item.get("url") or "").strip(),
+            "snippet": (item.get("body") or item.get("snippet") or "").strip(),
+        }
+        for item in raw_results
+        if isinstance(item, dict)
+    ]
+    return json.dumps({"query": query, "results": normalized})
 
 
 @dataclass(frozen=True)
@@ -555,6 +660,7 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
             messages=[{"role": "user", "content": prompt}],
             api_key=api_key,
             completion_kwargs=completion_kwargs,
+            client_side_tools=_provider_requires_client_side_tool_resolution(provider_name),
         )
         content = response.choices[0].message.content or ""
         token_usage_json = _aggregate_token_usage_json(
