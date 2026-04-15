@@ -500,7 +500,7 @@ export function AuditLogsPage() {
           ) : operationalEvents.length === 0 ? (
             <article className="empty-state">
               <h3>No operational events found</h3>
-              <p>Run or send a newsletter to capture delivery, generation, and error activity here.</p>
+              <p>Run a newsletter to capture delivery and generation activity here.</p>
             </article>
           ) : (
             <div className="data-table-container">

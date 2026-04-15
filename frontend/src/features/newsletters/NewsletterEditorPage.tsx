@@ -13,9 +13,17 @@ type NewsletterEditorPageProps = {
   busy: boolean;
   initialNewsletter: NewsletterDetail | null;
   onCancel: () => void;
-  onGenerate?: (newsletterId: number) => Promise<void>;
+  onRun: (newsletterId: number) => Promise<void>;
   onSave: (payload: NewsletterInput, newsletterId?: number) => Promise<void>;
 };
+
+type NewsletterEditorForm = NewsletterInput & {
+  from_email: string;
+};
+
+type NewsletterEditorFieldAliases = Partial<{
+  from_email: string | null;
+}>;
 
 type SelectOption = {
   value: string;
@@ -29,26 +37,21 @@ type ProviderSelectOption = {
 };
 
 const fieldHelpText: Record<string, string> = {
-  name: "Operator-facing name used across the UI, runs, and delivery history.",
-  description: "Internal summary of the newsletter's purpose, audience, or scope.",
-  status: "Lifecycle state that controls whether the newsletter can be scheduled or sent.",
-  prompt: "Instructions sent to the AI provider when generating a draft.",
-  draft_subject: "Subject line used for previews, test sends, and live sends.",
-  draft_preheader: "Preview text shown alongside the subject line in inboxes.",
-  draft_body_text: "Body copy that gets rendered into the selected email template.",
+  name: "Public name of the newsletter",
+  description: "Short summary used in listings and as context for the AI",
+  prompt: "Instructions for the AI. It will generate the subject, preheader, and body automatically.",
   audience_name: "Used for audience segmentation in analytics",
   delivery_topic: "Topic name for webhook filtering and delivery tracking",
   provider_name: "AI provider for content generation (requires matching API key)",
   api_key_id: "Optional active AI API key to pin for this newsletter's generation requests",
   resend_api_key_id: "Resend API key used for email delivery. Make sure the key has a Sender Email configured in Settings > API Keys.",
-  generation_profile_id: "Optional generation profile that defines provider, model, and binding mode explicitly.",
-  delivery_profile_id: "Optional delivery profile that defines Resend binding mode and sender explicitly.",
+  from_email: "Sender email address. If not set, falls back to the Resend API key sender or the environment default.",
   model_name: "Specific AI model to use for generating content",
   template_key: "Email template design that determines the visual layout",
   timezone: "Timezone for interpreting the schedule cron expression",
   schedule_enabled: "Enable automatic recurring sends based on the cron schedule. Requires a valid cron expression.",
   schedule_cron: "Cron expression for recurring sends (e.g., 0 9 * * 1 for Mondays at 9am)",
-  notes: "Internal notes for approvals, runbooks, or editorial context.",
+  notes: "Internal notes, runbooks, or editorial context.",
   recipient_import_text: "Paste one email per line or separate addresses with commas or semicolons."
 };
 
@@ -102,26 +105,48 @@ function getTimezoneOptions(formOptions: FormOptions | null): SelectOption[] {
   }));
 }
 
-function getGenerationProfiles(formOptions: FormOptions | null) {
-  return formOptions?.generation_profiles ?? [];
+function toEditorForm(detail: NewsletterDetail | null): NewsletterEditorForm {
+  const base = (detail ? toNewsletterInput(detail) : emptyNewsletterInput) as NewsletterInput &
+    NewsletterEditorFieldAliases;
+
+  return {
+    name: base.name,
+    description: base.description,
+    prompt: base.prompt,
+    from_email: base.from_email ?? "",
+    provider_id: base.provider_id,
+    provider_name: base.provider_name,
+    api_key_id: base.api_key_id,
+    resend_api_key_id: base.resend_api_key_id,
+    model_name: base.model_name,
+    template_key: base.template_key,
+    audience_name: base.audience_name,
+    delivery_topic: base.delivery_topic,
+    timezone: base.timezone,
+    schedule_cron: base.schedule_cron,
+    schedule_enabled: base.schedule_enabled,
+    status: base.status,
+    notes: base.notes,
+    recipient_import_text: base.recipient_import_text
+  };
 }
 
-function getDeliveryProfiles(formOptions: FormOptions | null) {
-  return formOptions?.delivery_profiles ?? [];
+function toSubmitPayload(form: NewsletterEditorForm): NewsletterInput {
+  return {
+    ...form
+  } as NewsletterInput;
 }
 
 export function NewsletterEditorPage({
   busy,
   initialNewsletter,
   onCancel,
-  onGenerate,
+  onRun,
   onSave
 }: NewsletterEditorPageProps) {
-  const [form, setForm] = useState<NewsletterInput>(
-    initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput
-  );
-  const [savedForm, setSavedForm] = useState<NewsletterInput | null>(
-    initialNewsletter ? toNewsletterInput(initialNewsletter) : null
+  const [form, setForm] = useState<NewsletterEditorForm>(toEditorForm(initialNewsletter));
+  const [savedForm, setSavedForm] = useState<NewsletterEditorForm | null>(
+    initialNewsletter ? toEditorForm(initialNewsletter) : null
   );
   const [formOptions, setFormOptions] = useState<FormOptions | null>(null);
   const [formOptionsError, setFormOptionsError] = useState<string | null>(null);
@@ -138,7 +163,7 @@ export function NewsletterEditorPage({
   }, [form, savedForm]);
 
   useEffect(() => {
-    const nextForm = initialNewsletter ? toNewsletterInput(initialNewsletter) : emptyNewsletterInput;
+    const nextForm = toEditorForm(initialNewsletter);
     setForm(nextForm);
     setSavedForm(initialNewsletter ? nextForm : null);
   }, [initialNewsletter]);
@@ -187,8 +212,6 @@ export function NewsletterEditorPage({
   );
 
   const timezoneOptions = useMemo(() => getTimezoneOptions(formOptions), [formOptions]);
-  const generationProfiles = useMemo(() => getGenerationProfiles(formOptions), [formOptions]);
-  const deliveryProfiles = useMemo(() => getDeliveryProfiles(formOptions), [formOptions]);
   const providerSelectDisabled = loadingOptions || providerOptions.length === 0;
   const modelSelectDisabled = loadingOptions || form.provider_id === null || availableModels.length === 0;
   const templateSelectDisabled = loadingOptions || availableTemplates.length === 0;
@@ -244,14 +267,14 @@ export function NewsletterEditorPage({
     });
   }
 
-  function updateField<K extends keyof NewsletterInput>(key: K, value: NewsletterInput[K]) {
+  function updateField<K extends keyof NewsletterEditorForm>(key: K, value: NewsletterEditorForm[K]) {
     setForm((current) => {
       return { ...current, [key]: value };
     });
   }
 
   async function handleSubmit() {
-    await onSave(form, initialNewsletter?.id);
+    await onSave(toSubmitPayload(form), initialNewsletter?.id);
   }
 
   return (
@@ -261,9 +284,22 @@ export function NewsletterEditorPage({
           <p className="eyebrow">Newsletter editor</p>
           <h2 className="section-title">{title}</h2>
         </div>
-        <button className="secondary-button" onClick={onCancel} type="button">
-          Back to list
-        </button>
+        <div>
+          {initialNewsletter && initialNewsletter.status === "active" ? (
+            <button
+              className="secondary-button"
+              disabled={busy || isDirty}
+              onClick={() => void onRun(initialNewsletter!.id)}
+              title={isDirty ? "Save changes before running" : undefined}
+              type="button"
+            >
+              {busy ? "Working..." : "Run Now"}
+            </button>
+          ) : null}
+          <button className="secondary-button" onClick={onCancel} type="button">
+            Back to list
+          </button>
+        </div>
       </header>
 
       <form className="editor-form newsletter-editor">
@@ -291,7 +327,6 @@ export function NewsletterEditorPage({
             <FieldLabel label="Status" helpText={fieldHelpText.status} />
             <select onChange={(event) => updateField("status", event.target.value)} value={form.status}>
               <option value="">Select status</option>
-              <option value="draft">Draft</option>
               <option value="active">Active</option>
               <option value="paused">Paused</option>
               <option value="archived">Archived</option>
@@ -300,51 +335,16 @@ export function NewsletterEditorPage({
         </div>
 
         <div className="form-section">
-          <h3 className="form-section-title">Content Generation</h3>
+          <h3 className="form-section-title">Prompt</h3>
 
           <label>
             <FieldLabel label="Prompt" helpText={fieldHelpText.prompt} />
             <textarea
               onChange={(event) => updateField("prompt", event.target.value)}
-              rows={4}
+              rows={6}
               value={form.prompt}
             />
           </label>
-
-          {initialNewsletter ? (
-            <p className="form-notice">
-              Draft subject, preheader, and body are managed in the revision preview screen.
-            </p>
-          ) : (
-            <>
-              <div className="form-grid">
-                <label>
-                  <FieldLabel label="Draft Subject" helpText={fieldHelpText.draft_subject} />
-                  <input
-                    onChange={(event) => updateField("draft_subject", event.target.value)}
-                    value={form.draft_subject}
-                  />
-                </label>
-
-                <label>
-                  <FieldLabel label="Draft Preheader" helpText={fieldHelpText.draft_preheader} />
-                  <input
-                    onChange={(event) => updateField("draft_preheader", event.target.value)}
-                    value={form.draft_preheader}
-                  />
-                </label>
-              </div>
-
-              <label>
-                <FieldLabel label="Draft Body" helpText={fieldHelpText.draft_body_text} />
-                <textarea
-                  onChange={(event) => updateField("draft_body_text", event.target.value)}
-                  rows={8}
-                  value={form.draft_body_text}
-                />
-              </label>
-            </>
-          )}
         </div>
 
         <div className="form-section">
@@ -394,43 +394,10 @@ export function NewsletterEditorPage({
 
           <div className="form-grid">
             <label>
-              <FieldLabel label="Generation Profile" helpText={fieldHelpText.generation_profile_id} />
-              <select
-                onChange={(event) => updateField("generation_profile_id", event.target.value ? Number(event.target.value) : null)}
-                value={form.generation_profile_id === null ? "" : String(form.generation_profile_id)}
-              >
-                <option value="">No generation profile selected</option>
-                {generationProfiles.map((profile) => (
-                  <option key={profile.id} value={String(profile.id)}>
-                    {`${profile.name} · ${profile.api_key_binding_mode}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              <FieldLabel label="Delivery Profile" helpText={fieldHelpText.delivery_profile_id} />
-              <select
-                onChange={(event) => updateField("delivery_profile_id", event.target.value ? Number(event.target.value) : null)}
-                value={form.delivery_profile_id === null ? "" : String(form.delivery_profile_id)}
-              >
-                <option value="">No delivery profile selected</option>
-                {deliveryProfiles.map((profile) => (
-                  <option key={profile.id} value={String(profile.id)}>
-                    {`${profile.name} · ${profile.api_key_binding_mode}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="form-grid">
-            <label>
               <FieldLabel label="AI API Key" helpText={fieldHelpText.api_key_id} />
               <select
                 onChange={(event) => updateField("api_key_id", event.target.value ? Number(event.target.value) : null)}
                 value={form.api_key_id === null ? "" : String(form.api_key_id)}
-                disabled={form.generation_profile_id !== null}
               >
                 <option value="">
                   {availableApiKeys.length > 0 ? "No pinned key selected (fail closed)" : "No matching API keys available"}
@@ -453,7 +420,6 @@ export function NewsletterEditorPage({
               <select
                 onChange={(event) => updateField("resend_api_key_id", event.target.value ? Number(event.target.value) : null)}
                 value={form.resend_api_key_id === null ? "" : String(form.resend_api_key_id)}
-                disabled={form.delivery_profile_id !== null}
               >
                 <option value="">
                   {availableResendApiKeys.length > 0
@@ -477,6 +443,15 @@ export function NewsletterEditorPage({
           </div>
 
           <div className="form-grid">
+            <label>
+              <FieldLabel label="From Email" helpText={fieldHelpText.from_email} />
+              <input
+                onChange={(event) => updateField("from_email", event.target.value)}
+                placeholder="newsletter@example.com"
+                value={form.from_email}
+              />
+            </label>
+
             <label>
               <FieldLabel label="Template" helpText={fieldHelpText.template_key} />
               <select
@@ -586,17 +561,6 @@ export function NewsletterEditorPage({
           <button className="primary-button" disabled={busy} onClick={() => void handleSubmit()} type="button">
             {busy ? "Saving..." : initialNewsletter ? "Save Newsletter" : "Create Newsletter"}
           </button>
-          {initialNewsletter ? (
-            <button
-              className="secondary-button"
-              disabled={busy || isDirty}
-              onClick={() => void onGenerate?.(initialNewsletter.id)}
-              title={isDirty ? "Save changes before generating" : undefined}
-              type="button"
-            >
-              {busy ? "Working..." : isDirty ? "Save to Enable Generate" : "Generate Draft"}
-            </button>
-          ) : null}
         </div>
       </form>
     </section>

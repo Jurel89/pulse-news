@@ -1,4 +1,4 @@
-.omx/
+.omc/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
@@ -16,7 +16,6 @@ data/
 
 # Internal planning and agent docs — not for public repo
 .planning/
-AGENTS.md
 CLAUDE.md
 .claude/
 .agents/
@@ -36,3 +35,5 @@ backend/uv.lock
 # Temporary screenshots
 *-page*.png
 pulse-*.png
+frontend/test-results/
+frontend/playwright-report/

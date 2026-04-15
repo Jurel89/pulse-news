@@ -19,14 +19,14 @@ class RenderedNewsletter:
     template_key: str
 
 
-def normalize_draft_content(newsletter: Newsletter) -> tuple[str, str, str]:
-    subject = newsletter.draft_subject.strip() or newsletter.name
-    preheader = (newsletter.draft_preheader or newsletter.description or "").strip()
-    body = newsletter.draft_body_text.strip() or newsletter.description or ""
+def normalize_newsletter_content(newsletter: Newsletter) -> tuple[str, str, str]:
+    subject = newsletter.subject.strip() or newsletter.name
+    preheader = (newsletter.preheader or newsletter.description or "").strip()
+    body = newsletter.body_text.strip() or newsletter.description or ""
     return subject, preheader, body
 
 
-def normalize_revision_content(
+def normalize_content_fields(
     newsletter: Newsletter,
     *,
     subject: str,
@@ -244,7 +244,7 @@ def render_custom_template(
 
 
 def render_newsletter(newsletter: Newsletter) -> RenderedNewsletter:
-    subject, preheader, body = normalize_draft_content(newsletter)
+    subject, preheader, body = normalize_newsletter_content(newsletter)
     return render_newsletter_content(newsletter, subject=subject, preheader=preheader, body=body)
 
 
@@ -260,7 +260,7 @@ def render_newsletter_content(
     from app.deps import get_db_session
     from app.models import EmailTemplate
 
-    subject, preheader, body = normalize_revision_content(
+    subject, preheader, body = normalize_content_fields(
         newsletter,
         subject=subject,
         preheader=preheader,

@@ -130,8 +130,6 @@ jobs:
         run: |
           PULSE_NEWS_ENVIRONMENT=development \
           PULSE_NEWS_SECRET_KEY=ci-secret \
-          PULSE_NEWS_ALLOW_SIMULATED_AI_GENERATION=true \
-          PULSE_NEWS_ALLOW_SIMULATED_EMAIL_DELIVERY=true \
           PORT=9876 make up
 
       - name: Wait for Pulse News health
