@@ -80,22 +80,29 @@ def _run_completion_with_tool_loop(
     messages: list[dict[str, Any]],
     api_key: str,
     completion_kwargs: dict[str, Any],
-    max_iterations: int = 3,
+    max_iterations: int | None = None,
     client_side_tools: bool = False,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Compatibility wrapper over ``app.generation.tool_loop.run``. Existing
     tests monkeypatch ``app.ai_generation.completion`` and
     ``_execute_client_side_tool_call``; keep those resolved from this module's
-    namespace so the patches still take effect."""
-    return _tool_loop.run(
-        completion=completion,
-        model=model,
-        messages=messages,
-        api_key=api_key,
-        completion_kwargs=completion_kwargs,
-        max_iterations=max_iterations,
-        tool_executor=_execute_client_side_tool_call if client_side_tools else None,
-    )
+    namespace so the patches still take effect.
+
+    ``max_iterations=None`` means \"use the library default\". Don't hard-code
+    a value here — that previously shadowed the library's cap and kept
+    generations stuck at 3 rounds.
+    """
+    kwargs: dict[str, Any] = {
+        "completion": completion,
+        "model": model,
+        "messages": messages,
+        "api_key": api_key,
+        "completion_kwargs": completion_kwargs,
+        "tool_executor": _execute_client_side_tool_call if client_side_tools else None,
+    }
+    if max_iterations is not None:
+        kwargs["max_iterations"] = max_iterations
+    return _tool_loop.run(**kwargs)
 
 
 def _execute_client_side_tool_call(tool_name: str, arguments_json: str) -> str:
@@ -407,9 +414,31 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
     if credential_resolution.api_key is None:
         return _error_generate(newsletter, credential_resolution.detail)
 
+    # Anchor the model to today's real date so it searches for *current* news
+    # instead of defaulting to its training cutoff. Without this, Kimi
+    # confidently produces e.g. Week 25 / June 2025 content even with the
+    # web_search tool available.
+    from datetime import UTC, datetime
+
+    today = datetime.now(UTC).date()
+    iso_week = today.isocalendar()
+    current_date_line = (
+        f"Today is {today.isoformat()} (ISO week {iso_week.week} of {iso_week.year}). "
+        "Treat this as the authoritative current date. Any mention of "
+        '"this week" or "last 7 days" in the instructions below refers '
+        f"to the window ending on {today.isoformat()}. Do not rely on your "
+        "training data's sense of the current date — use the web_search "
+        "tool with queries that include the current month and year to "
+        "surface genuinely recent sources, and reject search results that "
+        "pre-date the last 7 days unless they are the only coverage of an "
+        "event from this window."
+    )
+
     prompt = "\n".join(
         [
             "You are writing a newsletter.",
+            "",
+            current_date_line,
             "",
             f"Newsletter name: {newsletter.name}",
             f"Description: {newsletter.description or 'None'}",

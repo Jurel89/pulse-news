@@ -127,6 +127,12 @@ def test_generate_newsletter_content_uses_litellm_when_provider_credentials_exis
     assert "Instructions:" in prompt_text
     assert "Write the newsletter with:" in prompt_text
     assert '{"subject":"...","preheader":"...","body_markdown":"..."}' in prompt_text
+    # Without a concrete current date, Kimi anchors to its training cutoff
+    # and produces stale news. Enforce that today's date is injected.
+    from datetime import UTC, datetime
+
+    assert datetime.now(UTC).date().isoformat() in prompt_text
+    assert "Today is " in prompt_text
 
 
 def test_generate_newsletter_content_returns_error_when_litellm_raises_by_default(
