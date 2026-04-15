@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -265,13 +266,25 @@ def _error_generate(newsletter: Newsletter, message: str) -> GeneratedContent:
     )
 
 
+_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_json_fences(content: str) -> str:
+    """Strip markdown code fences around JSON so models that wrap output still parse."""
+    stripped = content.strip()
+    match = _JSON_FENCE_RE.match(stripped)
+    if match is not None:
+        return match.group(1).strip()
+    return stripped
+
+
 def _parse_structured_generation_output(
     newsletter: Newsletter,
     *,
     content: str,
 ) -> GeneratedContent | None:
     try:
-        parsed = json.loads(content)
+        parsed = json.loads(_strip_json_fences(content))
     except json.JSONDecodeError:
         return None
 

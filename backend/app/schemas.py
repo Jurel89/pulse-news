@@ -538,6 +538,7 @@ class NewsletterRunSummary(BaseModel):
     delivery_outcomes: str
     result_mode: str | None
     result_message: str | None
+    failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
