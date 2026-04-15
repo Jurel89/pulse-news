@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email
-from app.email_templates import render_newsletter_content
+from app.email_templates import GenerationMeta, render_newsletter_content
 from app.models import (
     ApiKey,
     AuditEvent,
@@ -307,6 +307,7 @@ def execute_newsletter_send(
     trigger_mode: str,
     idempotency_key: str | None = None,
     fire_scope: str | None = None,
+    generation_meta: GenerationMeta | None = None,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
     validate_send_allowed(newsletter)
 
@@ -366,6 +367,7 @@ def execute_newsletter_send(
             subject=newsletter.subject,
             preheader=newsletter.preheader,
             body=newsletter.body_text,
+            generation_meta=generation_meta,
         )
         run.rendered_subject = rendered.subject
         run.rendered_preheader = rendered.preheader
@@ -708,6 +710,54 @@ def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> Newsl
     return serialize_newsletter_detail(newsletter)
 
 
+def _summarize_tool_loop_trace(trace_json: str | None) -> str | None:
+    """Produce a one-line summary of the tool-loop trace for the logs page.
+
+    Operators need to know at a glance whether web search actually fired or
+    whether the provider silently ignored our tool payload. Format example:
+      "Tool loop: 2 iterations; finish_reasons=tool_calls,stop; tool_calls=1,0"
+    """
+    if not trace_json:
+        return None
+    try:
+        trace = json.loads(trace_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(trace, list) or not trace:
+        return None
+    finish_reasons = ",".join(
+        str(entry.get("finish_reason") or "?") for entry in trace if isinstance(entry, dict)
+    )
+    tool_call_counts = ",".join(
+        str(entry.get("tool_calls_count") or 0) for entry in trace if isinstance(entry, dict)
+    )
+    return (
+        f"Tool loop: {len(trace)} iteration(s); "
+        f"finish_reasons={finish_reasons}; tool_calls={tool_call_counts}"
+    )
+
+
+def _generation_meta_from_generated(newsletter: Newsletter, generated) -> GenerationMeta:
+    """Build the render-time footer facts from what the backend observed on the
+    generation call — never trust the model to self-report identity or cost."""
+    input_tokens: int | None = None
+    try:
+        usage = json.loads(getattr(generated, "token_usage_json", None) or "{}")
+        raw = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        if isinstance(raw, int):
+            input_tokens = raw
+        elif isinstance(raw, str) and raw.isdigit():
+            input_tokens = int(raw)
+    except (json.JSONDecodeError, ValueError):
+        input_tokens = None
+
+    return GenerationMeta(
+        provider=(newsletter.provider_name or None),
+        model=(newsletter.model_name or None),
+        input_tokens=input_tokens,
+    )
+
+
 def _create_generation_run(
     db: DbSession,
     newsletter: Newsletter,
@@ -748,10 +798,14 @@ def _mark_generation_failed(
     run: NewsletterRun,
     *,
     message: str,
+    tool_loop_summary: str | None = None,
 ) -> None:
+    full_message = message
+    if tool_loop_summary:
+        full_message = f"{message} [{tool_loop_summary}]"
     run.run_status = "failed"
-    run.failure_reason = message
-    run.result_message = f"AI generation failed: {message}"
+    run.failure_reason = full_message
+    run.result_message = f"AI generation failed: {full_message}"
     run.completed_at = utc_now()
     db.add(run)
     add_run_event(
@@ -759,7 +813,7 @@ def _mark_generation_failed(
         run,
         event_type="generation",
         event_status="failed",
-        message=message,
+        message=full_message,
     )
     db.commit()
 
@@ -782,14 +836,26 @@ def run_newsletter(
         raise
 
     if generated.status == "error":
-        _mark_generation_failed(db, generation_run, message=generated.message)
+        _mark_generation_failed(
+            db,
+            generation_run,
+            message=generated.message,
+            tool_loop_summary=_summarize_tool_loop_trace(
+                getattr(generated, "tool_loop_trace_json", None)
+            ),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Generation failed: {generated.message}",
         )
 
+    tool_loop_summary = _summarize_tool_loop_trace(getattr(generated, "tool_loop_trace_json", None))
+    generation_message = "AI generation succeeded."
+    if tool_loop_summary:
+        generation_message = f"{generation_message} {tool_loop_summary}"
+
     generation_run.run_status = "generated"
-    generation_run.result_message = "AI generation succeeded."
+    generation_run.result_message = generation_message
     generation_run.completed_at = utc_now()
     db.add(generation_run)
     add_run_event(
@@ -797,7 +863,7 @@ def run_newsletter(
         generation_run,
         event_type="generation",
         event_status="generated",
-        message="AI generation succeeded.",
+        message=generation_message,
     )
 
     newsletter.subject = generated.subject
@@ -817,6 +883,7 @@ def run_newsletter(
         newsletter,
         trigger_mode="manual-run",
         fire_scope=str(uuid.uuid4()),
+        generation_meta=_generation_meta_from_generated(newsletter, generated),
     )
     return response
 

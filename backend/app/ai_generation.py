@@ -3,17 +3,35 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from app.crypto import decrypt_secret
+from app.generation import fetch_url as _fetch_url_tool
+from app.generation import parser as _parser
+from app.generation import tool_loop as _tool_loop
+from app.generation import tool_registry as _tool_registry
+from app.generation import usage as _usage
+from app.generation import web_search as _web_search_tool
 from app.models import Newsletter
 
 try:  # pragma: no cover - exercised conditionally when dependency is present and configured
     from litellm import completion
 except Exception:  # pragma: no cover - local fallback path handles absence
     completion = None
+
+# Compatibility re-exports: tests and external callers import these names
+# directly from ``app.ai_generation``. Keep the surface stable even though the
+# real implementations live in ``app.generation.*``.
+CLIENT_WEB_SEARCH_TOOL_NAME = _web_search_tool.TOOL_NAME
+CLIENT_WEB_SEARCH_TOOL_SCHEMA = _web_search_tool.TOOL_SCHEMA
+_strip_json_fences = _parser.strip_json_fences
+_extract_json_object_substring = _parser.extract_json_object_substring
+_validate_generated_content = _parser.validate_generated_content
+_serialize_token_usage = _usage.serialize
+_aggregate_token_usage_json = _usage.aggregate_from_trace
+_provider_web_search_tools = _tool_registry.web_search_tools_for
+_provider_requires_client_side_tool_resolution = _tool_registry.requires_client_side_resolution
 
 
 @dataclass
@@ -27,6 +45,7 @@ class GeneratedContent:
     provider_snapshot_json: str | None = None
     token_usage_json: str | None = None
     raw_response_hash: str | None = None
+    tool_loop_trace_json: str | None = None
 
 
 SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter", "zai", "kimi"}
@@ -42,6 +61,70 @@ PRESET_BASE_URLS: dict[str, str] = {
     "zai": "https://api.z.ai/api/paas/v4/",
     "kimi": "https://api.kimi.com/coding/v1",
 }
+
+
+def _provider_extra_body_for_web_search(provider_name: str) -> dict | None:
+    """Hook for provider-specific ``extra_body`` needed when tools are attached.
+
+    Previously disabled Kimi's thinking mode because that was documented as
+    incompatible with the Moonshot ``$web_search`` builtin. Our Kimi path is
+    now a plain client-side ``web_search`` function tool, which thinking mode
+    does not conflict with, so no extra body is required. Keeping the hook in
+    place so future providers have an obvious place to opt in.
+    """
+    return None
+
+
+def _run_completion_with_tool_loop(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    api_key: str,
+    completion_kwargs: dict[str, Any],
+    max_iterations: int | None = None,
+    client_side_tools: bool = False,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Compatibility wrapper over ``app.generation.tool_loop.run``. Existing
+    tests monkeypatch ``app.ai_generation.completion`` and
+    ``_execute_client_side_tool_call``; keep those resolved from this module's
+    namespace so the patches still take effect.
+
+    ``max_iterations=None`` means \"use the library default\". Don't hard-code
+    a value here — that previously shadowed the library's cap and kept
+    generations stuck at 3 rounds.
+    """
+    kwargs: dict[str, Any] = {
+        "completion": completion,
+        "model": model,
+        "messages": messages,
+        "api_key": api_key,
+        "completion_kwargs": completion_kwargs,
+        "tool_executor": _execute_client_side_tool_call if client_side_tools else None,
+    }
+    if max_iterations is not None:
+        kwargs["max_iterations"] = max_iterations
+    return _tool_loop.run(**kwargs)
+
+
+# Map tool name → the tool module. We store the module (not a bound
+# reference to ``.execute``) so tests can monkeypatch ``module.execute``
+# and the dispatcher picks up the replacement.
+_CLIENT_SIDE_TOOL_MODULES = {
+    _web_search_tool.TOOL_NAME: _web_search_tool,
+    _fetch_url_tool.TOOL_NAME: _fetch_url_tool,
+}
+
+
+def _execute_client_side_tool_call(tool_name: str, arguments_json: str) -> str:
+    """Dispatch to the client-side tool registered under ``tool_name``.
+
+    Kept on ``app.ai_generation`` (not moved into a dedicated module) so
+    existing tests that monkeypatch this name continue to work.
+    """
+    module = _CLIENT_SIDE_TOOL_MODULES.get(tool_name)
+    if module is None:
+        return json.dumps({"error": f"unknown tool: {tool_name}"})
+    return module.execute(tool_name, arguments_json)
 
 
 @dataclass(frozen=True)
@@ -266,29 +349,13 @@ def _error_generate(newsletter: Newsletter, message: str) -> GeneratedContent:
     )
 
 
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.IGNORECASE | re.DOTALL)
-
-
-def _strip_json_fences(content: str) -> str:
-    """Strip markdown code fences around JSON so models that wrap output still parse."""
-    stripped = content.strip()
-    match = _JSON_FENCE_RE.match(stripped)
-    if match is not None:
-        return match.group(1).strip()
-    return stripped
-
-
 def _parse_structured_generation_output(
     newsletter: Newsletter,
     *,
     content: str,
 ) -> GeneratedContent | None:
-    try:
-        parsed = json.loads(_strip_json_fences(content))
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(parsed, dict):
+    parsed = _parser.parse_json_loose(content)
+    if parsed is None:
         return None
 
     subject = str(parsed.get("subject") or newsletter.name).strip() or newsletter.name
@@ -361,9 +428,31 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
     if credential_resolution.api_key is None:
         return _error_generate(newsletter, credential_resolution.detail)
 
+    # Anchor the model to today's real date so it searches for *current* news
+    # instead of defaulting to its training cutoff. Without this, Kimi
+    # confidently produces e.g. Week 25 / June 2025 content even with the
+    # web_search tool available.
+    from datetime import UTC, datetime
+
+    today = datetime.now(UTC).date()
+    iso_week = today.isocalendar()
+    current_date_line = (
+        f"Today is {today.isoformat()} (ISO week {iso_week.week} of {iso_week.year}). "
+        "Treat this as the authoritative current date. Any mention of "
+        '"this week" or "last 7 days" in the instructions below refers '
+        f"to the window ending on {today.isoformat()}. Do not rely on your "
+        "training data's sense of the current date — use the web_search "
+        "tool with queries that include the current month and year to "
+        "surface genuinely recent sources, and reject search results that "
+        "pre-date the last 7 days unless they are the only coverage of an "
+        "event from this window."
+    )
+
     prompt = "\n".join(
         [
             "You are writing a newsletter.",
+            "",
+            current_date_line,
             "",
             f"Newsletter name: {newsletter.name}",
             f"Description: {newsletter.description or 'None'}",
@@ -395,14 +484,41 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
                 "User-Agent": os.environ.get("LITELLM_USER_AGENT", "claude-code/0.1.0"),
             }
 
-        response = completion(
+        # Always enable web search when the provider supports it. This is a
+        # newsletter platform — without real-time web access the model just
+        # hallucinates "recent" news from training data.
+        web_search_tools = _provider_web_search_tools(provider_name)
+        if web_search_tools is not None:
+            completion_kwargs.setdefault("tools", web_search_tools)
+            extra_body_for_tools = _provider_extra_body_for_web_search(provider_name)
+            if extra_body_for_tools is not None:
+                merged_extra_body = {
+                    **(completion_kwargs.get("extra_body") or {}),
+                    **extra_body_for_tools,
+                }
+                completion_kwargs["extra_body"] = merged_extra_body
+
+        # Opt-in request/response logging for debugging tool-call round-trips.
+        if os.environ.get("PULSE_NEWS_LITELLM_DEBUG") == "1":
+            try:
+                import litellm as _litellm  # noqa: WPS433
+
+                _litellm.set_verbose = True
+            except Exception:  # pragma: no cover - debug path
+                pass
+
+        response, tool_loop_trace = _run_completion_with_tool_loop(
             model=_provider_model_name(newsletter),
             messages=[{"role": "user", "content": prompt}],
             api_key=api_key,
-            **completion_kwargs,
+            completion_kwargs=completion_kwargs,
+            client_side_tools=_provider_requires_client_side_tool_resolution(provider_name),
         )
         content = response.choices[0].message.content or ""
-        token_usage_json = _serialize_token_usage(getattr(response, "usage", None))
+        token_usage_json = _aggregate_token_usage_json(
+            tool_loop_trace, fallback_usage=getattr(response, "usage", None)
+        )
+        tool_loop_trace_json = json.dumps(tool_loop_trace) if tool_loop_trace else None
         raw_response_hash = hashlib.sha256(content.encode()).hexdigest()
     except ValueError as exc:
         return _error_generate(newsletter, str(exc))
@@ -419,33 +535,27 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
     if structured_result is not None:
         structured_result.token_usage_json = token_usage_json
         structured_result.raw_response_hash = raw_response_hash
+        structured_result.tool_loop_trace_json = tool_loop_trace_json
         return structured_result
 
+    preview_len = 600
+    content_preview = (content or "").strip()[:preview_len]
+    parse_failure_message = (
+        "AI output could not be parsed as strict JSON. "
+        f"First {preview_len} chars of raw response: {content_preview!r}"
+    )
     return GeneratedContent(
         status="error",
         mode="litellm",
-        message="AI output could not be parsed as strict JSON.",
+        message=parse_failure_message,
         subject=newsletter.name,
         preheader=newsletter.description or "",
         body_text=content[:500] if content else "",
         provider_snapshot_json=_provider_snapshot_json(newsletter),
         token_usage_json=token_usage_json,
         raw_response_hash=raw_response_hash,
+        tool_loop_trace_json=tool_loop_trace_json,
     )
-
-
-def _validate_generated_content(*, subject: str, preheader: str, body_text: str) -> str | None:
-    if len(subject) > 120:
-        return "Generated subject exceeds the 120 character limit."
-    if not preheader.strip():
-        return "Generated output is missing a preheader."
-    if not body_text.strip():
-        return "Generated output is missing the body content."
-    if "{{" in body_text or "}}" in body_text or "[[" in body_text or "]]" in body_text:
-        return "Generated output contains unresolved placeholder markup."
-    if "%recipient_" in body_text or "%unsubscribe_" in body_text:
-        return "Generated output contains unsupported template variables."
-    return None
 
 
 def _provider_snapshot_json(newsletter: Newsletter) -> str:
@@ -455,20 +565,6 @@ def _provider_snapshot_json(newsletter: Newsletter) -> str:
             "model_name": _provider_model_name(newsletter),
         }
     )
-
-
-def _serialize_token_usage(usage: Any) -> str | None:
-    if usage is None:
-        return None
-    if isinstance(usage, dict):
-        return json.dumps(usage)
-
-    data = {
-        key: value
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-        if isinstance((value := getattr(usage, key, None)), (int, float))
-    }
-    return json.dumps(data) if data else None
 
 
 def _strip_model_prefix(raw_model: str, provider_type: str) -> str:
