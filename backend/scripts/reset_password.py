@@ -9,6 +9,7 @@ Side effects:
 - Marks bootstrap as complete so the login form replaces the bootstrap form on
   the next page load.
 """
+
 from __future__ import annotations
 
 import os
