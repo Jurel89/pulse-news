@@ -273,11 +273,11 @@ def test_generate_newsletter_content_enables_client_side_web_search_for_kimi(
     app.ai_generation.generate_newsletter_content(newsletter)
 
     tools = completion_mock.call_args.kwargs.get("tools")
-    assert tools is not None and len(tools) == 1
-    tool = tools[0]
-    assert tool["type"] == "function"
-    assert tool["function"]["name"] == "web_search"
-    assert "query" in tool["function"]["parameters"]["properties"]
+    assert tools is not None
+    tool_names = {t["function"]["name"] for t in tools if t.get("type") == "function"}
+    assert "web_search" in tool_names
+    web_search_tool = next(t for t in tools if t["function"]["name"] == "web_search")
+    assert "query" in web_search_tool["function"]["parameters"]["properties"]
 
 
 @pytest.mark.parametrize(
@@ -464,6 +464,113 @@ def test_execute_client_side_tool_call_returns_error_on_invalid_json(
 
     result = app.ai_generation._execute_client_side_tool_call("web_search", "{not json")
     assert "invalid tool arguments json" in result
+
+
+def test_kimi_tools_payload_includes_fetch_url(
+    client: TestClient,
+    monkeypatch,
+):
+    """Kimi should be offered both web_search (discovery) and fetch_url
+    (verification) so it can quote from sources instead of inventing
+    details based on search snippets alone."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(provider_name="kimi", model_name="kimi-k2.5")
+    completion_mock = Mock(
+        return_value=make_completion_response('{"subject":"s","preheader":"p","body_markdown":"b"}')
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    app.ai_generation.generate_newsletter_content(newsletter)
+
+    tools = completion_mock.call_args.kwargs.get("tools") or []
+    tool_names = {t.get("function", {}).get("name") for t in tools if t.get("type") == "function"}
+    assert "web_search" in tool_names
+    assert "fetch_url" in tool_names
+
+
+def test_execute_client_side_tool_call_dispatches_fetch_url(
+    client: TestClient,
+    monkeypatch,
+):
+    """The ai_generation dispatcher must route fetch_url calls to the
+    fetch_url executor, not to web_search."""
+    import app.ai_generation
+    from app.generation import fetch_url
+
+    fake = Mock(return_value='{"ok": true}')
+    monkeypatch.setattr(fetch_url, "execute", fake)
+
+    result = app.ai_generation._execute_client_side_tool_call(
+        "fetch_url", '{"url": "https://example.com"}'
+    )
+    fake.assert_called_once_with("fetch_url", '{"url": "https://example.com"}')
+    assert result == '{"ok": true}'
+
+
+def test_fetch_url_tool_executes_http_get_and_returns_cleaned_content(
+    client: TestClient,
+    monkeypatch,
+):
+    """fetch_url should GET the url, strip scripts/styles/tags, extract the
+    page title, and return a compact JSON payload the model can quote from."""
+    from app.generation import fetch_url
+
+    html = b"""
+    <html>
+      <head>
+        <title>   Test Page   </title>
+        <style>.x { color: red; }</style>
+        <script>alert(1);</script>
+      </head>
+      <body>
+        <h1>Hello</h1>
+        <p>The &amp; in HTML must decode.</p>
+      </body>
+    </html>
+    """.strip()
+
+    class FakeResponse:
+        status = 200
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        def read(self, _limit):
+            return html
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, timeout=None: FakeResponse(),
+    )
+
+    result = fetch_url.execute("fetch_url", '{"url": "https://example.com/post"}')
+    parsed = json.loads(result)
+    assert parsed["status"] == 200
+    assert parsed["title"] == "Test Page"
+    assert "Hello" in parsed["content"]
+    assert "The & in HTML must decode." in parsed["content"]
+    assert "alert(1)" not in parsed["content"]
+    assert "color: red" not in parsed["content"]
+
+
+def test_fetch_url_tool_rejects_non_http_urls(client: TestClient):
+    from app.generation import fetch_url
+
+    result = fetch_url.execute("fetch_url", '{"url": "file:///etc/passwd"}')
+    assert "must start with http" in result
+
+    result = fetch_url.execute("fetch_url", "{}")
+    assert "missing required argument: url" in result
 
 
 def test_execute_client_side_tool_call_rejects_unknown_tool_names(

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.crypto import decrypt_secret
+from app.generation import fetch_url as _fetch_url_tool
 from app.generation import parser as _parser
 from app.generation import tool_loop as _tool_loop
 from app.generation import tool_registry as _tool_registry
@@ -105,12 +106,25 @@ def _run_completion_with_tool_loop(
     return _tool_loop.run(**kwargs)
 
 
+# Map tool name → the tool module. We store the module (not a bound
+# reference to ``.execute``) so tests can monkeypatch ``module.execute``
+# and the dispatcher picks up the replacement.
+_CLIENT_SIDE_TOOL_MODULES = {
+    _web_search_tool.TOOL_NAME: _web_search_tool,
+    _fetch_url_tool.TOOL_NAME: _fetch_url_tool,
+}
+
+
 def _execute_client_side_tool_call(tool_name: str, arguments_json: str) -> str:
-    """Thin compatibility wrapper. Real implementation lives in
-    ``app.generation.web_search.execute`` — kept here so existing tests that
-    monkeypatch ``app.ai_generation._execute_client_side_tool_call`` still
-    work unchanged."""
-    return _web_search_tool.execute(tool_name, arguments_json)
+    """Dispatch to the client-side tool registered under ``tool_name``.
+
+    Kept on ``app.ai_generation`` (not moved into a dedicated module) so
+    existing tests that monkeypatch this name continue to work.
+    """
+    module = _CLIENT_SIDE_TOOL_MODULES.get(tool_name)
+    if module is None:
+        return json.dumps({"error": f"unknown tool: {tool_name}"})
+    return module.execute(tool_name, arguments_json)
 
 
 @dataclass(frozen=True)

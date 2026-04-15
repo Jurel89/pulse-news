@@ -10,7 +10,7 @@ we want web access on by default, no per-newsletter toggle.
 
 from __future__ import annotations
 
-from app.generation import web_search
+from app.generation import fetch_url, web_search
 
 
 def web_search_tools_for(provider_name: str) -> list[dict] | None:
@@ -30,7 +30,7 @@ def web_search_tools_for(provider_name: str) -> list[dict] | None:
     """
     normalized = provider_name.lower()
     if normalized in {"kimi", "moonshot"}:
-        return [web_search.TOOL_SCHEMA]
+        return [web_search.TOOL_SCHEMA, fetch_url.TOOL_SCHEMA]
     if normalized == "anthropic":
         return [{"type": "web_search_20250305", "name": "web_search"}]
     if normalized in {"gemini", "google"}:
