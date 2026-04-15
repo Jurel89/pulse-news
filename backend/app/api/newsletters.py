@@ -864,7 +864,6 @@ def pause_newsletter(newsletter_id: int, request: Request, db: DbSession) -> New
     user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     newsletter.status = "paused"
-    newsletter.schedule_enabled = False
     db.add(newsletter)
     create_audit_event(
         db,

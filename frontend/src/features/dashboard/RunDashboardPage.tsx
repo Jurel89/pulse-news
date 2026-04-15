@@ -434,7 +434,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
                                         </div>
                                         <span
                                           className={`status-badge ${
-                                            outcome.status === "delivered"
+                                            outcome.status === "sent" || outcome.status === "delivered"
                                               ? "status-active"
                                               : outcome.status === "bounced" || outcome.status === "failed"
                                                 ? "status-paused"
