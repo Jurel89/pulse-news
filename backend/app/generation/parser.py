@@ -65,15 +65,25 @@ def parse_json_loose(content: str) -> dict | None:
 
 def validate_generated_content(*, subject: str, preheader: str, body_text: str) -> str | None:
     """Return an error message if the generated fields fail our newsletter
-    guardrails, or None when the content is acceptable."""
+    guardrails, or None when the content is acceptable.
+
+    Kept deliberately narrow. ``body_text`` is free-form markdown written by
+    the model — characters like ``{{``, ``}}``, ``[[``, ``]]`` can legitimately
+    appear (footnote references, code snippets, Obsidian-style links) and the
+    email-rendering path HTML-escapes them anyway, so they cannot break
+    output. Previously we rejected the entire generation on those characters,
+    which meant discarding a 15-round search-grounded newsletter over a
+    single ``[[1]]`` citation marker. Don't do that again.
+
+    We still reject the real unsubscribe/recipient substitution tokens,
+    because those *are* leaked templating that would confuse recipients.
+    """
     if len(subject) > 120:
         return "Generated subject exceeds the 120 character limit."
     if not preheader.strip():
         return "Generated output is missing a preheader."
     if not body_text.strip():
         return "Generated output is missing the body content."
-    if "{{" in body_text or "}}" in body_text or "[[" in body_text or "]]" in body_text:
-        return "Generated output contains unresolved placeholder markup."
     if "%recipient_" in body_text or "%unsubscribe_" in body_text:
         return "Generated output contains unsupported template variables."
     return None
