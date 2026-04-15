@@ -92,9 +92,9 @@ def create_newsletter(client: TestClient) -> dict:
             "name": "Scheduler Brief",
             "description": "Recurring scheduling test",
             "prompt": "Generate a recurring operations newsletter.",
-            "draft_subject": "Scheduler Brief",
-            "draft_preheader": "Recurring operations pulse",
-            "draft_body_text": "Recurring story block",
+            "subject": "Scheduler Brief",
+            "preheader": "Recurring operations pulse",
+            "body_text": "Recurring story block",
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
             "template_key": "signal",
@@ -112,6 +112,39 @@ def create_newsletter(client: TestClient) -> dict:
     return response.json()
 
 
+def _stub_generation_and_delivery(monkeypatch) -> None:
+    import app.ai_generation
+    import app.config
+
+    monkeypatch.setattr(
+        "app.api.newsletters.generate_newsletter_content",
+        lambda newsletter, db_session=None: app.ai_generation.GeneratedContent(
+            status="generated",
+            mode="litellm",
+            message="Generated content successfully.",
+            subject="Generated Subject",
+            preheader="Generated preheader",
+            body_text="Generated body content",
+            provider_snapshot_json="{}",
+        ),
+    )
+
+    class FakeResponse:
+        def read(self):
+            return b'{"id":"resend-msg-id"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("app.email_delivery.request.urlopen", lambda req, timeout: FakeResponse())
+    monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
+    app.config.get_settings.cache_clear()
+
+
 def test_schedule_controls_enable_and_disable_newsletter_schedule(client: TestClient):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
@@ -125,66 +158,50 @@ def test_schedule_controls_enable_and_disable_newsletter_schedule(client: TestCl
     assert pause_response.json()["schedule_enabled"] is False
 
 
-def test_run_dashboard_filters_and_details(client: TestClient):
+def test_run_dashboard_filters_and_details(client: TestClient, monkeypatch):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
+    _stub_generation_and_delivery(monkeypatch)
 
-    generate_response = client.post(f"/api/newsletters/{newsletter['id']}/generate-draft")
-    assert generate_response.status_code == 200
-
-    send_response = client.post(
-        f"/api/newsletters/{newsletter['id']}/send",
-        json={"revision_id": newsletter["approved_revision_id"]},
-    )
-    assert send_response.status_code == 200
-    send_run_id = send_response.json()["run"]["id"]
+    run_response = client.post(f"/api/newsletters/{newsletter['id']}/run")
+    assert run_response.status_code == 200
+    run_id = run_response.json()["run"]["id"]
 
     runs_response = client.get(
         "/api/runs",
-        params={"newsletter_id": newsletter["id"], "trigger_mode": "manual-send"},
+        params={"newsletter_id": newsletter["id"], "trigger_mode": "manual-run"},
     )
     assert runs_response.status_code == 200
     runs_payload = runs_response.json()
     assert runs_payload["items"]
-    assert all(item["trigger_mode"] == "manual-send" for item in runs_payload["items"])
+    assert all(item["trigger_mode"] == "manual-run" for item in runs_payload["items"])
 
-    run_detail_response = client.get(f"/api/runs/{send_run_id}")
+    run_detail_response = client.get(f"/api/runs/{run_id}")
     assert run_detail_response.status_code == 200
     detail_payload = run_detail_response.json()
-    assert detail_payload["run"]["id"] == send_run_id
+    assert detail_payload["run"]["id"] == run_id
     assert detail_payload["run"]["snapshot_subject"]
     assert detail_payload["recipient_outcomes"]
 
-    reconcile_response = client.post(f"/api/runs/{send_run_id}/reconcile")
-    assert reconcile_response.status_code == 200
-    reconcile_payload = reconcile_response.json()
-    assert reconcile_payload["events"]
-
-    refreshed_detail = client.get(f"/api/runs/{send_run_id}")
+    refreshed_detail = client.get(f"/api/runs/{run_id}")
     assert refreshed_detail.status_code == 200
     assert refreshed_detail.json()["events"]
 
 
-def test_duplicate_manual_send_reuses_existing_run(client: TestClient):
+def test_manual_run_always_creates_new_run(client: TestClient, monkeypatch):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
+    _stub_generation_and_delivery(monkeypatch)
 
-    first_send = client.post(
-        f"/api/newsletters/{newsletter['id']}/send",
-        json={"revision_id": newsletter["approved_revision_id"]},
-    )
-    assert first_send.status_code == 200
-    first_run = first_send.json()["run"]
+    first_run_response = client.post(f"/api/newsletters/{newsletter['id']}/run")
+    assert first_run_response.status_code == 200
+    first_run = first_run_response.json()["run"]
 
-    second_send = client.post(
-        f"/api/newsletters/{newsletter['id']}/send",
-        json={"revision_id": newsletter["approved_revision_id"]},
-    )
-    assert second_send.status_code == 200
-    second_run = second_send.json()["run"]
+    second_run_response = client.post(f"/api/newsletters/{newsletter['id']}/run")
+    assert second_run_response.status_code == 200
+    second_run = second_run_response.json()["run"]
 
-    assert second_run["id"] == first_run["id"]
-    assert second_run["revision_id"] == first_run["revision_id"]
+    assert second_run["id"] != first_run["id"]
 
 
 def test_duplicate_scheduled_send_uses_fire_scope(client: TestClient):
@@ -199,6 +216,10 @@ def test_duplicate_scheduled_send_uses_fire_scope(client: TestClient):
     try:
         newsletter = session.get(Newsletter, newsletter_payload["id"])
         assert newsletter is not None
+        newsletter.body_text = "Test body content"
+        session.add(newsletter)
+        session.commit()
+        session.refresh(newsletter)
         first_response, first_run = execute_newsletter_send(
             session,
             newsletter,
@@ -217,19 +238,14 @@ def test_duplicate_scheduled_send_uses_fire_scope(client: TestClient):
         session.close()
 
 
-def test_operational_events_endpoint_defaults_to_run_events_only(client: TestClient):
+def test_operational_events_endpoint_defaults_to_run_events_only(client: TestClient, monkeypatch):
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
+    _stub_generation_and_delivery(monkeypatch)
 
-    generate_response = client.post(f"/api/newsletters/{newsletter['id']}/generate-draft")
-    assert generate_response.status_code == 200
-
-    send_response = client.post(
-        f"/api/newsletters/{newsletter['id']}/send",
-        json={"revision_id": newsletter["approved_revision_id"]},
-    )
-    assert send_response.status_code == 200
-    send_run = send_response.json()["run"]
+    run_response = client.post(f"/api/newsletters/{newsletter['id']}/run")
+    assert run_response.status_code == 200
+    delivery_run = run_response.json()["run"]
 
     events_response = client.get(
         "/api/runs/events",
@@ -240,7 +256,7 @@ def test_operational_events_endpoint_defaults_to_run_events_only(client: TestCli
     items = events_response.json()["items"]
     assert items
     assert all(item["source"] == "run_event" for item in items)
-    assert any(item["run_id"] == send_run["id"] for item in items)
+    assert any(item["run_id"] == delivery_run["id"] for item in items)
 
     run_feed_response = client.get(
         "/api/runs/events",
@@ -253,28 +269,28 @@ def test_operational_events_endpoint_defaults_to_run_events_only(client: TestCli
     run_items = [
         item
         for item in run_feed_items
-        if item["source"] == "run" and item["run_id"] == send_run["id"]
+        if item["source"] == "run" and item["run_id"] == delivery_run["id"]
     ]
     assert run_items
-    assert run_items[0]["event_type"] == "run-manual-send"
-    assert run_items[0]["status"] == send_run["run_status"]
-    assert run_items[0]["related_entity"].endswith(f"Run #{send_run['id']}")
+    assert run_items[0]["event_type"] == "run-manual-run"
+    assert run_items[0]["status"] == delivery_run["run_status"]
+    assert run_items[0]["related_entity"].endswith(f"Run #{delivery_run['id']}")
 
-    generation_events_response = client.get(
+    delivery_events_response = client.get(
         "/api/runs/events",
-        params={"event_type": "generation"},
+        params={"event_type": "delivery"},
     )
-    assert generation_events_response.status_code == 200
-    generation_items = generation_events_response.json()["items"]
-    assert generation_items
-    assert all(item["source"] == "run_event" for item in generation_items)
-    assert all(item["event_type"] == "generation" for item in generation_items)
+    assert delivery_events_response.status_code == 200
+    delivery_items = delivery_events_response.json()["items"]
+    assert delivery_items
+    assert all(item["source"] == "run_event" for item in delivery_items)
+    assert all(item["event_type"] == "delivery" for item in delivery_items)
 
     status_events_response = client.get(
         "/api/runs/events",
-        params={"status": send_run["run_status"]},
+        params={"status": "sent"},
     )
     assert status_events_response.status_code == 200
     status_items = status_events_response.json()["items"]
     assert status_items
-    assert all(item["status"] == send_run["run_status"] for item in status_items)
+    assert all(item["status"] == "sent" for item in status_items)

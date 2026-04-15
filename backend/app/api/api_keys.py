@@ -6,11 +6,11 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
-from app.auth import get_email_delivery_mode, require_authenticated_user
+from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.crypto import decrypt_secret, encrypt_secret
 from app.deps import DbSession
-from app.models import ApiKey, AuditEvent, OperationMode, Provider
+from app.models import ApiKey, AuditEvent, Provider
 from app.schemas import (
     ApiKeyCreateRequest,
     ApiKeyDetail,
@@ -308,24 +308,12 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
 
     if api_key.provider_type == "resend":
         if not resend_sender:
-            delivery_mode = get_email_delivery_mode(db_session=db)
-            if delivery_mode == OperationMode.SIMULATED.value:
-                mode_guidance = (
-                    "Current email delivery mode is simulated, so preview-only sends can still "
-                    "run locally without a sender email."
-                )
-            else:
-                mode_guidance = (
-                    "Newsletter sends fail closed in live mode. Switch email delivery mode to "
-                    "simulated in system settings for local preview-only runs without a sender "
-                    "email."
-                )
             return ApiKeyTestResponse(
                 status="warning",
                 message=(
                     "Resend API key is active, but no sender email is configured. "
                     "Add a Sender Email to this API key or set PULSE_NEWS_RESEND_FROM_EMAIL. "
-                    f"{mode_guidance}"
+                    "Newsletter sends fail closed without a sender email."
                 ),
                 provider_type=api_key.provider_type,
                 masked_key=mask_api_key(decrypted_key_value),

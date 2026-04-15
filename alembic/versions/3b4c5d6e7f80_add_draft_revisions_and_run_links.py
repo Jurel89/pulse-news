@@ -106,74 +106,82 @@ def upgrade() -> None:
             )
 
     inspector = sa.inspect(bind)
-    newsletter_foreign_keys = _foreign_key_names(inspector, "newsletters")
-    with op.batch_alter_table("newsletters") as batch_op:
-        if "fk_newsletters_approved_revision_id" not in newsletter_foreign_keys:
-            batch_op.create_foreign_key(
-                "fk_newsletters_approved_revision_id",
-                "draft_revisions",
-                ["approved_revision_id"],
-                ["id"],
-                ondelete="SET NULL",
-            )
-        if "fk_newsletters_draft_head_revision_id" not in newsletter_foreign_keys:
-            batch_op.create_foreign_key(
-                "fk_newsletters_draft_head_revision_id",
-                "draft_revisions",
-                ["draft_head_revision_id"],
-                ["id"],
-                ondelete="SET NULL",
-            )
+    tables = set(inspector.get_table_names())
+    newsletter_columns = _column_names(inspector, "newsletters")
 
-    run_foreign_keys = _foreign_key_names(inspector, "newsletter_runs")
-    with op.batch_alter_table("newsletter_runs") as batch_op:
-        if "fk_newsletter_runs_revision_id" not in run_foreign_keys:
-            batch_op.create_foreign_key(
-                "fk_newsletter_runs_revision_id",
-                "draft_revisions",
-                ["revision_id"],
-                ["id"],
-                ondelete="SET NULL",
-            )
+    if "draft_revisions" in tables:
+        newsletter_foreign_keys = _foreign_key_names(inspector, "newsletters")
+        with op.batch_alter_table("newsletters") as batch_op:
+            if "fk_newsletters_approved_revision_id" not in newsletter_foreign_keys:
+                batch_op.create_foreign_key(
+                    "fk_newsletters_approved_revision_id",
+                    "draft_revisions",
+                    ["approved_revision_id"],
+                    ["id"],
+                    ondelete="SET NULL",
+                )
+            if "fk_newsletters_draft_head_revision_id" not in newsletter_foreign_keys:
+                batch_op.create_foreign_key(
+                    "fk_newsletters_draft_head_revision_id",
+                    "draft_revisions",
+                    ["draft_head_revision_id"],
+                    ["id"],
+                    ondelete="SET NULL",
+                )
 
-    newsletters = bind.execute(
-        sa.text(
-            "SELECT id, prompt, draft_subject, draft_preheader, draft_body_text "
-            "FROM newsletters ORDER BY id"
-        )
-    ).mappings()
+        run_foreign_keys = _foreign_key_names(inspector, "newsletter_runs")
+        with op.batch_alter_table("newsletter_runs") as batch_op:
+            if "fk_newsletter_runs_revision_id" not in run_foreign_keys:
+                batch_op.create_foreign_key(
+                    "fk_newsletter_runs_revision_id",
+                    "draft_revisions",
+                    ["revision_id"],
+                    ["id"],
+                    ondelete="SET NULL",
+                )
 
-    for newsletter in newsletters:
-        existing_revision = bind.execute(
+    if "draft_revisions" in tables and "draft_subject" in newsletter_columns:
+        newsletters = bind.execute(
             sa.text(
-                "SELECT id FROM draft_revisions WHERE newsletter_id = :newsletter_id LIMIT 1"
-            ),
-            {"newsletter_id": newsletter["id"]},
-        ).scalar()
-        if existing_revision is not None:
-            continue
+                "SELECT id, prompt, draft_subject, draft_preheader, draft_body_text "
+                "FROM newsletters ORDER BY id"
+            )
+        ).mappings()
 
-        inserted_revision_id = bind.execute(
-            sa.text(
-                "INSERT INTO draft_revisions (newsletter_id, version_number, state, origin, subject, preheader, body_text, prompt_snapshot, version) "
-                "VALUES (:newsletter_id, 1, 'approved', 'imported', :subject, :preheader, :body_text, :prompt_snapshot, 1)"
-            ),
-            {
-                "newsletter_id": newsletter["id"],
-                "subject": newsletter["draft_subject"] or "",
-                "preheader": newsletter["draft_preheader"],
-                "body_text": newsletter["draft_body_text"] or "",
-                "prompt_snapshot": newsletter["prompt"],
-            },
-        ).lastrowid
+        for newsletter in newsletters:
+            existing_revision = bind.execute(
+                sa.text(
+                    "SELECT id FROM draft_revisions WHERE newsletter_id = :newsletter_id LIMIT 1"
+                ),
+                {"newsletter_id": newsletter["id"]},
+            ).scalar()
+            if existing_revision is not None:
+                continue
 
-        bind.execute(
-            sa.text(
-                "UPDATE newsletters SET approved_revision_id = :revision_id, draft_head_revision_id = :revision_id, version = COALESCE(version, 1) "
-                "WHERE id = :newsletter_id"
-            ),
-            {"newsletter_id": newsletter["id"], "revision_id": inserted_revision_id},
-        )
+            inserted_revision_id = bind.execute(
+                sa.text(
+                    "INSERT INTO draft_revisions (newsletter_id, version_number, state, origin, subject, preheader, body_text, prompt_snapshot, version) "
+                    "VALUES (:newsletter_id, 1, 'approved', 'imported', :subject, :preheader, :body_text, :prompt_snapshot, 1)"
+                ),
+                {
+                    "newsletter_id": newsletter["id"],
+                    "subject": newsletter["draft_subject"] or "",
+                    "preheader": newsletter["draft_preheader"],
+                    "body_text": newsletter["draft_body_text"] or "",
+                    "prompt_snapshot": newsletter["prompt"],
+                },
+            ).lastrowid
+
+            bind.execute(
+                sa.text(
+                    "UPDATE newsletters SET approved_revision_id = :revision_id, draft_head_revision_id = :revision_id, version = COALESCE(version, 1) "
+                    "WHERE id = :newsletter_id"
+                ),
+                {
+                    "newsletter_id": newsletter["id"],
+                    "revision_id": inserted_revision_id,
+                },
+            )
 
 
 def downgrade() -> None:

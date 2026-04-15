@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
 import type { NewsletterSummary } from "../newsletters/newsletter-types";
@@ -7,7 +7,6 @@ import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropd
 type RunSummary = {
   id: number;
   newsletter_id: number;
-  revision_id: number | null;
   run_type: string | null;
   snapshot_newsletter_name: string | null;
   trigger_mode: string;
@@ -60,10 +59,6 @@ function getStatusBadgeClass(status: string): string {
       return "status-badge status-active";
     case "partial":
       return "status-badge status-paused";
-    case "generated":
-      return "status-badge status-draft";
-    case "fallback":
-      return "status-badge";
     default:
       return "status-badge";
   }
@@ -102,6 +97,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
   const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoOpenedRunIdRef = useRef<number | null>(null);
 
   const loadRuns = useCallback(async () => {
     setLoading(true);
@@ -129,17 +125,9 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
     void loadRuns();
   }, [loadRuns]);
 
-  const handleToggleRun = useCallback(async (runId: number) => {
-    // If already expanded, collapse it
-    if (expandedRunId === runId) {
-      setExpandedRunId(null);
-      return;
-    }
-
-    // Expand this run
+  const openRun = useCallback(async (runId: number) => {
     setExpandedRunId(runId);
 
-    // Load details if not already cached
     if (!runDetails.has(runId)) {
       try {
         const detail = await api.getRunDetail(runId);
@@ -148,27 +136,33 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
         setError(requestError instanceof Error ? requestError.message : "Unable to load run detail.");
       }
     }
-  }, [expandedRunId, runDetails]);
+  }, [runDetails]);
+
+  const handleToggleRun = useCallback(async (runId: number) => {
+    if (expandedRunId === runId) {
+      setExpandedRunId(null);
+      return;
+    }
+
+    await openRun(runId);
+  }, [expandedRunId, openRun]);
 
   useEffect(() => {
     if (initialRunId == null) {
+      autoOpenedRunIdRef.current = null;
       return;
     }
+
+    if (autoOpenedRunIdRef.current === initialRunId || expandedRunId === initialRunId) {
+      return;
+    }
+
     const matchingRun = runs.find((run) => run.id === initialRunId);
     if (matchingRun) {
-      void handleToggleRun(initialRunId);
+      autoOpenedRunIdRef.current = initialRunId;
+      void openRun(initialRunId);
     }
-  }, [handleToggleRun, initialRunId, runs]);
-
-  async function handleReconcile(runId: number) {
-    try {
-      await api.reconcileRun(runId);
-      const detail = await api.getRunDetail(runId);
-      setRunDetails((prev) => new Map(prev).set(runId, detail));
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to reconcile run.");
-    }
-  }
+  }, [expandedRunId, initialRunId, openRun, runs]);
 
   function getRunActions(run: RunSummary): ActionItem[] {
     return [
@@ -182,17 +176,6 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
             <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
           </svg>
         )
-      },
-      {
-        label: "Reconcile Delivery",
-        onClick: () => void handleReconcile(run.id),
-        variant: "primary",
-        icon: (
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <title>Reconcile delivery</title>
-            <path d="M2 8h12M8 2v12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-        )
       }
     ];
   }
@@ -200,10 +183,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
   const stats = {
     totalRuns: runs.length,
     deliveryRuns: runs.filter((r) => r.run_type === "delivery").length,
-    generationRuns: runs.filter((r) => r.run_type === "generation").length,
-    totalRecipients: runs
-      .filter((r) => r.run_type !== "generation")
-      .reduce((sum, r) => sum + r.recipient_count, 0)
+    totalRecipients: runs.reduce((sum, r) => sum + r.recipient_count, 0)
   };
 
   const expandedDetail = expandedRunId != null ? runDetails.get(expandedRunId) : null;
@@ -236,10 +216,6 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
           <strong>{stats.deliveryRuns}</strong>
         </article>
         <article className="info-card">
-          <span className="status-label">Generation Runs</span>
-          <strong>{stats.generationRuns}</strong>
-        </article>
-        <article className="info-card">
           <span className="status-label">Total Recipients</span>
           <strong>{stats.totalRecipients.toLocaleString()}</strong>
         </article>
@@ -270,10 +246,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
             value={runType}
           >
             <option value="">Any type</option>
-            <option value="generation">Generation</option>
-            <option value="test_send">Test Send</option>
             <option value="delivery">Delivery</option>
-            <option value="reconciliation">Reconciliation</option>
           </select>
         </div>
 
@@ -285,10 +258,11 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
             value={runStatus}
           >
             <option value="">Any status</option>
-            <option value="generated">Generated</option>
-            <option value="fallback">Fallback</option>
+            <option value="pending">Pending</option>
+            <option value="sending">Sending</option>
             <option value="sent">Sent</option>
             <option value="partial">Partial</option>
+            <option value="failed">Failed</option>
           </select>
         </div>
 
@@ -300,8 +274,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
             value={triggerMode}
           >
             <option value="">Any trigger</option>
-            <option value="manual-generate">Manual generate</option>
-            <option value="manual-send">Manual send</option>
+            <option value="manual-run">Manual run</option>
             <option value="scheduled-send">Scheduled send</option>
           </select>
         </div>
@@ -352,9 +325,8 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
               <thead>
                 <tr>
                   <th>Run ID</th>
-                  <th>Revision</th>
                   <th>Type</th>
-                  <th>Job</th>
+                  <th>Newsletter</th>
                   <th>Subject</th>
                   <th>Status</th>
                   <th>Trigger</th>
@@ -381,11 +353,8 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
                       <td className="cell-secondary" data-label="Run ID">
                         #{run.id}
                       </td>
-                      <td className="cell-secondary" data-label="Revision">
-                        {run.revision_id ? `#${run.revision_id}` : "—"}
-                      </td>
                       <td data-label="Type">{formatRunType(run.run_type)}</td>
-                      <td className="name-cell" data-label="Job">
+                      <td className="name-cell" data-label="Newsletter">
                         <div className="cell-primary">{run.snapshot_newsletter_name ?? `Newsletter #${run.newsletter_id}`}</div>
                         <div className="cell-secondary">#{run.newsletter_id}</div>
                       </td>
@@ -412,7 +381,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
                     </tr>
                     {expandedRunId === run.id ? (
                       <tr className="detail-row">
-                          <td colSpan={11} className="detail-cell">
+                          <td colSpan={10} className="detail-cell">
                           {expandedDetail ? (
                             <div className="run-detail-panel">
                               <div className="run-detail-header">

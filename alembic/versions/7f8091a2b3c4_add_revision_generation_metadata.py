@@ -20,6 +20,8 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if "draft_revisions" not in set(inspector.get_table_names()):
+        return
     columns = {column["name"] for column in inspector.get_columns("draft_revisions")}
     with op.batch_alter_table("draft_revisions") as batch_op:
         if "provider_snapshot_json" not in columns:
@@ -37,6 +39,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if "draft_revisions" not in set(inspector.get_table_names()):
+        return
     columns = {column["name"] for column in inspector.get_columns("draft_revisions")}
     with op.batch_alter_table("draft_revisions") as batch_op:
         if "provider_snapshot_json" in columns:

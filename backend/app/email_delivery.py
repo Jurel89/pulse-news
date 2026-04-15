@@ -8,11 +8,10 @@ from dataclasses import dataclass
 from html import escape
 from urllib import error, request
 
-from app.auth import get_email_delivery_mode
 from app.config import Settings
 from app.crypto import decrypt_secret
 from app.email_templates import RenderedNewsletter
-from app.models import ApiKey, Newsletter, OperationMode
+from app.models import ApiKey, Newsletter
 
 logger = logging.getLogger(__name__)
 
@@ -21,15 +20,6 @@ logger = logging.getLogger(__name__)
 class RecipientDeliveryTarget:
     email: str
     unsubscribe_token: str | None = None
-
-
-@dataclass
-class TestSendResult:
-    status: str
-    mode: str
-    message: str
-    provider_id: str | None
-    to_email: str
 
 
 @dataclass
@@ -46,13 +36,6 @@ class ManualSendResult:
     mode: str
     message: str
     recipient_outcomes: list[RecipientSendOutcome]
-
-
-@dataclass
-class ReconciliationEvent:
-    event_status: str
-    message: str
-    provider_id: str | None
 
 
 @dataclass(frozen=True)
@@ -98,18 +81,21 @@ def _resolve_resend_configuration(
     *,
     db_session=None,
 ) -> ResendConfigurationResolution:
+    env_api_key = _normalize_config_value(settings.resend_api_key)
+    env_from_email = _normalize_config_value(settings.resend_from_email)
+
     if newsletter is None:
-        env_api_key = _normalize_config_value(settings.resend_api_key)
-        env_from_email = _normalize_config_value(settings.resend_from_email)
-        if env_api_key and env_from_email:
+        if env_api_key:
+            detail = "Using environment Resend configuration."
+            if env_from_email:
+                detail = f"{detail} Using sender '{env_from_email}'."
+            else:
+                detail = f"{detail} No sender email configured — set PULSE_NEWS_RESEND_FROM_EMAIL."
             return ResendConfigurationResolution(
                 api_key=env_api_key,
                 from_email=env_from_email,
                 api_key_source="environment",
-                detail=(
-                    "Using explicit environment delivery configuration with sender "
-                    f"'{env_from_email}'."
-                ),
+                detail=detail,
             )
         return ResendConfigurationResolution(
             api_key=None,
@@ -117,64 +103,15 @@ def _resolve_resend_configuration(
             api_key_source="environment",
             detail=(
                 "Environment delivery configuration is incomplete. "
-                "Set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
+                "Set PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
             ),
         )
 
-    profile_api_key_id = newsletter.resend_api_key_id if newsletter else None
-    profile_from_email = None
-    binding_mode = "pinned_key"
-    api_key_source = "newsletter"
-    if newsletter and newsletter.delivery_profile_id is not None:
-        from sqlalchemy import select
-
-        from app.database import get_session_maker
-        from app.models import DeliveryProfile
-
-        owns_session = db_session is None
-        session = db_session or get_session_maker()()
-        try:
-            profile = session.scalar(
-                select(DeliveryProfile).where(DeliveryProfile.id == newsletter.delivery_profile_id)
-            )
-            if profile is not None:
-                profile_api_key_id = profile.api_key_id
-                profile_from_email = _normalize_config_value(profile.from_email)
-                binding_mode = profile.api_key_binding_mode or "pinned_key"
-                api_key_source = "profile"
-        finally:
-            if owns_session:
-                session.close()
-
-    if binding_mode == "system_default":
-        env_api_key = _normalize_config_value(settings.resend_api_key)
-        env_from_email = _normalize_config_value(settings.resend_from_email)
-        if env_api_key and env_from_email:
-            return ResendConfigurationResolution(
-                api_key=env_api_key,
-                from_email=env_from_email,
-                api_key_source="environment",
-                detail=(
-                    "Using explicit system_default delivery profile. "
-                    f"Using sender '{env_from_email}'."
-                ),
-            )
-        return ResendConfigurationResolution(
-            api_key=None,
-            from_email=env_from_email,
-            api_key_source="environment",
-            detail=(
-                "Delivery profile requests system_default, but environment configuration is "
-                "incomplete. "
-                "Set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
-            ),
-        )
-
-    if newsletter and profile_api_key_id is not None:
+    if newsletter.resend_api_key_id is not None:
         detail_parts: list[str] = []
         try:
             stored_key = _load_resend_api_key_record(
-                api_key_id=profile_api_key_id,
+                api_key_id=newsletter.resend_api_key_id,
                 db_session=db_session,
             )
         except Exception as exc:
@@ -197,7 +134,7 @@ def _resolve_resend_configuration(
                 )
                 detail_parts.append(
                     "The selected newsletter-specific Resend API key "
-                    f"(id={profile_api_key_id}) no longer exists."
+                    f"(id={newsletter.resend_api_key_id}) no longer exists."
                 )
             elif stored_key.provider_type != "resend":
                 logger.warning(
@@ -239,7 +176,9 @@ def _resolve_resend_configuration(
                     )
                 else:
                     if decrypted_key:
-                        from_email = profile_from_email or _normalize_config_value(
+                        from_email = _normalize_config_value(
+                            newsletter.from_email
+                        ) or _normalize_config_value(
                             _get_resend_from_email(
                                 settings,
                                 newsletter,
@@ -255,7 +194,8 @@ def _resolve_resend_configuration(
                         else:
                             detail = (
                                 f"{detail} No sender email configured — "
-                                "set a Sender Email on this API key in Settings > API Keys."
+                                "set newsletter.from_email, a Sender Email on this API key in "
+                                "Settings > API Keys, or PULSE_NEWS_RESEND_FROM_EMAIL."
                             )
                         logger.debug(
                             "Using newsletter-specific Resend API key id=%s for newsletter id=%s",
@@ -265,7 +205,7 @@ def _resolve_resend_configuration(
                         return ResendConfigurationResolution(
                             api_key=decrypted_key,
                             from_email=from_email,
-                            api_key_source=api_key_source,
+                            api_key_source="newsletter",
                             detail=detail,
                         )
                     detail_parts.append(
@@ -273,13 +213,15 @@ def _resolve_resend_configuration(
                         f"'{stored_key.name}' (id={stored_key.id}) is empty."
                     )
 
-        from_email = _normalize_config_value(_get_resend_from_email(settings, newsletter))
+        from_email = _normalize_config_value(newsletter.from_email) or _normalize_config_value(
+            _get_resend_from_email(settings, newsletter)
+        )
         if from_email:
             detail_parts.append(f"Using sender '{from_email}'.")
         else:
             detail_parts.append(
-                "No sender email is configured for the selected newsletter-specific Resend key, "
-                "and PULSE_NEWS_RESEND_FROM_EMAIL is not set."
+                "No sender email is configured for this newsletter, the selected "
+                "newsletter-specific Resend key, or PULSE_NEWS_RESEND_FROM_EMAIL."
             )
         detail = " ".join(detail_parts)
         logger.info(
@@ -290,19 +232,36 @@ def _resolve_resend_configuration(
         return ResendConfigurationResolution(
             api_key=None,
             from_email=from_email,
-            api_key_source=api_key_source,
+            api_key_source="newsletter",
             detail=detail,
         )
 
-    detail = (
-        "No explicit delivery API key is configured. "
-        "Select a pinned Resend key or opt into system_default via a delivery profile."
-    )
+    from_email = _normalize_config_value(newsletter.from_email) or env_from_email
+    if env_api_key:
+        detail = "Using environment Resend configuration."
+        if from_email:
+            detail = f"{detail} Using sender '{from_email}'."
+        else:
+            detail = (
+                f"{detail} No sender email configured — "
+                "set newsletter.from_email or PULSE_NEWS_RESEND_FROM_EMAIL."
+            )
+        return ResendConfigurationResolution(
+            api_key=env_api_key,
+            from_email=from_email,
+            api_key_source="environment",
+            detail=detail,
+        )
+
     return ResendConfigurationResolution(
         api_key=None,
-        from_email=profile_from_email,
-        api_key_source=api_key_source,
-        detail=detail,
+        from_email=from_email,
+        api_key_source="environment",
+        detail=(
+            "No newsletter-specific Resend API key is configured, and environment delivery "
+            "configuration is incomplete. Set PULSE_NEWS_RESEND_API_KEY and "
+            "PULSE_NEWS_RESEND_FROM_EMAIL."
+        ),
     )
 
 
@@ -657,127 +616,6 @@ def _send_recipient_chunk_via_resend_batch(
     ]
 
 
-def send_test_email(
-    *,
-    settings: Settings,
-    rendered: RenderedNewsletter,
-    to_email: str,
-    newsletter: Newsletter | None = None,
-    db_session=None,
-) -> TestSendResult:
-    delivery_mode = get_email_delivery_mode(db_session=db_session)
-    resend_configuration = _resolve_resend_configuration(
-        settings,
-        newsletter,
-        db_session=db_session,
-    )
-    api_key = resend_configuration.api_key
-    from_email = resend_configuration.from_email
-
-    if not api_key or not from_email:
-        missing_parts = []
-        if not api_key:
-            missing_parts.append("Resend API key")
-        if not from_email:
-            missing_parts.append("sender email address")
-        missing_str = " and ".join(missing_parts)
-
-        if delivery_mode == OperationMode.SIMULATED.value:
-            logger.info(
-                "Returning explicit local preview test-send result for %s: missing %s. Detail: %s",
-                to_email,
-                missing_str,
-                resend_configuration.detail,
-            )
-            return TestSendResult(
-                status="simulated",
-                mode="local-preview",
-                message=(
-                    "Email delivery mode is set to simulated in system settings. "
-                    f"Missing {missing_str}. "
-                    f"{resend_configuration.detail} No email was sent."
-                ),
-                provider_id=None,
-                to_email=to_email,
-            )
-        if settings.environment == "production":
-            raise RuntimeError(
-                "Cannot test-send in production while email delivery mode is live and "
-                f"delivery configuration is incomplete (missing {missing_str}). "
-                f"{resend_configuration.detail}"
-            )
-        return TestSendResult(
-            status="error",
-            mode="none",
-            message=(
-                f"Resend test send is blocked in live mode: missing {missing_str}. "
-                f"{resend_configuration.detail} Configure a valid newsletter-specific Resend key, "
-                "or set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL. "
-                "For local preview-only flows, switch email delivery mode to simulated in "
-                "system settings."
-            ),
-            provider_id=None,
-            to_email=to_email,
-        )
-
-    logger.info(
-        "Sending Resend test email to %s using %s configuration",
-        to_email,
-        resend_configuration.api_key_source,
-    )
-
-    payload = json.dumps(
-        {
-            "from": from_email,
-            "to": [to_email],
-            "subject": rendered.subject,
-            "html": rendered.html,
-            "text": rendered.plain_text,
-        }
-    ).encode("utf-8")
-    headers = _resend_headers(api_key)
-
-    send_request = request.Request(
-        settings.resend_api_url,
-        data=payload,
-        headers=headers,
-        method="POST",
-    )
-
-    try:
-        with request.urlopen(send_request, timeout=15) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        detail = _decode_http_error_detail(exc)
-        logger.warning(
-            "Resend test send HTTP error for %s using %s configuration: %s",
-            to_email,
-            resend_configuration.api_key_source,
-            detail,
-        )
-        raise RuntimeError(
-            f"Resend test send failed. {resend_configuration.detail} Provider response: {detail}"
-        ) from exc
-    except error.URLError as exc:
-        logger.warning(
-            "Resend test send connection error for %s using %s configuration: %s",
-            to_email,
-            resend_configuration.api_key_source,
-            exc.reason,
-        )
-        raise RuntimeError(
-            f"Resend test send failed. {resend_configuration.detail} Connection error: {exc.reason}"
-        ) from exc
-
-    return TestSendResult(
-        status="sent",
-        mode="resend",
-        message=(f"Test email sent successfully through Resend. {resend_configuration.detail}"),
-        provider_id=response_payload.get("id"),
-        to_email=to_email,
-    )
-
-
 def send_newsletter_email(
     *,
     settings: Settings,
@@ -787,7 +625,6 @@ def send_newsletter_email(
     newsletter: Newsletter | None = None,
     db_session=None,
 ) -> ManualSendResult:
-    delivery_mode = get_email_delivery_mode(db_session=db_session)
     resend_configuration = _resolve_resend_configuration(
         settings,
         newsletter,
@@ -803,35 +640,9 @@ def send_newsletter_email(
         if not from_email:
             missing_parts.append("sender email address")
         missing_str = " and ".join(missing_parts)
-        if delivery_mode == OperationMode.SIMULATED.value:
-            logger.info(
-                "Returning explicit local preview delivery for newsletter id=%s: "
-                "missing %s. Detail: %s",
-                newsletter.id if newsletter else None,
-                missing_str,
-                resend_configuration.detail,
-            )
-            return ManualSendResult(
-                status="fallback",
-                mode="local-preview",
-                message=(
-                    "Email delivery mode is set to simulated in system settings. "
-                    f"Missing {missing_str}. "
-                    f"{resend_configuration.detail} No email was sent."
-                ),
-                recipient_outcomes=[
-                    RecipientSendOutcome(
-                        email=target.email,
-                        status="simulated",
-                        provider_id=None,
-                        detail="Local preview simulation enabled in system settings.",
-                    )
-                    for target in recipient_targets
-                ],
-            )
         if settings.environment == "production":
             raise RuntimeError(
-                "Cannot send emails in production while email delivery mode is live and "
+                "Cannot send emails in production while "
                 f"delivery configuration is incomplete (missing {missing_str}). "
                 f"{resend_configuration.detail}"
             )
@@ -839,11 +650,9 @@ def send_newsletter_email(
             status="failed",
             mode="none",
             message=(
-                f"Resend delivery is blocked in live mode: missing {missing_str}. "
+                f"Resend delivery is blocked: missing {missing_str}. "
                 f"{resend_configuration.detail} Configure a valid newsletter-specific Resend key, "
-                "or set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL. "
-                "For local preview-only flows, switch email delivery mode to simulated in "
-                "system settings."
+                "or set both PULSE_NEWS_RESEND_API_KEY and PULSE_NEWS_RESEND_FROM_EMAIL."
             ),
             recipient_outcomes=[
                 RecipientSendOutcome(
@@ -907,53 +716,3 @@ def send_newsletter_email(
         message=message,
         recipient_outcomes=outcomes,
     )
-
-
-def retrieve_email_status(
-    *,
-    settings: Settings,
-    provider_id: str | None,
-    current_mode: str | None,
-    newsletter: Newsletter | None = None,
-    db_session=None,
-) -> ReconciliationEvent:
-    if current_mode != "resend" or not provider_id:
-        return ReconciliationEvent(
-            event_status="simulated",
-            message="No live provider status is available for this delivery outcome.",
-            provider_id=provider_id,
-        )
-
-    resend_configuration = _resolve_resend_configuration(
-        settings,
-        newsletter,
-        db_session=db_session,
-    )
-    api_key = resend_configuration.api_key
-    if not api_key:
-        return ReconciliationEvent(
-            event_status="unknown",
-            message=f"Cannot retrieve status without Resend API key. {resend_configuration.detail}",
-            provider_id=provider_id,
-        )
-
-    retrieve_request = request.Request(
-        f"{settings.resend_api_base_url}/emails/{provider_id}",
-        headers=_resend_headers(api_key),
-        method="GET",
-    )
-
-    try:
-        with request.urlopen(retrieve_request, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        return ReconciliationEvent(
-            event_status=payload.get("last_event", "unknown"),
-            message="Delivery status retrieved from Resend.",
-            provider_id=provider_id,
-        )
-    except Exception as exc:
-        return ReconciliationEvent(
-            event_status="unknown",
-            message=f"Unable to retrieve live delivery status: {exc}",
-            provider_id=provider_id,
-        )

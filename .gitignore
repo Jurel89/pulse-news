@@ -36,3 +36,5 @@ backend/uv.lock
 # Temporary screenshots
 *-page*.png
 pulse-*.png
+frontend/test-results/
+frontend/playwright-report/

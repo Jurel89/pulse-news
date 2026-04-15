@@ -20,35 +20,10 @@ export type SessionResponse = {
   initialized: boolean;
   authenticated: boolean;
   user: UserSummary | null;
-  ai_generation_mode: "live" | "simulated";
-  email_delivery_mode: "live" | "simulated";
 };
 
 export type SystemSettingsResponse = {
   initialized: boolean;
-  ai_generation_mode: "live" | "simulated";
-  email_delivery_mode: "live" | "simulated";
-};
-
-export type SystemSettingsUpdateRequest = {
-  ai_generation_mode?: "live" | "simulated";
-  email_delivery_mode?: "live" | "simulated";
-};
-
-export type NewsletterPreview = {
-  subject: string;
-  preheader: string;
-  html: string;
-  plain_text: string;
-  template_key: string;
-};
-
-export type NewsletterTestSendResult = {
-  status: string;
-  mode: string;
-  message: string;
-  provider_id: string | null;
-  to_email: string;
 };
 
 export type RecipientSendOutcome = {
@@ -65,7 +40,6 @@ export type NewsletterSendResult = {
   run: {
     id: number;
     newsletter_id: number;
-    revision_id: number | null;
     run_type: string | null;
     snapshot_newsletter_name: string | null;
     trigger_mode: string;
@@ -75,16 +49,16 @@ export type NewsletterSendResult = {
     template_key: string;
     recipient_count: number;
     snapshot_subject: string;
-  snapshot_preheader: string | null;
-  snapshot_body_text: string;
-  snapshot_recipient_emails: string;
-  delivery_outcomes: string;
-  result_mode: string | null;
-  result_message: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
+    snapshot_preheader: string | null;
+    snapshot_body_text: string;
+    snapshot_recipient_emails: string;
+    delivery_outcomes: string;
+    result_mode: string | null;
+    result_message: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    created_at: string;
+    updated_at: string;
   };
   recipient_outcomes: RecipientSendOutcome[];
 };
@@ -108,45 +82,6 @@ export type RunDetailResponse = {
   }>;
 };
 
-export type NewsletterGenerationResult = {
-  status: string;
-  mode: string;
-  message: string;
-  revision_id?: number | null;
-  newsletter: NewsletterDetail;
-  run: NewsletterSendResult["run"];
-};
-
-export type DraftRevisionSummary = {
-  id: number;
-  newsletter_id: number;
-  version_number: number;
-  state: string;
-  origin: string;
-  created_by_email: string | null;
-  subject: string;
-  preheader: string | null;
-  body_text: string;
-  generation_run_id: number | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type DraftRevisionListResponse = {
-  items: DraftRevisionSummary[];
-};
-
-export type DraftRevisionApproveResponse = {
-  revision: DraftRevisionSummary;
-  newsletter: NewsletterDetail;
-};
-
-export type DraftRevisionDetailResponse = {
-  revision: DraftRevisionSummary;
-};
-
-
-
 export type FormOptionTemplate = {
   key: string;
   name: string;
@@ -168,31 +103,11 @@ export type FormOptionApiKey = {
   from_email: string | null;
 };
 
-export type FormOptionGenerationProfile = {
-  id: number;
-  name: string;
-  provider_id: number | null;
-  model_name: string;
-  api_key_binding_mode: string;
-  api_key_id: number | null;
-};
-
-export type FormOptionDeliveryProfile = {
-  id: number;
-  name: string;
-  provider_type: string;
-  api_key_binding_mode: string;
-  api_key_id: number | null;
-  from_email: string | null;
-};
-
 export type FormOptions = {
   templates: FormOptionTemplate[];
   providers: FormOptionProvider[];
   models: Record<string, string[]>;
   api_keys: FormOptionApiKey[];
-  generation_profiles: FormOptionGenerationProfile[];
-  delivery_profiles: FormOptionDeliveryProfile[];
   timezones: string[];
 };
 
@@ -279,62 +194,12 @@ export const api = {
       method: "POST",
       jsonBody: { current_password: currentPassword, new_password: newPassword }
     }),
-  updateSystemSettings: (payload: SystemSettingsUpdateRequest) =>
-    request<SystemSettingsResponse>("/auth/system-settings", {
-      method: "PATCH",
-      jsonBody: payload
-    }),
   listNewsletters: () => request<NewsletterSummary[]>("/newsletters"),
   getNewsletter: (newsletterId: number) =>
     request<NewsletterDetail>(`/newsletters/${newsletterId}`),
-  previewNewsletter: (newsletterId: number, revisionId: number) =>
-    request<NewsletterPreview>(`/newsletters/${newsletterId}/preview?revision_id=${revisionId}`),
-  previewNewsletterRevision: (newsletterId: number, revisionId: number) =>
-    request<NewsletterPreview>(`/newsletters/${newsletterId}/revisions/${revisionId}/preview`),
-  generateNewsletter: (newsletterId: number) =>
-    request<NewsletterGenerationResult>(`/newsletters/${newsletterId}/generate-draft`, {
+  runNewsletter: (newsletterId: number) =>
+    request<NewsletterSendResult>(`/newsletters/${newsletterId}/run`, {
       method: "POST"
-    }),
-  listNewsletterRevisions: (newsletterId: number) =>
-    request<DraftRevisionListResponse>(`/newsletters/${newsletterId}/revisions`),
-  getNewsletterRevision: (newsletterId: number, revisionId: number) =>
-    request<DraftRevisionDetailResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}`),
-  updateNewsletterRevision: (
-    newsletterId: number,
-    revisionId: number,
-    payload: Pick<DraftRevisionSummary, "subject" | "preheader" | "body_text">
-  ) =>
-    request<DraftRevisionDetailResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}`, {
-      method: "PATCH",
-      jsonBody: payload,
-    }),
-  approveNewsletterRevision: (newsletterId: number, revisionId: number) =>
-    request<DraftRevisionApproveResponse>(`/newsletters/${newsletterId}/revisions/${revisionId}/approve`, {
-      method: "POST"
-    }),
-
-  testSendNewsletter: (newsletterId: number, revisionId: number, toEmail: string) =>
-    request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/test-send`, {
-      method: "POST",
-      jsonBody: { to_email: toEmail, revision_id: revisionId }
-    }),
-  testSendNewsletterRevision: (newsletterId: number, revisionId: number, toEmail: string) =>
-    request<NewsletterTestSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/test-send`, {
-      method: "POST",
-      jsonBody: { to_email: toEmail }
-    }),
-  sendNewsletter: (newsletterId: number, revisionId: number, idempotencyKey?: string) =>
-    request<NewsletterSendResult>(`/newsletters/${newsletterId}/send`, {
-      method: "POST",
-      jsonBody: {
-        revision_id: revisionId,
-        ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
-      },
-    }),
-  sendNewsletterRevision: (newsletterId: number, revisionId: number, idempotencyKey?: string) =>
-    request<NewsletterSendResult>(`/newsletters/${newsletterId}/revisions/${revisionId}/send`, {
-      method: "POST",
-      jsonBody: idempotencyKey ? { idempotency_key: idempotencyKey } : undefined,
     }),
   listAuditEvents: (params: AuditEventListParams) =>
     request<AuditEventListResponse>(`/audit${buildQueryString(params)}`),
@@ -344,10 +209,6 @@ export const api = {
     request<RunListResponse>(`/runs${buildQueryString(params)}`),
   getRunDetail: (runId: number) =>
     request<RunDetailResponse>(`/runs/${runId}`),
-  reconcileRun: (runId: number) =>
-    request<{ events: RunDetailResponse["events"] }>(`/runs/${runId}/reconcile`, {
-      method: "POST"
-    }),
   createNewsletter: (payload: NewsletterInput) =>
     request<NewsletterDetail>("/newsletters", {
       method: "POST",
@@ -398,16 +259,6 @@ export const api = {
     delete: (templateId: number) =>
       request<void>(`/email-templates/${templateId}`, {
         method: "DELETE"
-      }),
-    preview: (templateId: number, variables?: Record<string, string>) =>
-      request<{ html: string }>(`/email-templates/${templateId}/preview`, {
-        method: "POST",
-        jsonBody: variables ? { variables } : undefined
-      }),
-    previewLive: (htmlTemplate: string) =>
-      request<{ html: string }>("/email-templates/preview-live", {
-        method: "POST",
-        jsonBody: { html_template: htmlTemplate, variables: {} }
       }),
     listPresets: () => request<Array<{ key: string; name: string; description: string; html_template: string }>>("/email-templates/presets/list"),
     setDefault: (templateId: number) =>

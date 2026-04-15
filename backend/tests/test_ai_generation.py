@@ -24,7 +24,6 @@ def client(tmp_path, monkeypatch):
     import app.main
     import app.models
     import app.schemas
-    from app.source_pipeline.service import SourceItem
 
     app.config.get_settings.cache_clear()
     app.database.get_engine.cache_clear()
@@ -43,26 +42,6 @@ def client(tmp_path, monkeypatch):
     reload(app.main)
     app.database.init_database()
 
-    monkeypatch.setattr(
-        app.ai_generation,
-        "build_source_bundle",
-        Mock(
-            return_value=[
-                SourceItem(
-                    source_id="src_1",
-                    url="https://example.com/source",
-                    title="Example source",
-                    summary="Fetched source summary",
-                    source_type="operator_url_fetched",
-                    published_at="2026-04-13T00:00:00+00:00",
-                    relevance_score=0.9,
-                    dedupe_hash="deadbeefcafefeed",
-                )
-            ]
-        ),
-    )
-    monkeypatch.setattr(app.ai_generation, "has_usable_source_bundle", Mock(return_value=True))
-
     with TestClient(app.main.app) as test_client:
         yield test_client
 
@@ -75,9 +54,9 @@ def build_newsletter(**overrides):
         "slug": "weekly-radar",
         "description": "Founder signals worth scanning",
         "prompt": "Summarize the top AI and startup operations stories for founders using https://example.com/source.",
-        "draft_subject": "",
-        "draft_preheader": "",
-        "draft_body_text": "",
+        "subject": "",
+        "preheader": "",
+        "body_text": "",
         "provider_name": " OpenAI ",
         "model_name": "gpt-4o-mini",
         "template_key": "signal",
@@ -89,21 +68,6 @@ def build_newsletter(**overrides):
     }
     values.update(overrides)
     return Newsletter(**values)
-
-
-def persist_operation_modes(*, ai_generation_mode="live", email_delivery_mode="live") -> None:
-    import app.database
-    from app.auth import get_or_create_system_settings
-
-    session = app.database.get_session_maker()()
-    try:
-        settings = get_or_create_system_settings(session)
-        settings.ai_generation_mode = ai_generation_mode
-        settings.email_delivery_mode = email_delivery_mode
-        session.add(settings)
-        session.commit()
-    finally:
-        session.close()
 
 
 def make_completion_response(content: str) -> Mock:
@@ -126,7 +90,7 @@ def make_api_key_resolution(*, api_key: str | None, detail: str = "Using test AP
     )
 
 
-def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
+def test_generate_newsletter_content_uses_litellm_when_provider_credentials_exist(
     client: TestClient,
     monkeypatch,
 ):
@@ -138,9 +102,7 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
             "{"
             '"subject":"Founder Radar",'
             '"preheader":"The week in startup infrastructure",'
-            '"body_markdown":"- Fundraising signals\\n- Ops playbook updates",'
-            '"highlights":["Fundraising signals"],'
-            '"source_references":[{"source_id":"src_1","claim":"Fundraising signals"}]'
+            '"body_markdown":"- Fundraising signals\\n- Ops playbook updates"'
             "}"
         )
     )
@@ -151,24 +113,22 @@ def test_generate_newsletter_draft_uses_litellm_when_provider_credentials_exist(
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "generated"
     assert result.mode == "litellm"
     assert result.subject == "Founder Radar"
     assert result.preheader == "The week in startup infrastructure"
     assert result.body_text == "- Fundraising signals\n- Ops playbook updates"
-    assert result.highlights_json is not None
-    assert result.source_references_json is not None
     completion_mock.assert_called_once()
     assert completion_mock.call_args.kwargs["model"] == "openai/gpt-4o-mini"
     prompt_text = completion_mock.call_args.kwargs["messages"][0]["content"]
-    assert "Prompt instructions:" in prompt_text
-    assert "Style/template constraints:" in prompt_text
-    assert "Time window:" in prompt_text
+    assert "Instructions:" in prompt_text
+    assert "Write the newsletter with:" in prompt_text
+    assert '{"subject":"...","preheader":"...","body_markdown":"..."}' in prompt_text
 
 
-def test_generate_newsletter_draft_returns_error_when_litellm_raises_by_default(
+def test_generate_newsletter_content_returns_error_when_litellm_raises_by_default(
     client: TestClient,
     monkeypatch,
 ):
@@ -186,7 +146,7 @@ def test_generate_newsletter_draft_returns_error_when_litellm_raises_by_default(
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "error"
     assert result.mode == "none"
@@ -197,13 +157,11 @@ def test_generate_newsletter_draft_returns_error_when_litellm_raises_by_default(
     assert result.body_text == ""
 
 
-def test_generate_newsletter_draft_returns_explicit_simulation_when_db_mode_is_simulated(
+def test_generate_newsletter_content_returns_error_when_api_key_is_unavailable(
     client: TestClient,
     monkeypatch,
 ):
     import app.ai_generation
-
-    persist_operation_modes(ai_generation_mode="simulated")
 
     newsletter = build_newsletter()
     monkeypatch.setattr(app.ai_generation, "completion", Mock())
@@ -218,16 +176,14 @@ def test_generate_newsletter_draft_returns_explicit_simulation_when_db_mode_is_s
         ),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
-    assert result.status == "fallback"
-    assert result.mode == "local-generator"
-    assert "AI generation mode is set to simulated in system settings." in result.message
+    assert result.status == "error"
+    assert result.mode == "none"
     assert "inactive" in result.message
-    assert "Fallback draft outline" in result.body_text
 
 
-def test_generate_newsletter_draft_rejects_non_json_output(
+def test_generate_newsletter_content_rejects_non_json_output(
     client: TestClient,
     monkeypatch,
 ):
@@ -251,56 +207,14 @@ def test_generate_newsletter_draft_rejects_non_json_output(
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "error"
     assert result.mode == "litellm"
     assert "strict JSON" in result.message
 
 
-def test_generate_newsletter_draft_rejects_unfetched_source_urls(
-    client: TestClient,
-    monkeypatch,
-):
-    import app.ai_generation
-    from app.source_pipeline.service import SourceItem
-
-    newsletter = build_newsletter(prompt="Summarize https://unreachable.invalid/source")
-    monkeypatch.setattr(
-        app.ai_generation,
-        "build_source_bundle",
-        Mock(
-            return_value=[
-                SourceItem(
-                    source_id="src_1",
-                    url="https://unreachable.invalid/source",
-                    title="https://unreachable.invalid/source",
-                    summary="Unable to fetch source content directly: RuntimeError",
-                    source_type="operator_url_unfetched",
-                    published_at=None,
-                    relevance_score=0.0,
-                    dedupe_hash="deadbeefcafefeed",
-                )
-            ]
-        ),
-    )
-    monkeypatch.setattr(app.ai_generation, "has_usable_source_bundle", Mock(return_value=False))
-    monkeypatch.setattr(
-        app.ai_generation,
-        "_resolve_api_key_for_newsletter",
-        Mock(return_value=make_api_key_resolution(api_key="test-key")),
-    )
-    completion_mock = Mock()
-    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
-
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
-
-    assert result.status == "error"
-    assert "No usable source material could be collected" in result.message
-    completion_mock.assert_not_called()
-
-
-def test_generate_newsletter_draft_accepts_structured_json_output(
+def test_generate_newsletter_content_accepts_structured_json_output(
     client: TestClient,
     monkeypatch,
 ):
@@ -312,9 +226,7 @@ def test_generate_newsletter_draft_accepts_structured_json_output(
             "{"
             '"subject":"Operator Watch",'
             '"preheader":"Signals worth scanning",'
-            '"body_markdown":"First section\\n\\nSecond section",'
-            '"highlights":["First section"],'
-            '"source_references":[{"source_id":"src_1","claim":"First section"}]'
+            '"body_markdown":"First section\\n\\nSecond section"'
             "}"
         )
     )
@@ -325,14 +237,14 @@ def test_generate_newsletter_draft_accepts_structured_json_output(
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.subject == "Operator Watch"
     assert result.preheader == "Signals worth scanning"
     assert result.body_text == "First section\n\nSecond section"
 
 
-def test_generate_newsletter_draft_rejects_subjects_longer_than_limit(
+def test_generate_newsletter_content_rejects_subjects_longer_than_limit(
     client: TestClient,
     monkeypatch,
 ):
@@ -344,9 +256,7 @@ def test_generate_newsletter_draft_rejects_subjects_longer_than_limit(
             "{"
             f'"subject":"{"x" * 121}",'
             '"preheader":"Signals worth scanning",'
-            '"body_markdown":"- Section one",'
-            '"highlights":["Section one"],'
-            '"source_references":[{"source_id":"src_1","claim":"Section one"}]'
+            '"body_markdown":"- Section one"'
             "}"
         )
     )
@@ -357,13 +267,13 @@ def test_generate_newsletter_draft_rejects_subjects_longer_than_limit(
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "error"
     assert "120 character limit" in result.message
 
 
-def test_generate_newsletter_draft_rejects_unsupported_template_variables(
+def test_generate_newsletter_content_rejects_unsupported_template_variables(
     client: TestClient,
     monkeypatch,
 ):
@@ -375,9 +285,7 @@ def test_generate_newsletter_draft_rejects_unsupported_template_variables(
             "{"
             '"subject":"Operator Watch",'
             '"preheader":"Signals worth scanning",'
-            '"body_markdown":"- Hello %recipient_name%",'
-            '"highlights":["Hello"],'
-            '"source_references":[{"source_id":"src_1","claim":"Hello"}]'
+            '"body_markdown":"- Hello %recipient_name%"'
             "}"
         )
     )
@@ -388,75 +296,13 @@ def test_generate_newsletter_draft_rejects_unsupported_template_variables(
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "error"
     assert "unsupported template variables" in result.message
 
 
-def test_generate_newsletter_draft_rejects_non_string_highlights(
-    client: TestClient,
-    monkeypatch,
-):
-    import app.ai_generation
-
-    newsletter = build_newsletter(description="Fallback description")
-    completion_mock = Mock(
-        return_value=make_completion_response(
-            "{"
-            '"subject":"Operator Watch",'
-            '"preheader":"Signals worth scanning",'
-            '"body_markdown":"- Hello world",'
-            '"highlights":[1],'
-            '"source_references":[{"source_id":"src_1","claim":"Hello world"}]'
-            "}"
-        )
-    )
-    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
-    monkeypatch.setattr(
-        app.ai_generation,
-        "_resolve_api_key_for_newsletter",
-        Mock(return_value=make_api_key_resolution(api_key="test-key")),
-    )
-
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
-
-    assert result.status == "error"
-    assert "highlights as an array of strings" in result.message
-
-
-def test_generate_newsletter_draft_rejects_unknown_source_reference_ids(
-    client: TestClient,
-    monkeypatch,
-):
-    import app.ai_generation
-
-    newsletter = build_newsletter(description="Fallback description")
-    completion_mock = Mock(
-        return_value=make_completion_response(
-            "{"
-            '"subject":"Operator Watch",'
-            '"preheader":"Signals worth scanning",'
-            '"body_markdown":"- Hello world",'
-            '"highlights":["Hello world"],'
-            '"source_references":[{"source_id":"src_missing","claim":"Hello world"}]'
-            "}"
-        )
-    )
-    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
-    monkeypatch.setattr(
-        app.ai_generation,
-        "_resolve_api_key_for_newsletter",
-        Mock(return_value=make_api_key_resolution(api_key="test-key")),
-    )
-
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
-
-    assert result.status == "error"
-    assert "referenced a source_id that is not in the collected source bundle" in result.message
-
-
-def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_key(
+def test_generate_newsletter_content_uses_provider_defaults_and_pinned_database_key(
     client: TestClient,
     monkeypatch,
 ):
@@ -493,15 +339,13 @@ def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_ke
             "{"
             '"subject":"Provider Defaults",'
             '"preheader":"Configured by provider",'
-            '"body_markdown":"- Uses the provider default model",'
-            '"highlights":["Provider default model"],'
-            '"source_references":[{"source_id":"src_1","claim":"Provider default model"}]'
+            '"body_markdown":"- Uses the provider default model"'
             "}"
         )
     )
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "generated"
     assert completion_mock.call_args.kwargs["model"] == "openai/gpt-4o"
@@ -510,7 +354,7 @@ def test_generate_newsletter_draft_uses_provider_defaults_and_pinned_database_ke
     assert "max_tokens" not in completion_mock.call_args.kwargs
 
 
-def test_generate_newsletter_draft_returns_error_for_invalid_provider_configuration(
+def test_generate_newsletter_content_returns_error_for_invalid_provider_configuration(
     client: TestClient,
     monkeypatch,
 ):
@@ -532,14 +376,14 @@ def test_generate_newsletter_draft_returns_error_for_invalid_provider_configurat
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "error"
     assert result.mode == "none"
     assert result.message == "Provider configuration must be a JSON object."
 
 
-def test_generate_newsletter_draft_fails_closed_for_inactive_pinned_key(
+def test_generate_newsletter_content_fails_closed_for_inactive_pinned_key(
     client: TestClient,
     monkeypatch,
 ):
@@ -565,7 +409,7 @@ def test_generate_newsletter_draft_fails_closed_for_inactive_pinned_key(
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
 
     newsletter = build_newsletter(api_key_id=api_key_id)
-    result = app.ai_generation.generate_newsletter_draft(newsletter)
+    result = app.ai_generation.generate_newsletter_content(newsletter)
 
     assert result.status == "error"
     assert result.mode == "none"
@@ -589,7 +433,9 @@ def test_kimi_provider_uses_coding_api_base_url(client: TestClient, monkeypatch)
     newsletter.provider_id = None
 
     completion_mock = Mock(
-        return_value=make_completion_response("SUBJECT: Test\nPREHEADER: Test\nBODY:\nContent")
+        return_value=make_completion_response(
+            '{"subject":"Test","preheader":"Test","body_markdown":"Content"}'
+        )
     )
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
     monkeypatch.setattr(
@@ -598,7 +444,7 @@ def test_kimi_provider_uses_coding_api_base_url(client: TestClient, monkeypatch)
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    app.ai_generation.generate_newsletter_draft(newsletter)
+    app.ai_generation.generate_newsletter_content(newsletter)
 
     assert completion_mock.call_args.kwargs["model"] == "moonshot/kimi-k2.5"
     assert completion_mock.call_args.kwargs["api_base"] == "https://api.kimi.com/coding/v1"
@@ -621,7 +467,7 @@ def test_kimi_user_agent_merges_with_existing_extra_headers(client: TestClient, 
     newsletter.provider_id = None
 
     completion_mock = Mock(
-        return_value=make_completion_response("SUBJECT: T\nPREHEADER: T\nBODY:\nC")
+        return_value=make_completion_response('{"subject":"T","preheader":"T","body_markdown":"C"}')
     )
     monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
     monkeypatch.setattr(
@@ -630,7 +476,7 @@ def test_kimi_user_agent_merges_with_existing_extra_headers(client: TestClient, 
         Mock(return_value=make_api_key_resolution(api_key="test-key")),
     )
 
-    app.ai_generation.generate_newsletter_draft(newsletter)
+    app.ai_generation.generate_newsletter_content(newsletter)
 
     headers = completion_mock.call_args.kwargs["extra_headers"]
     assert headers["User-Agent"] == "claude-code/0.1.0"

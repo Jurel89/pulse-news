@@ -53,9 +53,9 @@ def build_newsletter(**overrides):
         "slug": "template-brief",
         "description": "Signals and notes for operators",
         "prompt": "Generate the weekly template preview.",
-        "draft_subject": "Template Brief",
-        "draft_preheader": "Signals and notes for operators",
-        "draft_body_text": "Line one\n\nLine two",
+        "subject": "Template Brief",
+        "preheader": "Signals and notes for operators",
+        "body_text": "Line one\n\nLine two",
         "provider_name": "openai",
         "model_name": "gpt-4o-mini",
         "template_key": "signal",
@@ -100,9 +100,9 @@ def test_rendered_output_contains_expected_subject_and_body_text(client: TestCli
 
     rendered = app.email_templates.render_newsletter(
         build_newsletter(
-            draft_subject="Ops & Markets",
-            draft_preheader="Signals <and> notes",
-            draft_body_text="First <line>\n\nSecond & final",
+            subject="Ops & Markets",
+            preheader="Signals <and> notes",
+            body_text="First <line>\n\nSecond & final",
         )
     )
 
@@ -129,7 +129,7 @@ def test_markdown_headings_rendered(client: TestClient):
     import app.email_templates
 
     rendered = app.email_templates.render_newsletter(
-        build_newsletter(draft_body_text="## Section Title\n\nParagraph text")
+        build_newsletter(body_text="## Section Title\n\nParagraph text")
     )
     assert "<h2" in rendered.html
     assert "Section Title</h2>" in rendered.html
@@ -141,7 +141,7 @@ def test_markdown_bold_and_italic(client: TestClient):
     import app.email_templates
 
     rendered = app.email_templates.render_newsletter(
-        build_newsletter(draft_body_text="This is **bold** and *italic* text.")
+        build_newsletter(body_text="This is **bold** and *italic* text.")
     )
     assert "<strong>bold</strong>" in rendered.html
     assert "<em>italic</em>" in rendered.html
@@ -151,7 +151,7 @@ def test_markdown_bullet_list(client: TestClient):
     import app.email_templates
 
     rendered = app.email_templates.render_newsletter(
-        build_newsletter(draft_body_text="- Item one\n- Item two\n- Item three")
+        build_newsletter(body_text="- Item one\n- Item two\n- Item three")
     )
     assert "<ul" in rendered.html
     assert "<li" in rendered.html
@@ -163,7 +163,7 @@ def test_markdown_code_and_links(client: TestClient):
     import app.email_templates
 
     rendered = app.email_templates.render_newsletter(
-        build_newsletter(draft_body_text="Use `pip install` and visit [docs](https://example.com).")
+        build_newsletter(body_text="Use `pip install` and visit [docs](https://example.com).")
     )
     assert "<code" in rendered.html
     assert "pip install</code>" in rendered.html
@@ -174,7 +174,7 @@ def test_plain_text_not_treated_as_heading(client: TestClient):
     import app.email_templates
 
     rendered = app.email_templates.render_newsletter(
-        build_newsletter(draft_body_text="This has **bold** in the middle of text.")
+        build_newsletter(body_text="This has **bold** in the middle of text.")
     )
     assert "<h2" not in rendered.html
     assert "<strong>bold</strong>" in rendered.html
@@ -184,7 +184,7 @@ def test_standalone_bold_line_is_heading(client: TestClient):
     import app.email_templates
 
     rendered = app.email_templates.render_newsletter(
-        build_newsletter(draft_body_text="**Major Releases**\n\nSome content here.")
+        build_newsletter(body_text="**Major Releases**\n\nSome content here.")
     )
     assert "<h2" in rendered.html
     assert "Major Releases</h2>" in rendered.html

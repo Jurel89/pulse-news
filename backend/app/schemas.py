@@ -15,7 +15,6 @@ from pydantic import (
     model_validator,
 )
 
-from app.models import OperationMode
 
 try:  # pragma: no cover - depends on local environment extras
     import email_validator  # noqa: F401
@@ -29,7 +28,6 @@ else:  # pragma: no cover - exercised when pydantic[email] is installed
 
 
 class NewsletterStatus(StrEnum):
-    DRAFT = "draft"
     ACTIVE = "active"
     PAUSED = "paused"
     ARCHIVED = "archived"
@@ -87,12 +85,7 @@ def _validate_supported_provider_name(value: str, *, field_name: str) -> str:
     return normalized
 
 
-class OperationModeStatus(BaseModel):
-    ai_generation_mode: OperationMode
-    email_delivery_mode: OperationMode
-
-
-class HealthResponse(OperationModeStatus):
+class HealthResponse(BaseModel):
     status: str
     app: str
     environment: str
@@ -127,25 +120,14 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
-class SessionResponse(OperationModeStatus):
+class SessionResponse(BaseModel):
     initialized: bool
     authenticated: bool
     user: UserSummary | None = None
 
 
-class SystemSettingsResponse(OperationModeStatus):
+class SystemSettingsResponse(BaseModel):
     initialized: bool
-
-
-class SystemSettingsUpdateRequest(BaseModel):
-    ai_generation_mode: OperationMode | None = None
-    email_delivery_mode: OperationMode | None = None
-
-    @model_validator(mode="after")
-    def validate_mode_update(self) -> SystemSettingsUpdateRequest:
-        if self.ai_generation_mode is None and self.email_delivery_mode is None:
-            raise ValueError("At least one operation mode must be provided.")
-        return self
 
 
 class NewsletterSummary(BaseModel):
@@ -154,19 +136,16 @@ class NewsletterSummary(BaseModel):
     slug: str
     description: str | None
     prompt: str
-    draft_subject: str
-    draft_preheader: str | None
-    draft_body_text: str
+    subject: str
+    preheader: str | None
+    body_text: str
     provider_id: int | None = None
     provider_name: str
     model_name: str
     template_key: str
     api_key_id: int | None = None
     resend_api_key_id: int | None = None
-    generation_profile_id: int | None = None
-    delivery_profile_id: int | None = None
-    approved_revision_id: int | None = None
-    draft_head_revision_id: int | None = None
+    from_email: str | None = None
     audience_name: str
     delivery_topic: str
     timezone: str
@@ -195,17 +174,13 @@ class NewsletterCreateRequest(BaseModel):
     name: str
     description: str | None = None
     prompt: str
-    draft_subject: str
-    draft_preheader: str | None = None
-    draft_body_text: str
     provider_id: int | None = None
     provider_name: str
     model_name: str
     template_key: str
     api_key_id: int | None = None
     resend_api_key_id: int | None = None
-    generation_profile_id: int | None = None
-    delivery_profile_id: int | None = None
+    from_email: str | None = None
     audience_name: str
     delivery_topic: str
     timezone: str
@@ -224,6 +199,11 @@ class NewsletterCreateRequest(BaseModel):
     @classmethod
     def validate_provider_name(cls, value: str) -> str:
         return _validate_supported_provider_name(value, field_name="provider_name")
+
+    @field_validator("from_email")
+    @classmethod
+    def validate_from_email(cls, value: str | None) -> str | None:
+        return _normalize_optional_email(value, field_name="from_email")
 
     @field_validator("timezone")
     @classmethod
@@ -273,8 +253,7 @@ class NewsletterJobUpdateRequest(BaseModel):
     template_key: str
     api_key_id: int | None = None
     resend_api_key_id: int | None = None
-    generation_profile_id: int | None = None
-    delivery_profile_id: int | None = None
+    from_email: str | None = None
     audience_name: str
     delivery_topic: str
     timezone: str
@@ -293,6 +272,11 @@ class NewsletterJobUpdateRequest(BaseModel):
     @classmethod
     def validate_provider_name(cls, value: str) -> str:
         return _validate_supported_provider_name(value, field_name="provider_name")
+
+    @field_validator("from_email")
+    @classmethod
+    def validate_from_email(cls, value: str | None) -> str | None:
+        return _normalize_optional_email(value, field_name="from_email")
 
     @field_validator("timezone")
     @classmethod
@@ -331,48 +315,6 @@ class NewsletterJobUpdateRequest(BaseModel):
 class NewsletterDetail(NewsletterSummary):
     recipients: list[NewsletterRecipientSummary]
     recipient_import_text: str
-
-
-class DraftRevisionSummary(BaseModel):
-    id: int
-    newsletter_id: int
-    version_number: int
-    state: str
-    origin: str
-    created_by_email: str | None = None
-    subject: str
-    preheader: str | None = None
-    body_text: str
-    source_bundle_snapshot_json: str | None = None
-    highlights_json: str | None = None
-    source_references_json: str | None = None
-    provider_snapshot_json: str | None = None
-    token_usage_json: str | None = None
-    raw_response_hash: str | None = None
-    generation_run_id: int | None = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class DraftRevisionListResponse(BaseModel):
-    items: list[DraftRevisionSummary]
-
-
-class DraftRevisionApproveResponse(BaseModel):
-    revision: DraftRevisionSummary
-    newsletter: NewsletterDetail
-
-
-class DraftRevisionUpdateRequest(BaseModel):
-    subject: str
-    preheader: str | None = None
-    body_text: str
-
-
-class DraftRevisionDetailResponse(BaseModel):
-    revision: DraftRevisionSummary
 
 
 class EmailTemplateSummary(BaseModel):
@@ -431,14 +373,6 @@ class EmailTemplateCreateRequest(BaseModel):
 
 class EmailTemplateUpdateRequest(EmailTemplateCreateRequest):
     pass
-
-
-class EmailTemplatePreviewRequest(BaseModel):
-    variables: dict[str, str] = Field(default_factory=dict)
-
-
-class EmailTemplatePreviewResponse(BaseModel):
-    html: str
 
 
 class ProviderSummary(BaseModel):
@@ -584,36 +518,9 @@ class ApiKeyTestResponse(BaseModel):
     masked_key: str
 
 
-class NewsletterPreviewResponse(BaseModel):
-    subject: str
-    preheader: str
-    html: str
-    plain_text: str
-    template_key: str
-
-
-class NewsletterTestSendRequest(BaseModel):
-    to_email: EmailStr
-    revision_id: int | None = None
-
-
-class NewsletterSendRequest(BaseModel):
-    revision_id: int | None = None
-    idempotency_key: str | None = None
-
-
-class NewsletterTestSendResponse(BaseModel):
-    status: str
-    mode: str
-    message: str
-    provider_id: str | None = None
-    to_email: str
-
-
 class NewsletterRunSummary(BaseModel):
     id: int
     newsletter_id: int
-    revision_id: int | None = None
     run_type: str | None = None
     snapshot_newsletter_name: str | None = None
     started_at: datetime | None = None
@@ -648,15 +555,6 @@ class NewsletterRunEventSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class NewsletterGenerationResponse(BaseModel):
-    status: str
-    mode: str
-    message: str
-    revision_id: int | None = None
-    newsletter: NewsletterDetail
-    run: NewsletterRunSummary
-
-
 class RecipientSendOutcomeResponse(BaseModel):
     email: str
     status: str
@@ -682,10 +580,6 @@ class RunDetailResponse(BaseModel):
     newsletter_snapshot: NewsletterSummary | None = None
     recipient_emails: list[str]
     recipient_outcomes: list[RecipientSendOutcomeResponse]
-    events: list[NewsletterRunEventSummary]
-
-
-class RunReconciliationResponse(BaseModel):
     events: list[NewsletterRunEventSummary]
 
 
