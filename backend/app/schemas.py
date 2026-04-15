@@ -15,7 +15,6 @@ from pydantic import (
     model_validator,
 )
 
-
 try:  # pragma: no cover - depends on local environment extras
     import email_validator  # noqa: F401
 except ImportError:  # pragma: no cover - exercised in the repo test venv
