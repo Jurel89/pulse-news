@@ -463,6 +463,67 @@ def test_generate_newsletter_content_does_not_pass_tools_for_unsupported_provide
     assert completion_mock.call_args.kwargs.get("tools") is None
 
 
+def test_generate_newsletter_content_extracts_json_from_prose_prefix_and_suffix(
+    client: TestClient,
+    monkeypatch,
+):
+    """After a tool round-trip, Kimi sometimes prefaces the JSON with
+    ``Here is the newsletter:`` or appends trailing prose. The parser should
+    still recover by picking the outermost balanced {...} object."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="Fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "Here is the newsletter you requested:\n\n"
+            '{"subject":"Recovered","preheader":"From the web",'
+            '"body_markdown":"# Title\\n\\nBody."}'
+            "\n\nLet me know if you want changes."
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "generated"
+    assert result.subject == "Recovered"
+    assert result.body_text == "# Title\n\nBody."
+
+
+def test_generate_newsletter_content_parse_failure_includes_raw_preview(
+    client: TestClient,
+    monkeypatch,
+):
+    """When the model returns something the parser can't recover, the error
+    message must include the raw response so operators can see *why* from the
+    Logs page without tailing docker or adding more debug code."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="d")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "I cannot produce JSON for this request because blah blah."
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "error"
+    assert "could not be parsed" in result.message
+    assert "I cannot produce JSON" in result.message
+
+
 def test_generate_newsletter_content_accepts_json_wrapped_in_markdown_fences(
     client: TestClient,
     monkeypatch,

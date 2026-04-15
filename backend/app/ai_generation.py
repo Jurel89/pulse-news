@@ -515,15 +515,36 @@ def _strip_json_fences(content: str) -> str:
     return stripped
 
 
+def _extract_json_object_substring(content: str) -> str | None:
+    """Return the largest balanced ``{...}`` substring in ``content`` so we can
+    rescue a strict-JSON payload even when the model wraps it in prose or
+    bullets. Returns None when no balanced object is found."""
+    first_brace = content.find("{")
+    last_brace = content.rfind("}")
+    if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
+        return None
+    return content[first_brace : last_brace + 1]
+
+
 def _parse_structured_generation_output(
     newsletter: Newsletter,
     *,
     content: str,
 ) -> GeneratedContent | None:
+    stripped = _strip_json_fences(content)
     try:
-        parsed = json.loads(_strip_json_fences(content))
+        parsed = json.loads(stripped)
     except json.JSONDecodeError:
-        return None
+        # Some models (especially Kimi after a search round-trip) wrap the
+        # JSON in a preface like "Here is the newsletter:" or trailing prose.
+        # Try to recover by extracting the outermost braced object.
+        candidate = _extract_json_object_substring(stripped)
+        if candidate is None:
+            return None
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
 
     if not isinstance(parsed, dict):
         return None
@@ -686,10 +707,16 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
         structured_result.tool_loop_trace_json = tool_loop_trace_json
         return structured_result
 
+    preview_len = 600
+    content_preview = (content or "").strip()[:preview_len]
+    parse_failure_message = (
+        "AI output could not be parsed as strict JSON. "
+        f"First {preview_len} chars of raw response: {content_preview!r}"
+    )
     return GeneratedContent(
         status="error",
         mode="litellm",
-        message="AI output could not be parsed as strict JSON.",
+        message=parse_failure_message,
         subject=newsletter.name,
         preheader=newsletter.description or "",
         body_text=content[:500] if content else "",
