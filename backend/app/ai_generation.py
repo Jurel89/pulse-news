@@ -27,6 +27,7 @@ class GeneratedContent:
     provider_snapshot_json: str | None = None
     token_usage_json: str | None = None
     raw_response_hash: str | None = None
+    tool_loop_trace_json: str | None = None
 
 
 SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter", "zai", "kimi"}
@@ -63,7 +64,7 @@ def _run_completion_with_tool_loop(
     api_key: str,
     completion_kwargs: dict[str, Any],
     max_iterations: int = 3,
-):
+) -> tuple[Any, list[dict[str, Any]]]:
     """Run the completion call, round-tripping tool_calls when the model asks
     us to execute a (Kimi-style) builtin function.
 
@@ -75,12 +76,17 @@ def _run_completion_with_tool_loop(
     Providers that server-resolve in a single round (Anthropic web_search,
     Gemini google_search) simply return ``finish_reason="stop"`` immediately
     and the loop exits on the first iteration — no special-casing needed.
+
+    Returns (final_response, trace) where trace records per-iteration
+    diagnostics so operators can see from the Logs page whether the tool was
+    actually invoked or silently ignored.
     """
     import copy
 
     conversation = list(messages)
     last_response = None
-    for _ in range(max_iterations + 1):
+    trace: list[dict[str, Any]] = []
+    for iteration in range(max_iterations + 1):
         last_response = completion(
             model=model,
             messages=conversation,
@@ -90,10 +96,26 @@ def _run_completion_with_tool_loop(
         choice = last_response.choices[0]
         message = choice.message
         finish_reason = getattr(choice, "finish_reason", None)
-        tool_calls = getattr(message, "tool_calls", None) or []
+        tool_calls_raw = getattr(message, "tool_calls", None)
+        tool_calls = tool_calls_raw if isinstance(tool_calls_raw, list) else []
+
+        usage = getattr(last_response, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage is not None else None
+        completion_tokens = getattr(usage, "completion_tokens", None) if usage is not None else None
+        trace.append(
+            {
+                "iteration": iteration,
+                "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
+                "tool_calls_count": len(tool_calls),
+                "prompt_tokens": prompt_tokens if isinstance(prompt_tokens, int) else None,
+                "completion_tokens": completion_tokens
+                if isinstance(completion_tokens, int)
+                else None,
+            }
+        )
 
         if finish_reason != "tool_calls" or not tool_calls:
-            return last_response
+            return last_response, trace
 
         assistant_entry: dict[str, Any] = {
             "role": "assistant",
@@ -126,7 +148,7 @@ def _run_completion_with_tool_loop(
                 }
             )
 
-    return last_response
+    return last_response, trace
 
 
 def _provider_web_search_tools(provider_name: str) -> list[dict] | None:
@@ -528,14 +550,17 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
             except Exception:  # pragma: no cover - debug path
                 pass
 
-        response = _run_completion_with_tool_loop(
+        response, tool_loop_trace = _run_completion_with_tool_loop(
             model=_provider_model_name(newsletter),
             messages=[{"role": "user", "content": prompt}],
             api_key=api_key,
             completion_kwargs=completion_kwargs,
         )
         content = response.choices[0].message.content or ""
-        token_usage_json = _serialize_token_usage(getattr(response, "usage", None))
+        token_usage_json = _aggregate_token_usage_json(
+            tool_loop_trace, fallback_usage=getattr(response, "usage", None)
+        )
+        tool_loop_trace_json = json.dumps(tool_loop_trace) if tool_loop_trace else None
         raw_response_hash = hashlib.sha256(content.encode()).hexdigest()
     except ValueError as exc:
         return _error_generate(newsletter, str(exc))
@@ -552,6 +577,7 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
     if structured_result is not None:
         structured_result.token_usage_json = token_usage_json
         structured_result.raw_response_hash = raw_response_hash
+        structured_result.tool_loop_trace_json = tool_loop_trace_json
         return structured_result
 
     return GeneratedContent(
@@ -564,6 +590,7 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
         provider_snapshot_json=_provider_snapshot_json(newsletter),
         token_usage_json=token_usage_json,
         raw_response_hash=raw_response_hash,
+        tool_loop_trace_json=tool_loop_trace_json,
     )
 
 
@@ -586,6 +613,37 @@ def _provider_snapshot_json(newsletter: Newsletter) -> str:
         {
             "provider_name": _normalized_provider_name(newsletter),
             "model_name": _provider_model_name(newsletter),
+        }
+    )
+
+
+def _aggregate_token_usage_json(
+    trace: list[dict[str, Any]], *, fallback_usage: Any = None
+) -> str | None:
+    """Sum prompt/completion tokens across every tool-loop iteration so the
+    programmatic footer reports the true cost of a generation rather than only
+    the last round-trip (which, for Kimi web_search, is the smallest one)."""
+    if not trace:
+        return _serialize_token_usage(fallback_usage)
+
+    prompt_total = 0
+    completion_total = 0
+    for entry in trace:
+        prompt = entry.get("prompt_tokens")
+        if isinstance(prompt, int):
+            prompt_total += prompt
+        completion_val = entry.get("completion_tokens")
+        if isinstance(completion_val, int):
+            completion_total += completion_val
+
+    if prompt_total == 0 and completion_total == 0:
+        return _serialize_token_usage(fallback_usage)
+
+    return json.dumps(
+        {
+            "prompt_tokens": prompt_total,
+            "completion_tokens": completion_total,
+            "total_tokens": prompt_total + completion_total,
         }
     )
 

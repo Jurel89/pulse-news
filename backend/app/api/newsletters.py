@@ -710,6 +710,33 @@ def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> Newsl
     return serialize_newsletter_detail(newsletter)
 
 
+def _summarize_tool_loop_trace(trace_json: str | None) -> str | None:
+    """Produce a one-line summary of the tool-loop trace for the logs page.
+
+    Operators need to know at a glance whether web search actually fired or
+    whether the provider silently ignored our tool payload. Format example:
+      "Tool loop: 2 iterations; finish_reasons=tool_calls,stop; tool_calls=1,0"
+    """
+    if not trace_json:
+        return None
+    try:
+        trace = json.loads(trace_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(trace, list) or not trace:
+        return None
+    finish_reasons = ",".join(
+        str(entry.get("finish_reason") or "?") for entry in trace if isinstance(entry, dict)
+    )
+    tool_call_counts = ",".join(
+        str(entry.get("tool_calls_count") or 0) for entry in trace if isinstance(entry, dict)
+    )
+    return (
+        f"Tool loop: {len(trace)} iteration(s); "
+        f"finish_reasons={finish_reasons}; tool_calls={tool_call_counts}"
+    )
+
+
 def _generation_meta_from_generated(newsletter: Newsletter, generated) -> GenerationMeta:
     """Build the render-time footer facts from what the backend observed on the
     generation call — never trust the model to self-report identity or cost."""
@@ -811,8 +838,13 @@ def run_newsletter(
             detail=f"Generation failed: {generated.message}",
         )
 
+    tool_loop_summary = _summarize_tool_loop_trace(getattr(generated, "tool_loop_trace_json", None))
+    generation_message = "AI generation succeeded."
+    if tool_loop_summary:
+        generation_message = f"{generation_message} {tool_loop_summary}"
+
     generation_run.run_status = "generated"
-    generation_run.result_message = "AI generation succeeded."
+    generation_run.result_message = generation_message
     generation_run.completed_at = utc_now()
     db.add(generation_run)
     add_run_event(
@@ -820,7 +852,7 @@ def run_newsletter(
         generation_run,
         event_type="generation",
         event_status="generated",
-        message="AI generation succeeded.",
+        message=generation_message,
     )
 
     newsletter.subject = generated.subject
