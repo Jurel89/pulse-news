@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.deps import DbSession
 from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email
-from app.email_templates import render_newsletter_content
+from app.email_templates import GenerationMeta, render_newsletter_content
 from app.models import (
     ApiKey,
     AuditEvent,
@@ -307,6 +307,7 @@ def execute_newsletter_send(
     trigger_mode: str,
     idempotency_key: str | None = None,
     fire_scope: str | None = None,
+    generation_meta: GenerationMeta | None = None,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
     validate_send_allowed(newsletter)
 
@@ -366,6 +367,7 @@ def execute_newsletter_send(
             subject=newsletter.subject,
             preheader=newsletter.preheader,
             body=newsletter.body_text,
+            generation_meta=generation_meta,
         )
         run.rendered_subject = rendered.subject
         run.rendered_preheader = rendered.preheader
@@ -708,6 +710,27 @@ def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> Newsl
     return serialize_newsletter_detail(newsletter)
 
 
+def _generation_meta_from_generated(newsletter: Newsletter, generated) -> GenerationMeta:
+    """Build the render-time footer facts from what the backend observed on the
+    generation call — never trust the model to self-report identity or cost."""
+    input_tokens: int | None = None
+    try:
+        usage = json.loads(getattr(generated, "token_usage_json", None) or "{}")
+        raw = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        if isinstance(raw, int):
+            input_tokens = raw
+        elif isinstance(raw, str) and raw.isdigit():
+            input_tokens = int(raw)
+    except (json.JSONDecodeError, ValueError):
+        input_tokens = None
+
+    return GenerationMeta(
+        provider=(newsletter.provider_name or None),
+        model=(newsletter.model_name or None),
+        input_tokens=input_tokens,
+    )
+
+
 def _create_generation_run(
     db: DbSession,
     newsletter: Newsletter,
@@ -817,6 +840,7 @@ def run_newsletter(
         newsletter,
         trigger_mode="manual-run",
         fire_scope=str(uuid.uuid4()),
+        generation_meta=_generation_meta_from_generated(newsletter, generated),
     )
     return response
 

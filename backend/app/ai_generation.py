@@ -44,6 +44,31 @@ PRESET_BASE_URLS: dict[str, str] = {
 }
 
 
+def _provider_web_search_tools(provider_name: str) -> list[dict] | None:
+    """Return the provider-specific tool payload that enables real-time web
+    search on the generation call, or None if the provider has no supported
+    server-resolved web-search tool.
+
+    This is a newsletter platform — giving the model web access by default is
+    the only way content stays current. Client-resolved tool loops (OpenAI
+    Responses API, OpenRouter `:online` routing) are intentionally left out of
+    this v1 because they need separate plumbing.
+    """
+    normalized = provider_name.lower()
+    if normalized in {"kimi", "moonshot"}:
+        # Moonshot's server-resolved $web_search builtin works via both the
+        # Moonshot chat API and the Kimi Code API (api.kimi.com/coding/v1).
+        return [{"type": "builtin_function", "function": {"name": "$web_search"}}]
+    if normalized == "anthropic":
+        # Claude native server-side web search tool.
+        return [{"type": "web_search_20250305", "name": "web_search"}]
+    if normalized in {"gemini", "google"}:
+        # Gemini grounding via Google Search; LiteLLM forwards this tool shape
+        # to the Gemini API which resolves the search server-side.
+        return [{"google_search": {}}]
+    return None
+
+
 @dataclass(frozen=True)
 class ApiKeyResolution:
     api_key: str | None
@@ -394,6 +419,13 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
                 **existing_headers,
                 "User-Agent": os.environ.get("LITELLM_USER_AGENT", "claude-code/0.1.0"),
             }
+
+        # Always enable web search when the provider supports it. This is a
+        # newsletter platform — without real-time web access the model just
+        # hallucinates "recent" news from training data.
+        web_search_tools = _provider_web_search_tools(provider_name)
+        if web_search_tools is not None:
+            completion_kwargs.setdefault("tools", web_search_tools)
 
         response = completion(
             model=_provider_model_name(newsletter),

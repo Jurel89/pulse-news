@@ -19,6 +19,48 @@ class RenderedNewsletter:
     template_key: str
 
 
+@dataclass
+class GenerationMeta:
+    """Facts about the generation run the backend already knows, rendered
+    programmatically in the footer instead of trusting the model to self-report."""
+
+    provider: str | None = None
+    model: str | None = None
+    input_tokens: int | None = None
+
+    def is_empty(self) -> bool:
+        return not (self.provider or self.model or self.input_tokens is not None)
+
+    def html_line(self, accent: str) -> str:
+        if self.is_empty():
+            return ""
+        parts: list[str] = []
+        if self.provider and self.model:
+            parts.append(f"Generated with {escape(self.provider)}/{escape(self.model)}")
+        elif self.model:
+            parts.append(f"Generated with {escape(self.model)}")
+        if self.input_tokens is not None:
+            parts.append(f"{self.input_tokens:,} input tokens")
+        if not parts:
+            return ""
+        return (
+            f'<p style="margin:0 0 6px;font-size:11px;color:{accent};'
+            f'opacity:0.55;line-height:1.4;">{" · ".join(parts)}</p>'
+        )
+
+    def plain_text_line(self) -> str:
+        if self.is_empty():
+            return ""
+        parts: list[str] = []
+        if self.provider and self.model:
+            parts.append(f"Generated with {self.provider}/{self.model}")
+        elif self.model:
+            parts.append(f"Generated with {self.model}")
+        if self.input_tokens is not None:
+            parts.append(f"{self.input_tokens:,} input tokens")
+        return " · ".join(parts)
+
+
 def normalize_newsletter_content(newsletter: Newsletter) -> tuple[str, str, str]:
     subject = newsletter.subject.strip() or newsletter.name
     preheader = (newsletter.preheader or newsletter.description or "").strip()
@@ -142,7 +184,12 @@ def _markdown_body_to_html(body: str) -> str:
     return "\n".join(html_parts)
 
 
-def render_signal_template(subject: str, preheader: str, body_html: str) -> str:
+def render_signal_template(
+    subject: str,
+    preheader: str,
+    body_html: str,
+    generation_meta: GenerationMeta | None = None,
+) -> str:
     return "\n".join(
         [
             "<!doctype html>",
@@ -161,7 +208,7 @@ def render_signal_template(subject: str, preheader: str, body_html: str) -> str:
             '        <div style="background:#ffffff;border-radius:20px;padding:32px 28px;margin-top:16px;box-shadow:0 12px 40px rgba(24,50,74,0.10);">',
             f"          {body_html}",
             "        </div>",
-            _build_email_footer(),
+            _build_email_footer(generation_meta=generation_meta),
             "      </div>",
             "    </center>",
             "  </body>",
@@ -170,7 +217,12 @@ def render_signal_template(subject: str, preheader: str, body_html: str) -> str:
     )
 
 
-def render_ledger_template(subject: str, preheader: str, body_html: str) -> str:
+def render_ledger_template(
+    subject: str,
+    preheader: str,
+    body_html: str,
+    generation_meta: GenerationMeta | None = None,
+) -> str:
     return "\n".join(
         [
             "<!doctype html>",
@@ -189,7 +241,7 @@ def render_ledger_template(subject: str, preheader: str, body_html: str) -> str:
             '        <div style="border-left:5px solid #8b5e1b;background:#ffffff;padding:32px 28px;margin-top:16px;">',
             f"          {body_html}",
             "        </div>",
-            _build_email_footer(accent="#8b5e1b"),
+            _build_email_footer(accent="#8b5e1b", generation_meta=generation_meta),
             "      </div>",
             "    </center>",
             "  </body>",
@@ -198,7 +250,12 @@ def render_ledger_template(subject: str, preheader: str, body_html: str) -> str:
     )
 
 
-def render_corporate_template(subject: str, preheader: str, body_html: str) -> str:
+def render_corporate_template(
+    subject: str,
+    preheader: str,
+    body_html: str,
+    generation_meta: GenerationMeta | None = None,
+) -> str:
     return "\n".join(
         [
             "<!doctype html>",
@@ -220,7 +277,7 @@ def render_corporate_template(subject: str, preheader: str, body_html: str) -> s
             "          </div>",
             '          <div style="height:4px;background:linear-gradient(to right,#003b7f 0%,#003b7f 60%,#ef7b21 60%,#ef7b21 100%);"></div>',
             "        </div>",
-            _build_email_footer(accent="#003b7f"),
+            _build_email_footer(accent="#003b7f", generation_meta=generation_meta),
             "      </div>",
             "    </center>",
             "  </body>",
@@ -229,7 +286,10 @@ def render_corporate_template(subject: str, preheader: str, body_html: str) -> s
     )
 
 
-def _build_email_footer(accent: str = "#5c7a8a") -> str:
+def _build_email_footer(
+    accent: str = "#5c7a8a", generation_meta: GenerationMeta | None = None
+) -> str:
+    meta_html = generation_meta.html_line(accent) if generation_meta is not None else ""
     return (
         '<div style="text-align:center;padding:24px 18px 12px;">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
@@ -240,6 +300,7 @@ def _build_email_footer(accent: str = "#5c7a8a") -> str:
         "</tr>"
         "<tr>"
         '<td style="padding:8px 0;">'
+        f"{meta_html}"
         f'<p style="margin:0;font-size:12px;color:{accent};opacity:0.7;line-height:1.5;">'
         f'Sent from <a href="{PULSE_NEWS_GITHUB_URL}" '
         f'style="color:{accent};text-decoration:underline;font-weight:600;">Pulse-News</a>'
@@ -252,7 +313,12 @@ def _build_email_footer(accent: str = "#5c7a8a") -> str:
 
 
 def render_custom_template(
-    html_template: str, subject: str, preheader: str, body_html: str, newsletter_name: str
+    html_template: str,
+    subject: str,
+    preheader: str,
+    body_html: str,
+    newsletter_name: str,
+    generation_meta: GenerationMeta | None = None,
 ) -> str:
     result = html_template
     result = result.replace("{{subject}}", escape(subject))
@@ -262,7 +328,7 @@ def render_custom_template(
     result = result.replace("{{body_html}}", body_html)
     result = result.replace("{{newsletter_name}}", escape(newsletter_name))
 
-    footer = _build_email_footer()
+    footer = _build_email_footer(generation_meta=generation_meta)
     if "{{footer}}" in html_template:
         result = result.replace("{{footer}}", footer)
     elif "</body>" in result:
@@ -285,6 +351,7 @@ def render_newsletter_content(
     subject: str,
     preheader: str | None,
     body: str,
+    generation_meta: GenerationMeta | None = None,
 ) -> RenderedNewsletter:
     from sqlalchemy import select
 
@@ -305,21 +372,36 @@ def render_newsletter_content(
 
     if custom_template and custom_template.html_template:
         html = render_custom_template(
-            custom_template.html_template, subject, preheader, body_html, newsletter.name
+            custom_template.html_template,
+            subject,
+            preheader,
+            body_html,
+            newsletter.name,
+            generation_meta=generation_meta,
         )
     elif template_key == "signal":
-        html = render_signal_template(subject, preheader, body_html)
+        html = render_signal_template(
+            subject, preheader, body_html, generation_meta=generation_meta
+        )
     elif template_key == "ledger":
-        html = render_ledger_template(subject, preheader, body_html)
+        html = render_ledger_template(
+            subject, preheader, body_html, generation_meta=generation_meta
+        )
     elif template_key == "corporate":
-        html = render_corporate_template(subject, preheader, body_html)
+        html = render_corporate_template(
+            subject, preheader, body_html, generation_meta=generation_meta
+        )
     else:
         raise ValueError(
             f"Template '{template_key}' was not found and no built-in template matches."
         )
 
     plain_text_body = render_plain_text(subject, preheader, body)
-    plain_text_body += f"\n\n---\nSent from Pulse-News — {PULSE_NEWS_GITHUB_URL}"
+    meta_plain_line = generation_meta.plain_text_line() if generation_meta is not None else ""
+    plain_text_body += "\n\n---"
+    if meta_plain_line:
+        plain_text_body += f"\n{meta_plain_line}"
+    plain_text_body += f"\nSent from Pulse-News — {PULSE_NEWS_GITHUB_URL}"
 
     return RenderedNewsletter(
         subject=subject,

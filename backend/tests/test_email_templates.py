@@ -190,6 +190,40 @@ def test_standalone_bold_line_is_heading(client: TestClient):
     assert "Major Releases</h2>" in rendered.html
 
 
+def test_footer_includes_programmatic_generation_meta(client: TestClient):
+    import app.email_templates
+
+    newsletter = build_newsletter()
+    subject, preheader, body = app.email_templates.normalize_newsletter_content(newsletter)
+    rendered = app.email_templates.render_newsletter_content(
+        newsletter,
+        subject=subject,
+        preheader=preheader,
+        body=body,
+        generation_meta=app.email_templates.GenerationMeta(
+            provider="kimi",
+            model="kimi-k2.5",
+            input_tokens=4250,
+        ),
+    )
+
+    # Model facts come from the backend, not from the LLM's self-report.
+    assert "Generated with kimi/kimi-k2.5" in rendered.html
+    assert "4,250 input tokens" in rendered.html
+    assert "Generated with kimi/kimi-k2.5" in rendered.plain_text
+    assert "4,250 input tokens" in rendered.plain_text
+
+
+def test_render_newsletter_omits_generation_line_when_meta_missing(client: TestClient):
+    import app.email_templates
+
+    rendered = app.email_templates.render_newsletter(build_newsletter())
+
+    assert "Generated with" not in rendered.html
+    assert "input tokens" not in rendered.html
+    assert "Generated with" not in rendered.plain_text
+
+
 def test_custom_template_with_body_tag_gets_footer(client: TestClient):
     import app.email_templates
 

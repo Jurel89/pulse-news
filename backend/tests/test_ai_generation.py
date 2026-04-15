@@ -244,6 +244,73 @@ def test_generate_newsletter_content_accepts_structured_json_output(
     assert result.body_text == "First section\n\nSecond section"
 
 
+@pytest.mark.parametrize(
+    "provider_type, expected_tool",
+    [
+        (
+            "kimi",
+            {"type": "builtin_function", "function": {"name": "$web_search"}},
+        ),
+        (
+            "anthropic",
+            {"type": "web_search_20250305", "name": "web_search"},
+        ),
+        (
+            "gemini",
+            {"google_search": {}},
+        ),
+    ],
+)
+def test_generate_newsletter_content_enables_web_search_tool_per_provider(
+    client: TestClient,
+    monkeypatch,
+    provider_type: str,
+    expected_tool: dict,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(provider_name=provider_type, model_name="test-model")
+    completion_mock = Mock(
+        return_value=make_completion_response('{"subject":"s","preheader":"p","body_markdown":"b"}')
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    app.ai_generation.generate_newsletter_content(newsletter)
+
+    tools = completion_mock.call_args.kwargs.get("tools")
+    assert tools == [expected_tool]
+
+
+def test_generate_newsletter_content_does_not_pass_tools_for_unsupported_provider(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(provider_name="openai", model_name="gpt-4o-mini")
+    completion_mock = Mock(
+        return_value=make_completion_response('{"subject":"s","preheader":"p","body_markdown":"b"}')
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    app.ai_generation.generate_newsletter_content(newsletter)
+
+    # OpenAI web search lives on the Responses API, which we don't call; make
+    # sure we don't send a tool payload that would be rejected or silently
+    # ignored by chat completions.
+    assert completion_mock.call_args.kwargs.get("tools") is None
+
+
 def test_generate_newsletter_content_accepts_json_wrapped_in_markdown_fences(
     client: TestClient,
     monkeypatch,
