@@ -586,8 +586,11 @@ def get_form_options(request: Request, db: DbSession) -> dict:
     }
 
 
+BUILT_IN_TEMPLATE_KEYS = frozenset({"signal", "ledger", "corporate"})
+
+
 def _ensure_template_exists(db: DbSession, template_key: str) -> None:
-    if template_key in {"signal", "ledger"}:
+    if template_key in BUILT_IN_TEMPLATE_KEYS:
         return
     exists = db.scalar(select(EmailTemplate).where(EmailTemplate.key == template_key))
     if exists is None:
