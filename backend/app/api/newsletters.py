@@ -798,10 +798,14 @@ def _mark_generation_failed(
     run: NewsletterRun,
     *,
     message: str,
+    tool_loop_summary: str | None = None,
 ) -> None:
+    full_message = message
+    if tool_loop_summary:
+        full_message = f"{message} [{tool_loop_summary}]"
     run.run_status = "failed"
-    run.failure_reason = message
-    run.result_message = f"AI generation failed: {message}"
+    run.failure_reason = full_message
+    run.result_message = f"AI generation failed: {full_message}"
     run.completed_at = utc_now()
     db.add(run)
     add_run_event(
@@ -809,7 +813,7 @@ def _mark_generation_failed(
         run,
         event_type="generation",
         event_status="failed",
-        message=message,
+        message=full_message,
     )
     db.commit()
 
@@ -832,7 +836,14 @@ def run_newsletter(
         raise
 
     if generated.status == "error":
-        _mark_generation_failed(db, generation_run, message=generated.message)
+        _mark_generation_failed(
+            db,
+            generation_run,
+            message=generated.message,
+            tool_loop_summary=_summarize_tool_loop_trace(
+                getattr(generated, "tool_loop_trace_json", None)
+            ),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Generation failed: {generated.message}",

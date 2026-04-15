@@ -312,6 +312,74 @@ def test_generate_newsletter_content_uses_native_server_resolved_tool_for_one_sh
     assert tools == [expected_tool]
 
 
+def test_tool_loop_force_closes_without_tools_when_max_iterations_reached(
+    client: TestClient,
+):
+    """If the model keeps asking for tools past max_iterations, the loop must
+    make one final call with ``tools`` stripped so the model is forced to
+    return content. Otherwise the caller sees an empty response and can't
+    distinguish \"model gave up\" from \"model loop wasn't closed out\"."""
+    from app.generation import tool_loop
+
+    def make_tool_response():
+        tc = Mock()
+        tc.id = "call_x"
+        tc.function = Mock()
+        tc.function.name = "web_search"
+        tc.function.arguments = '{"query": "ai"}'
+        msg = Mock()
+        msg.content = None
+        msg.tool_calls = [tc]
+        choice = Mock()
+        choice.message = msg
+        choice.finish_reason = "tool_calls"
+        resp = Mock()
+        resp.choices = [choice]
+        resp.usage = None
+        return resp
+
+    def make_final_response():
+        msg = Mock()
+        msg.content = '{"subject":"S","preheader":"P","body_markdown":"B"}'
+        msg.tool_calls = None
+        choice = Mock()
+        choice.message = msg
+        choice.finish_reason = "stop"
+        resp = Mock()
+        resp.choices = [choice]
+        resp.usage = None
+        return resp
+
+    # 3 iterations + 1 forced close after max_iterations=2.
+    responses = [
+        make_tool_response(),
+        make_tool_response(),
+        make_tool_response(),
+        make_final_response(),
+    ]
+    completion_mock = Mock(side_effect=responses)
+
+    final_response, trace = tool_loop.run(
+        completion=completion_mock,
+        model="kimi/kimi-k2.5",
+        messages=[{"role": "user", "content": "write me a newsletter"}],
+        api_key="k",
+        completion_kwargs={"tools": [{"type": "function", "function": {"name": "web_search"}}]},
+        max_iterations=2,
+        tool_executor=lambda name, args: '{"results":[]}',
+    )
+
+    # Last completion call is the force-close — no tools kwarg.
+    last_call_kwargs = completion_mock.call_args_list[-1].kwargs
+    assert "tools" not in last_call_kwargs, (
+        "Force-close call must strip the tools kwarg so the model has to respond."
+    )
+    # Trace records the force-close marker.
+    assert trace[-1].get("force_closed") is True
+    # Final response is the one from the force-close, with real content.
+    assert final_response.choices[0].message.content.startswith("{")
+
+
 def test_generate_newsletter_content_executes_client_side_web_search_for_kimi(
     client: TestClient,
     monkeypatch,

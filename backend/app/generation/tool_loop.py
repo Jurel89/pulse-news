@@ -31,7 +31,7 @@ def run(
     messages: list[dict[str, Any]],
     api_key: str,
     completion_kwargs: dict[str, Any],
-    max_iterations: int = 3,
+    max_iterations: int = 8,
     tool_executor: ToolExecutor | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Drive a chat-completion conversation until the model stops emitting
@@ -44,6 +44,11 @@ def run(
     ``$web_search`` builtin protocol; kept as a safe fallback, though current
     server-resolved providers typically never enter this branch because they
     one-shot on iteration 0.
+
+    If ``max_iterations`` is reached with the model still asking for more
+    tool calls, a final "force-close" completion is issued with the ``tools``
+    kwarg stripped, so the model is obliged to produce content instead of
+    returning an empty response with ``finish_reason="tool_calls"``.
 
     Returns ``(final_response, trace)`` where trace records per-iteration
     finish_reason, tool_calls count, and token usage so operators can tell
@@ -120,4 +125,44 @@ def run(
                 }
             )
 
+    # Max iterations reached with the model still asking for tools. Make one
+    # final call without the tools kwarg and with an explicit nudge, so the
+    # model is forced to produce content instead of more tool_calls. Without
+    # this, the caller would get back a response with ``content=None`` and
+    # ``finish_reason="tool_calls"`` — which looks like an empty generation.
+    final_kwargs = {k: v for k, v in completion_kwargs.items() if k != "tools"}
+    conversation.append(
+        {
+            "role": "user",
+            "content": (
+                "You have gathered enough information. Produce the final "
+                "newsletter output now in the exact JSON schema requested, "
+                "with no further tool calls and no surrounding prose."
+            ),
+        }
+    )
+    last_response = completion(
+        model=model,
+        messages=conversation,
+        api_key=api_key,
+        **final_kwargs,
+    )
+    choice = last_response.choices[0]
+    usage = getattr(last_response, "usage", None)
+    prompt_tokens = getattr(usage, "prompt_tokens", None) if usage is not None else None
+    completion_tokens = getattr(usage, "completion_tokens", None) if usage is not None else None
+    trace.append(
+        {
+            "iteration": max_iterations + 1,
+            "finish_reason": (
+                getattr(choice, "finish_reason", None)
+                if isinstance(getattr(choice, "finish_reason", None), str)
+                else None
+            ),
+            "tool_calls_count": 0,
+            "prompt_tokens": prompt_tokens if isinstance(prompt_tokens, int) else None,
+            "completion_tokens": completion_tokens if isinstance(completion_tokens, int) else None,
+            "force_closed": True,
+        }
+    )
     return last_response, trace
