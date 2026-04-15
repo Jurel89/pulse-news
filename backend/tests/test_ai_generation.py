@@ -244,6 +244,39 @@ def test_generate_newsletter_content_accepts_structured_json_output(
     assert result.body_text == "First section\n\nSecond section"
 
 
+def test_generate_newsletter_content_accepts_json_wrapped_in_markdown_fences(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+
+    newsletter = build_newsletter(description="Fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            "```json\n"
+            "{"
+            '"subject":"Fenced Output",'
+            '"preheader":"Wrapped by the model",'
+            '"body_markdown":"Body copy"'
+            "}"
+            "\n```"
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "generated"
+    assert result.subject == "Fenced Output"
+    assert result.preheader == "Wrapped by the model"
+    assert result.body_text == "Body copy"
+
+
 def test_generate_newsletter_content_rejects_subjects_longer_than_limit(
     client: TestClient,
     monkeypatch,

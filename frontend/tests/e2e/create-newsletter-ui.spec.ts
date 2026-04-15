@@ -30,7 +30,28 @@ async function ensureAuthenticated(page: Page): Promise<void> {
       { email: E2E_EMAIL, password: E2E_PASSWORD },
     );
 
-    expect(bootstrapResult.ok, `Bootstrap failed: ${bootstrapResult.status} ${bootstrapResult.body}`).toBe(true);
+    if (!bootstrapResult.ok) {
+      // Parallel workers may race on first-run bootstrap; if the partner
+      // worker already claimed it, fall through to login with the same
+      // credentials.
+      const loginResult = await page.evaluate(
+        async ({ email, password }) => {
+          const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ email, password }),
+          });
+          return { ok: response.ok, status: response.status, body: await response.text() };
+        },
+        { email: E2E_EMAIL, password: E2E_PASSWORD },
+      );
+
+      expect(
+        loginResult.ok,
+        `Bootstrap failed (${bootstrapResult.status} ${bootstrapResult.body}) and login fallback also failed (${loginResult.status} ${loginResult.body})`,
+      ).toBe(true);
+    }
   } else if (!session.authenticated) {
     const loginResult = await page.evaluate(
       async ({ email, password }) => {

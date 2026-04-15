@@ -534,6 +534,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
     built_in_templates = [
         {"key": "signal", "name": "Signal", "is_system": True},
         {"key": "ledger", "name": "Ledger", "is_system": True},
+        {"key": "corporate", "name": "Corporate", "is_system": True},
     ]
 
     existing_keys = {t["key"] for t in template_options}
@@ -585,8 +586,11 @@ def get_form_options(request: Request, db: DbSession) -> dict:
     }
 
 
+BUILT_IN_TEMPLATE_KEYS = frozenset({"signal", "ledger", "corporate"})
+
+
 def _ensure_template_exists(db: DbSession, template_key: str) -> None:
-    if template_key in {"signal", "ledger"}:
+    if template_key in BUILT_IN_TEMPLATE_KEYS:
         return
     exists = db.scalar(select(EmailTemplate).where(EmailTemplate.key == template_key))
     if exists is None:
@@ -704,6 +708,62 @@ def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> Newsl
     return serialize_newsletter_detail(newsletter)
 
 
+def _create_generation_run(
+    db: DbSession,
+    newsletter: Newsletter,
+    *,
+    trigger_mode: str,
+) -> NewsletterRun:
+    active_recipient_emails = [recipient.email for recipient in get_active_recipients(newsletter)]
+    run = NewsletterRun(
+        newsletter_id=newsletter.id,
+        run_type="generation",
+        trigger_mode=trigger_mode,
+        run_status="generating",
+        provider_name=newsletter.provider_name,
+        model_name=newsletter.model_name,
+        template_key=newsletter.template_key,
+        recipient_count=len(active_recipient_emails),
+        snapshot_subject=newsletter.subject,
+        snapshot_preheader=newsletter.preheader,
+        snapshot_body_text=newsletter.body_text,
+        snapshot_recipient_emails=json.dumps(active_recipient_emails),
+        snapshot_prompt=newsletter.prompt,
+        snapshot_newsletter_name=newsletter.name,
+        snapshot_newsletter_slug=newsletter.slug,
+        snapshot_delivery_topic=newsletter.delivery_topic,
+        snapshot_status_at_run=newsletter.status,
+        delivery_outcomes="[]",
+        attempt_key=f"generation-{newsletter.id}-{uuid.uuid4()}",
+        started_at=utc_now(),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def _mark_generation_failed(
+    db: DbSession,
+    run: NewsletterRun,
+    *,
+    message: str,
+) -> None:
+    run.run_status = "failed"
+    run.failure_reason = message
+    run.result_message = f"AI generation failed: {message}"
+    run.completed_at = utc_now()
+    db.add(run)
+    add_run_event(
+        db,
+        run,
+        event_type="generation",
+        event_status="failed",
+        message=message,
+    )
+    db.commit()
+
+
 @newsletters_router.post("/{newsletter_id}/run", response_model=NewsletterSendResponse)
 def run_newsletter(
     newsletter_id: int,
@@ -713,12 +773,32 @@ def run_newsletter(
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
 
-    generated = generate_newsletter_content(newsletter, db_session=db)
+    generation_run = _create_generation_run(db, newsletter, trigger_mode="manual-run")
+
+    try:
+        generated = generate_newsletter_content(newsletter, db_session=db)
+    except Exception as exc:
+        _mark_generation_failed(db, generation_run, message=f"{type(exc).__name__}: {exc}")
+        raise
+
     if generated.status == "error":
+        _mark_generation_failed(db, generation_run, message=generated.message)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Generation failed: {generated.message}",
         )
+
+    generation_run.run_status = "generated"
+    generation_run.result_message = "AI generation succeeded."
+    generation_run.completed_at = utc_now()
+    db.add(generation_run)
+    add_run_event(
+        db,
+        generation_run,
+        event_type="generation",
+        event_status="generated",
+        message="AI generation succeeded.",
+    )
 
     newsletter.subject = generated.subject
     newsletter.preheader = generated.preheader

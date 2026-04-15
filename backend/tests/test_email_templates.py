@@ -83,7 +83,7 @@ def test_render_newsletter_produces_html_and_plain_text(client: TestClient):
     )
 
 
-@pytest.mark.parametrize("template_key", ["signal", "ledger"])
+@pytest.mark.parametrize("template_key", ["signal", "ledger", "corporate"])
 def test_each_template_key_renders_without_error(client: TestClient, template_key: str):
     import app.email_templates
 

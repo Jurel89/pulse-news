@@ -301,6 +301,24 @@ def test_run_hard_stops_when_generation_fails(client: TestClient, monkeypatch):
     assert "Generation failed" in run_response.json()["detail"]
     assert len(urlopen_calls) == 0
 
+    # Generation failures must be visible in the operational logs so operators
+    # aren't blind when the AI step breaks.
+    runs_response = client.get(f"/api/runs?newsletter_id={newsletter_id}")
+    assert runs_response.status_code == 200
+    runs = runs_response.json()["items"]
+    failed_generation_runs = [
+        r for r in runs if r["run_type"] == "generation" and r["run_status"] == "failed"
+    ]
+    assert len(failed_generation_runs) == 1
+    assert "Provider rejected the request." in (failed_generation_runs[0]["failure_reason"] or "")
+
+    events_response = client.get(
+        f"/api/runs/events?newsletter_id={newsletter_id}&event_type=generation"
+    )
+    assert events_response.status_code == 200
+    events = events_response.json()["items"]
+    assert any(e["status"] == "failed" for e in events)
+
 
 def test_schedule_pause_and_resume_flow(client: TestClient):
     bootstrap_operator(client)
