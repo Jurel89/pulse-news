@@ -13,7 +13,7 @@ YELLOW = \033[33m
 RED = \033[31m
 RESET = \033[0m
 
-.PHONY: help build up down logs shell clean status
+.PHONY: help build up down logs shell clean status whoami reset-password
 
 ## Show this help message
 help:
@@ -24,10 +24,12 @@ help:
 	@echo "  $(YELLOW)make up$(RESET)       - Start the service (builds if needed)"
 	@echo "  $(YELLOW)make down$(RESET)     - Stop and remove the container"
 	@echo "  $(YELLOW)make restart$(RESET)  - Restart the service"
-	@echo "  $(YELLOW)make logs$(RESET)     - Follow container logs"
-	@echo "  $(YELLOW)make shell$(RESET)    - Open a shell inside the running container"
-	@echo "  $(YELLOW)make status$(RESET)   - Check container status"
-	@echo "  $(YELLOW)make clean$(RESET)    - Remove container, image, and volumes"
+	@echo "  $(YELLOW)make logs$(RESET)           - Follow container logs"
+	@echo "  $(YELLOW)make shell$(RESET)          - Open a shell inside the running container"
+	@echo "  $(YELLOW)make status$(RESET)         - Check container status"
+	@echo "  $(YELLOW)make whoami$(RESET)         - Show bootstrap state and operator emails"
+	@echo "  $(YELLOW)make reset-password$(RESET) - Reset/create an operator password (EMAIL=...)"
+	@echo "  $(YELLOW)make clean$(RESET)          - Remove container, image, and volumes"
 	@echo ""
 	@echo "$(BLUE)Configuration:$(RESET)"
 	@echo "  PORT=$(PORT) (set via PORT=xxxx or in .env file)"
@@ -57,6 +59,11 @@ up:
 	@echo ""
 	@echo "$(YELLOW)Note: It may take 10-20 seconds for the service to be ready.$(RESET)"
 	@echo "$(YELLOW)Run 'make logs' to monitor startup progress.$(RESET)"
+	@echo ""
+	@echo "$(GREEN)Operator account:$(RESET)"
+	@echo "  - First-time launch: open the URL above and create the initial operator on the bootstrap screen."
+	@echo "  - Already bootstrapped: run '$(YELLOW)make whoami$(RESET)' to see operator emails."
+	@echo "  - Forgot the password:  run '$(YELLOW)make reset-password EMAIL=you@example.com$(RESET)'."
 
 ## Stop the service
 down:
@@ -84,6 +91,38 @@ status:
 	@echo ""
 	@echo "$(BLUE)Health Check:$(RESET)"
 	@docker inspect --format='{{.State.Health.Status}}' $(CONTAINER_NAME) 2>/dev/null || echo "Not running"
+
+## Show bootstrap state and operator emails (no passwords)
+whoami:
+	@docker exec $(CONTAINER_NAME) python -c "\
+from app.database import get_session_maker; \
+from app.models import User, SystemSettings; \
+s=get_session_maker()(); \
+settings=s.get(SystemSettings,1); \
+users=s.query(User).order_by(User.id).all(); \
+print('Bootstrap:', 'complete' if settings and settings.initialized else 'pending (open the URL to create the first operator)'); \
+print('Operators:'); \
+[print(f'  - {u.email}  (created {u.created_at:%Y-%m-%d})') for u in users] if users else print('  (none yet)')" 2>/dev/null || \
+	  echo "$(RED)Container not running. Start it with 'make up'.$(RESET)"
+
+## Reset or create an operator password.  Usage: make reset-password EMAIL=you@example.com [PASSWORD=newpass]
+reset-password:
+	@if [ -z "$(EMAIL)" ]; then \
+	  echo "$(RED)EMAIL is required.$(RESET)"; \
+	  echo "Usage: make reset-password EMAIL=you@example.com [PASSWORD=new-password]"; \
+	  exit 1; \
+	fi
+	@if [ -n "$(PASSWORD)" ]; then \
+	  NEW_PW='$(PASSWORD)'; \
+	else \
+	  printf "New password for %s (min 8 chars, hidden): " "$(EMAIL)"; \
+	  stty -echo; read NEW_PW; stty echo; echo; \
+	fi; \
+	if [ -z "$$NEW_PW" ] || [ $${#NEW_PW} -lt 8 ]; then \
+	  echo "$(RED)Password must be at least 8 characters.$(RESET)"; exit 1; \
+	fi; \
+	docker exec -e RP_EMAIL='$(EMAIL)' -e RP_PASSWORD="$$NEW_PW" $(CONTAINER_NAME) python /app/backend/scripts/reset_password.py \
+	  || { echo "$(RED)Reset failed. Is the container running? Try 'make up'.$(RESET)"; exit 1; }
 
 ## Clean up everything
 clean:
