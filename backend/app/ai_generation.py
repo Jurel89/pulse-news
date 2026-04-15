@@ -44,6 +44,91 @@ PRESET_BASE_URLS: dict[str, str] = {
 }
 
 
+def _provider_extra_body_for_web_search(provider_name: str) -> dict | None:
+    """Provider-specific ``extra_body`` needed to make web search work.
+
+    Kimi K2.5 ships with thinking mode on by default, and Kimi's own docs state
+    the ``$web_search`` builtin is incompatible with thinking mode — thinking
+    has to be disabled for the search tool to actually fire.
+    """
+    if provider_name.lower() in {"kimi", "moonshot"}:
+        return {"thinking": {"type": "disabled"}}
+    return None
+
+
+def _run_completion_with_tool_loop(
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    api_key: str,
+    completion_kwargs: dict[str, Any],
+    max_iterations: int = 3,
+):
+    """Run the completion call, round-tripping tool_calls when the model asks
+    us to execute a (Kimi-style) builtin function.
+
+    Kimi's ``$web_search`` is not one-shot: the first response comes back with
+    ``finish_reason="tool_calls"`` and the caller has to echo each
+    ``tool_call.function.arguments`` back as a ``role="tool"`` message. Kimi
+    then runs the actual search server-side and returns final content.
+
+    Providers that server-resolve in a single round (Anthropic web_search,
+    Gemini google_search) simply return ``finish_reason="stop"`` immediately
+    and the loop exits on the first iteration — no special-casing needed.
+    """
+    import copy
+
+    conversation = list(messages)
+    last_response = None
+    for _ in range(max_iterations + 1):
+        last_response = completion(
+            model=model,
+            messages=conversation,
+            api_key=api_key,
+            **completion_kwargs,
+        )
+        choice = last_response.choices[0]
+        message = choice.message
+        finish_reason = getattr(choice, "finish_reason", None)
+        tool_calls = getattr(message, "tool_calls", None) or []
+
+        if finish_reason != "tool_calls" or not tool_calls:
+            return last_response
+
+        assistant_entry: dict[str, Any] = {
+            "role": "assistant",
+            "content": getattr(message, "content", None) or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in tool_calls
+            ],
+        }
+        conversation = copy.deepcopy(conversation)
+        conversation.append(assistant_entry)
+
+        # Per Kimi docs for the $web_search builtin: the caller must submit
+        # ``tool_call.function.arguments`` back as the tool response content,
+        # unchanged. Kimi then executes the search server-side.
+        for tc in tool_calls:
+            conversation.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tc.function.name,
+                    "content": tc.function.arguments,
+                }
+            )
+
+    return last_response
+
+
 def _provider_web_search_tools(provider_name: str) -> list[dict] | None:
     """Return the provider-specific tool payload that enables real-time web
     search on the generation call, or None if the provider has no supported
@@ -426,12 +511,28 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
         web_search_tools = _provider_web_search_tools(provider_name)
         if web_search_tools is not None:
             completion_kwargs.setdefault("tools", web_search_tools)
+            extra_body_for_tools = _provider_extra_body_for_web_search(provider_name)
+            if extra_body_for_tools is not None:
+                merged_extra_body = {
+                    **(completion_kwargs.get("extra_body") or {}),
+                    **extra_body_for_tools,
+                }
+                completion_kwargs["extra_body"] = merged_extra_body
 
-        response = completion(
+        # Opt-in request/response logging for debugging tool-call round-trips.
+        if os.environ.get("PULSE_NEWS_LITELLM_DEBUG") == "1":
+            try:
+                import litellm as _litellm  # noqa: WPS433
+
+                _litellm.set_verbose = True
+            except Exception:  # pragma: no cover - debug path
+                pass
+
+        response = _run_completion_with_tool_loop(
             model=_provider_model_name(newsletter),
             messages=[{"role": "user", "content": prompt}],
             api_key=api_key,
-            **completion_kwargs,
+            completion_kwargs=completion_kwargs,
         )
         content = response.choices[0].message.content or ""
         token_usage_json = _serialize_token_usage(getattr(response, "usage", None))

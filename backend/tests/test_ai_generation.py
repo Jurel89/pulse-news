@@ -286,6 +286,93 @@ def test_generate_newsletter_content_enables_web_search_tool_per_provider(
     assert tools == [expected_tool]
 
 
+def test_generate_newsletter_content_disables_thinking_mode_for_kimi_web_search(
+    client: TestClient,
+    monkeypatch,
+):
+    """Kimi K2.5's ``$web_search`` builtin is incompatible with thinking mode;
+    the generator must disable thinking whenever the tool is attached."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(provider_name="kimi", model_name="kimi-k2.5")
+    completion_mock = Mock(
+        return_value=make_completion_response('{"subject":"s","preheader":"p","body_markdown":"b"}')
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    app.ai_generation.generate_newsletter_content(newsletter)
+
+    extra_body = completion_mock.call_args.kwargs.get("extra_body") or {}
+    assert extra_body.get("thinking") == {"type": "disabled"}
+
+
+def test_generate_newsletter_content_round_trips_kimi_web_search_tool_calls(
+    client: TestClient,
+    monkeypatch,
+):
+    """Kimi's $web_search is not one-shot — the model emits tool_calls, the
+    client must echo ``function.arguments`` back as a role=tool message, and
+    only then does the model run the search and return final content.
+    The generator has to do that round-trip on our behalf."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(provider_name="kimi", model_name="kimi-k2.5")
+
+    tool_call = Mock()
+    tool_call.id = "call_abc"
+    tool_call.function = Mock()
+    tool_call.function.name = "$web_search"
+    tool_call.function.arguments = '{"query": "latest AI news"}'
+
+    # First round: model asks us to run the search.
+    first_message = Mock()
+    first_message.content = None
+    first_message.tool_calls = [tool_call]
+    first_choice = Mock()
+    first_choice.message = first_message
+    first_choice.finish_reason = "tool_calls"
+    first_response = Mock()
+    first_response.choices = [first_choice]
+    first_response.usage = None
+
+    # Second round: model produces the final newsletter after the search ran.
+    second_response = make_completion_response(
+        '{"subject":"From Web","preheader":"Real news","body_markdown":"Recent stuff."}'
+    )
+
+    completion_mock = Mock(side_effect=[first_response, second_response])
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "generated"
+    assert result.subject == "From Web"
+    assert completion_mock.call_count == 2
+
+    second_call_messages = completion_mock.call_args_list[1].kwargs["messages"]
+    has_replayed_assistant_turn = any(
+        m.get("role") == "assistant" and m.get("tool_calls") for m in second_call_messages
+    )
+    assert has_replayed_assistant_turn, (
+        "Second completion call must replay the assistant turn that contained tool_calls."
+    )
+    tool_message = next(m for m in second_call_messages if m.get("role") == "tool")
+    assert tool_message["tool_call_id"] == "call_abc"
+    assert tool_message["name"] == "$web_search"
+    # Per Kimi docs: echo tool_call.function.arguments back unchanged.
+    assert tool_message["content"] == '{"query": "latest AI news"}'
+
+
 def test_generate_newsletter_content_does_not_pass_tools_for_unsupported_provider(
     client: TestClient,
     monkeypatch,
