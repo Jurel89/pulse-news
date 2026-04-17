@@ -10,6 +10,10 @@ export type ApiKeySummary = {
   created_at: string;
   updated_at: string;
   from_email: string | null;
+  auth_type: string;
+  oauth_plan_type: string | null;
+  oauth_account_id: string | null;
+  oauth_expires_at: string | null;
 };
 
 export type ApiKeyDetail = ApiKeySummary;

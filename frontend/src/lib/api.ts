@@ -133,6 +133,32 @@ export type ApiKeyTestResponse = {
   masked_key: string;
 };
 
+export type DeviceStartResponse = {
+  device_auth_id: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+};
+
+export type DevicePollResponse = {
+  status: "pending" | "complete";
+  api_key_id: number | null;
+};
+
+export type OAuthStatusResponse = {
+  is_connected: boolean;
+  plan_type: string | null;
+  account_id: string | null;
+  expires_at: string | null;
+  expires_in_seconds: number | null;
+};
+
+export type OAuthRefreshResponse = {
+  expires_at: string;
+  expires_in_seconds: number;
+};
+
 type ApiRequestInit = Omit<RequestInit, "body"> & {
   jsonBody?: unknown;
 };
@@ -317,6 +343,28 @@ export const api = {
     test: (apiKeyId: number) =>
       request<ApiKeyTestResponse>(`/api-keys/${apiKeyId}/test`, {
         method: "POST"
+      })
+  },
+
+  oauthOpenai: {
+    deviceStart: () =>
+      request<DeviceStartResponse>("/oauth/openai/device/start", {
+        method: "POST"
+      }),
+    devicePoll: (deviceAuthId: string) =>
+      request<DevicePollResponse>("/oauth/openai/device/poll", {
+        method: "POST",
+        jsonBody: { device_auth_id: deviceAuthId }
+      }),
+    getStatus: (apiKeyId: number) =>
+      request<OAuthStatusResponse>(`/oauth/openai/${apiKeyId}/status`),
+    refresh: (apiKeyId: number) =>
+      request<OAuthRefreshResponse>(`/oauth/openai/refresh/${apiKeyId}`, {
+        method: "POST"
+      }),
+    delete: (apiKeyId: number) =>
+      request<void>(`/oauth/openai/${apiKeyId}`, {
+        method: "DELETE"
       })
   }
 };
