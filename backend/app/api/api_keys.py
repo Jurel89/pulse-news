@@ -58,20 +58,32 @@ def mask_api_key(key_value: str) -> str:
 
 
 def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
-    try:
-        decrypted_key_value = decrypt_secret(api_key.key_value)
-    except Exception:
-        decrypted_key_value = None
+    auth_type = getattr(api_key, "auth_type", "api_key") or "api_key"
+
+    if auth_type == "oauth":
+        plan = api_key.oauth_plan_type or "Connected"
+        masked = f"ChatGPT ({plan})"
+    else:
+        try:
+            decrypted_key_value = decrypt_secret(api_key.key_value)
+        except Exception:
+            decrypted_key_value = None
+        masked = mask_api_key(decrypted_key_value) if decrypted_key_value else "****"
+
     return ApiKeyDetail(
         id=api_key.id,
         name=api_key.name,
         provider_type=api_key.provider_type,
-        masked_key=mask_api_key(decrypted_key_value) if decrypted_key_value else "****",
+        masked_key=masked,
         from_email=api_key.from_email,
         is_active=api_key.is_active,
         last_used_at=api_key.last_used_at,
         created_at=api_key.created_at,
         updated_at=api_key.updated_at,
+        auth_type=auth_type,
+        oauth_plan_type=getattr(api_key, "oauth_plan_type", None),
+        oauth_account_id=getattr(api_key, "oauth_account_id", None),
+        oauth_expires_at=getattr(api_key, "oauth_expires_at", None),
     )
 
 
@@ -251,6 +263,20 @@ def delete_api_key(api_key_id: int, request: Request, db: DbSession) -> Response
 def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTestResponse:
     require_authenticated_user(request, db)
     api_key = get_api_key_or_404(db, api_key_id)
+
+    if getattr(api_key, "auth_type", "api_key") == "oauth":
+        has_token = api_key.oauth_access_token is not None
+        return ApiKeyTestResponse(
+            status="ok" if has_token else "warning",
+            message=(
+                "OAuth ChatGPT connection is active."
+                if has_token
+                else "OAuth connection found but access token is missing. Re-connect."
+            ),
+            provider_type=api_key.provider_type,
+            masked_key=f"ChatGPT ({api_key.oauth_plan_type or 'Connected'})",
+        )
+
     try:
         decrypted_key_value = decrypt_secret(api_key.key_value).strip()
     except Exception as exc:

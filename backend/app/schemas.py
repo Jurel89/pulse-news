@@ -47,6 +47,7 @@ class SupportedProvider(StrEnum):
     RESEND = "resend"
     ZAI = "zai"
     KIMI = "kimi"
+    OPENAI_CHATGPT = "openai_chatgpt"
 
 
 CRON_5_FIELD_PATTERN = re.compile(r"^\S+(?:\s+\S+){4}$")
@@ -445,6 +446,10 @@ class ApiKeySummary(BaseModel):
     last_used_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    auth_type: str = "api_key"
+    oauth_plan_type: str | None = None
+    oauth_account_id: str | None = None
+    oauth_expires_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

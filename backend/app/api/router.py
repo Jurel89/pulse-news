@@ -7,6 +7,7 @@ from app.api.audit import audit_router
 from app.api.auth import auth_router
 from app.api.email_templates import email_templates_router
 from app.api.newsletters import newsletters_router
+from app.api.oauth_openai import oauth_openai_router
 from app.api.providers import providers_router
 from app.api.public import public_router
 from app.api.runs import runs_router
@@ -20,6 +21,7 @@ api_router.include_router(audit_router)
 api_router.include_router(auth_router)
 api_router.include_router(email_templates_router)
 api_router.include_router(newsletters_router)
+api_router.include_router(oauth_openai_router)
 api_router.include_router(providers_router)
 api_router.include_router(public_router)
 api_router.include_router(runs_router)

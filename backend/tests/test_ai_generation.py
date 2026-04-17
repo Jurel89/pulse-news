@@ -619,7 +619,7 @@ def test_execute_client_side_tool_call_runs_ddg_and_shapes_results(
     fake_ddgs.text.assert_called_once_with("ai news", max_results=3)
 
 
-def test_generate_newsletter_content_does_not_pass_tools_for_unsupported_provider(
+def test_generate_newsletter_content_passes_web_search_preview_for_openai(
     client: TestClient,
     monkeypatch,
 ):
@@ -638,10 +638,10 @@ def test_generate_newsletter_content_does_not_pass_tools_for_unsupported_provide
 
     app.ai_generation.generate_newsletter_content(newsletter)
 
-    # OpenAI web search lives on the Responses API, which we don't call; make
-    # sure we don't send a tool payload that would be rejected or silently
-    # ignored by chat completions.
-    assert completion_mock.call_args.kwargs.get("tools") is None
+    # OpenAI Chat Completions supports web_search_preview as a server-resolved tool.
+    tools = completion_mock.call_args.kwargs.get("tools")
+    assert tools is not None
+    assert any(t.get("type") == "web_search_preview" for t in tools)
 
 
 def test_generate_newsletter_content_extracts_json_from_prose_prefix_and_suffix(

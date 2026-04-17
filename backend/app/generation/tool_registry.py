@@ -35,6 +35,11 @@ def web_search_tools_for(provider_name: str) -> list[dict] | None:
         return [{"type": "web_search_20250305", "name": "web_search"}]
     if normalized in {"gemini", "google"}:
         return [{"google_search": {}}]
+    if normalized == "openai":
+        # Server-resolved; no client-side tool loop needed.
+        return [{"type": "web_search_preview"}]
+    # openai_chatgpt handles its own tool in the adapter body builder — do not
+    # double-wire here.
     return None
 
 
