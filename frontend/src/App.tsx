@@ -535,6 +535,7 @@ export default function App() {
             }}
             onDelete={handleDeleteApiKey}
             onToggleActive={handleToggleApiKey}
+            onRefresh={() => void loadApiKeys()}
           />
         );
 

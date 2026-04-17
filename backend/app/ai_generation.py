@@ -48,7 +48,16 @@ class GeneratedContent:
     tool_loop_trace_json: str | None = None
 
 
-SUPPORTED_PROVIDERS = {"anthropic", "gemini", "google", "openai", "openrouter", "zai", "kimi"}
+SUPPORTED_PROVIDERS = {
+    "anthropic",
+    "gemini",
+    "google",
+    "openai",
+    "openrouter",
+    "zai",
+    "kimi",
+    "openai_chatgpt",
+}
 
 # Maps our internal provider_type names to the LiteLLM provider prefix.
 # Providers not listed here use their own name as the prefix.
@@ -285,6 +294,17 @@ def _resolve_api_key_for_newsletter(newsletter: Newsletter) -> ApiKeyResolution:
                     "is inactive. Activate it or select a different key."
                 ),
             )
+        # OAuth rows carry credentials in separate columns; key_value is a sentinel.
+        if getattr(api_key, "auth_type", "api_key") == "oauth":
+            return ApiKeyResolution(
+                api_key="oauth:v1",
+                source="newsletter",
+                detail=(
+                    f"Using OAuth ChatGPT connection '{api_key.name}' (id={api_key.id}) "
+                    f"for provider '{provider_name}'."
+                ),
+            )
+
         if api_key.key_value:
             try:
                 decrypted_value = _normalize_api_key_value(decrypt_secret(api_key.key_value))
@@ -346,6 +366,135 @@ def _error_generate(newsletter: Newsletter, message: str) -> GeneratedContent:
         preheader=newsletter.preheader or newsletter.description or "",
         body_text=newsletter.body_text or "",
         provider_snapshot_json=_provider_snapshot_json(newsletter),
+    )
+
+
+def _generate_via_openai_chatgpt(
+    newsletter: Newsletter,
+    *,
+    db_session,
+) -> GeneratedContent:
+    """Dispatch generation through the ChatGPT Responses API adapter.
+
+    Resolves the active OAuth ApiKey row for the newsletter's provider,
+    builds the prompt, calls the adapter, and wraps the result in
+    GeneratedContent.  The OAuth token refresh is handled inside the adapter.
+    """
+    from sqlalchemy import select
+
+    from app.database import get_session_maker
+    from app.generation.openai_chatgpt import (
+        ChatGPTGenerationError,
+    )
+    from app.generation.openai_chatgpt import (
+        generate as _chatgpt_generate,
+    )
+    from app.models import ApiKey
+
+    # Prefer the newsletter's pinned API key; fall back to the active OAuth row.
+    session = db_session
+    _owned_session = False
+    if session is None:
+        session = get_session_maker()()
+        _owned_session = True
+
+    try:
+        api_key_row: ApiKey | None = None
+        if newsletter.api_key_id is not None:
+            api_key_row = session.scalar(select(ApiKey).where(ApiKey.id == newsletter.api_key_id))
+            # Pinned key must be an OAuth row; otherwise ignore and fall through
+            # to the active OAuth connection so a mis-pinned non-OAuth key can't
+            # break generation.
+            if api_key_row is not None and getattr(api_key_row, "auth_type", "api_key") != "oauth":
+                api_key_row = None
+        if api_key_row is None:
+            api_key_row = session.scalar(
+                select(ApiKey).where(
+                    ApiKey.provider_type == "openai_chatgpt",
+                    ApiKey.auth_type == "oauth",
+                    ApiKey.is_active.is_(True),
+                )
+            )
+
+        if api_key_row is None:
+            return _error_generate(
+                newsletter,
+                "No active OAuth ChatGPT connection found. "
+                "Connect a ChatGPT account via Settings > API Keys.",
+            )
+
+        model = _resolved_model_name(newsletter).strip() or "gpt-5.1"
+
+        from datetime import UTC, datetime
+
+        today = datetime.now(UTC).date()
+        iso_week = today.isocalendar()
+        current_date_line = (
+            f"Today is {today.isoformat()} (ISO week {iso_week.week} of {iso_week.year}). "
+            "Treat this as the authoritative current date."
+        )
+
+        prompt = "\n".join(
+            [
+                "You are writing a newsletter.",
+                "",
+                current_date_line,
+                "",
+                f"Newsletter name: {newsletter.name}",
+                f"Description: {newsletter.description or 'None'}",
+                f"Audience: {newsletter.audience_name}",
+                "",
+                "Instructions:",
+                newsletter.prompt or "",
+                "",
+                "Write the newsletter with:",
+                "1. A subject line",
+                "2. A preheader",
+                "3. A body in markdown format",
+                "",
+                "Return strict JSON with this shape:",
+                '{"subject":"...","preheader":"...","body_markdown":"..."}',
+                "Do not return prose outside JSON.",
+            ]
+        )
+
+        try:
+            result = _chatgpt_generate(
+                api_key_row=api_key_row,
+                prompt=prompt,
+                model=model,
+                web_search=True,
+                db_session=session,
+            )
+        except ChatGPTGenerationError as exc:
+            return _error_generate(newsletter, str(exc))
+
+    finally:
+        if _owned_session:
+            session.close()
+
+    structured = _parse_structured_generation_output(newsletter, content=result.content)
+    if structured is not None:
+        structured.token_usage_json = result.token_usage_json
+        structured.raw_response_hash = result.raw_response_hash
+        structured.mode = "openai_chatgpt"
+        return structured
+
+    preview_len = 600
+    content_preview = (result.content or "").strip()[:preview_len]
+    return GeneratedContent(
+        status="error",
+        mode="openai_chatgpt",
+        message=(
+            "AI output could not be parsed as strict JSON. "
+            f"First {preview_len} chars of raw response: {content_preview!r}"
+        ),
+        subject=newsletter.name,
+        preheader=newsletter.description or "",
+        body_text=result.content[:500] if result.content else "",
+        provider_snapshot_json=_provider_snapshot_json(newsletter),
+        token_usage_json=result.token_usage_json,
+        raw_response_hash=result.raw_response_hash,
     )
 
 
@@ -419,6 +568,10 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
         )
 
     credential_resolution = _resolve_api_key_for_newsletter(newsletter)
+
+    # --- openai_chatgpt path: direct httpx to ChatGPT Responses API ---
+    if provider_name == "openai_chatgpt":
+        return _generate_via_openai_chatgpt(newsletter, db_session=db_session)
 
     if completion is None:
         return _error_generate(

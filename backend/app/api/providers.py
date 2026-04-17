@@ -38,6 +38,15 @@ RECOMMENDED_MODELS: dict[str, list[str]] = {
     ],
     "zai": ["glm-5.1", "glm-5-turbo"],
     "kimi": ["kimi-k2.5", "kimi-k2-turbo-preview"],
+    "openai_chatgpt": [
+        "gpt-5.1-codex",
+        "gpt-5.1",
+        "gpt-5.2-codex",
+        "gpt-5.2",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex-mini",
+        "codex-mini-latest",
+    ],
 }
 
 PROVIDER_PRESETS = [
@@ -92,6 +101,24 @@ PROVIDER_PRESETS = [
         "base_url": "https://api.kimi.com/coding/v1",
         "recommended_models": ["kimi-k2.5", "kimi-k2-turbo-preview"],
         "supports_discovery": True,
+    },
+    {
+        "key": "openai_chatgpt",
+        "name": "OpenAI ChatGPT (Subscription)",
+        "adapter": "openai_chatgpt",
+        "base_url": "https://chatgpt.com/backend-api",
+        "recommended_models": [
+            "gpt-5.1-codex",
+            "gpt-5.1",
+            "gpt-5.2-codex",
+            "gpt-5.2",
+            "gpt-5.1-codex-max",
+            "gpt-5.1-codex-mini",
+            "codex-mini-latest",
+        ],
+        "supports_discovery": False,
+        # Signals to the frontend that this provider uses OAuth rather than an API key.
+        "auth_mode": "oauth",
     },
 ]
 
@@ -176,7 +203,7 @@ def list_providers(request: Request, db: DbSession) -> list[ProviderSummary]:
 
 
 def _get_active_api_key(db: DbSession, provider_type: str) -> ApiKey | None:
-    return db.scalar(
+    query = (
         select(ApiKey)
         .where(
             ApiKey.provider_type == provider_type,
@@ -184,6 +211,10 @@ def _get_active_api_key(db: DbSession, provider_type: str) -> ApiKey | None:
         )
         .order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
     )
+    # For the OAuth provider, only OAuth rows are valid credentials.
+    if provider_type == "openai_chatgpt":
+        query = query.where(ApiKey.auth_type == "oauth")
+    return db.scalar(query)
 
 
 @providers_router.post("", response_model=ProviderDetail, status_code=status.HTTP_201_CREATED)
@@ -418,10 +449,33 @@ def test_provider(provider_id: int, request: Request, db: DbSession) -> Provider
     if not has_active_api_key:
         return ProviderTestResponse(
             status="warning",
-            message="Provider is enabled but has no active API key configured.",
+            message=(
+                "Provider is enabled but has no active OAuth connection configured."
+                if provider.provider_type == "openai_chatgpt"
+                else "Provider is enabled but has no active API key configured."
+            ),
             provider_type=provider.provider_type,
             default_model=provider.default_model,
             has_active_api_key=False,
+        )
+
+    # openai_chatgpt uses OAuth — skip LiteLLM test, just confirm the token is present.
+    if provider.provider_type == "openai_chatgpt":
+        has_token = (
+            active_key is not None
+            and getattr(active_key, "auth_type", "api_key") == "oauth"
+            and active_key.oauth_access_token is not None
+        )
+        return ProviderTestResponse(
+            status="ok" if has_token else "warning",
+            message=(
+                "ChatGPT OAuth connection is active. Token present."
+                if has_token
+                else "ChatGPT OAuth connection found but access token is missing. Re-connect."
+            ),
+            provider_type=provider.provider_type,
+            default_model=provider.default_model,
+            has_active_api_key=has_active_api_key,
         )
 
     try:

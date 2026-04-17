@@ -4,6 +4,8 @@ import { emptyApiKeyInput, toApiKeyInput } from "./api-key-types";
 import { getProviderTypeOptionsFromPresets, type ProviderPreset } from "../providers/provider-types";
 import { api } from "../../lib/api";
 import type { ApiKeyTestResponse } from "../../lib/api";
+import { ConnectChatGPTModal } from "./ConnectChatGPTModal";
+import { ChatGPTConnectionCard } from "./ChatGPTConnectionCard";
 
 type ApiKeysPageProps = {
   apiKeys: ApiKeySummary[];
@@ -14,6 +16,7 @@ type ApiKeysPageProps = {
   onEdit: (apiKey: ApiKeySummary) => void;
   onDelete: (apiKeyId: number) => Promise<void>;
   onToggleActive: (apiKeyId: number, active: boolean) => Promise<void>;
+  onRefresh: () => void;
 };
 
 export function ApiKeysPage({
@@ -24,10 +27,16 @@ export function ApiKeysPage({
   onCreate,
   onEdit,
   onDelete,
-  onToggleActive
+  onToggleActive,
+  onRefresh
 }: ApiKeysPageProps) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [showChatGPTModal, setShowChatGPTModal] = useState(false);
+
+  const oauthApiKeys = apiKeys.filter((k) => k.auth_type === "oauth");
+  const regularApiKeys = apiKeys.filter((k) => k.auth_type !== "oauth");
+  const hasOAuthConnection = oauthApiKeys.length > 0;
 
   async function handleDelete(apiKeyId: number) {
     setDeletingId(apiKeyId);
@@ -66,10 +75,31 @@ export function ApiKeysPage({
           <p className="eyebrow">API Keys</p>
           <h2 className="section-title">Manage credentials for AI providers and Resend.</h2>
         </div>
-        <button className="primary-button" onClick={onCreate} type="button">
-          New API Key
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {!hasOAuthConnection && (
+            <button
+              className="secondary-button"
+              onClick={() => setShowChatGPTModal(true)}
+              type="button"
+            >
+              Connect ChatGPT
+            </button>
+          )}
+          <button className="primary-button" onClick={onCreate} type="button">
+            New API Key
+          </button>
+        </div>
       </header>
+
+      {showChatGPTModal && (
+        <ConnectChatGPTModal
+          onConnected={() => {
+            setShowChatGPTModal(false);
+            onRefresh();
+          }}
+          onCancel={() => setShowChatGPTModal(false)}
+        />
+      )}
 
       {error ? (
         <div className="error-banner">
@@ -82,6 +112,19 @@ export function ApiKeysPage({
         </div>
       ) : null}
 
+      {oauthApiKeys.length > 0 && (
+        <div className="newsletter-list" style={{ marginBottom: 16 }}>
+          {oauthApiKeys.map((apiKey) => (
+            <ChatGPTConnectionCard
+              key={apiKey.id}
+              apiKey={apiKey}
+              onDisconnected={onRefresh}
+              onRefreshed={onRefresh}
+            />
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="newsletter-list">
           {Array.from({ length: 3 }, (_, index) => (
@@ -92,7 +135,7 @@ export function ApiKeysPage({
             </article>
           ))}
         </div>
-      ) : apiKeys.length === 0 ? (
+      ) : regularApiKeys.length === 0 && oauthApiKeys.length === 0 ? (
         <article className="empty-state">
           <h3>No API keys yet</h3>
           <p>
@@ -100,9 +143,9 @@ export function ApiKeysPage({
             and can optionally store Resend delivery keys here too.
           </p>
         </article>
-      ) : (
+      ) : regularApiKeys.length > 0 ? (
         <div className="newsletter-list">
-          {apiKeys.map((apiKey) => (
+          {regularApiKeys.map((apiKey) => (
             <article className="newsletter-card" key={apiKey.id}>
               <div className="newsletter-card-header">
                 <div>
@@ -165,7 +208,7 @@ export function ApiKeysPage({
             </article>
           ))}
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

@@ -84,6 +84,16 @@ class ApiKey(TimestampMixin, Base):
     from_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # OAuth fields — populated only when auth_type == "oauth"
+    auth_type: Mapped[str] = mapped_column(String(32), nullable=False, default="api_key")
+    oauth_refresh_token: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    oauth_access_token: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    oauth_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    oauth_account_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    oauth_plan_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    oauth_metadata_json: Mapped[str | None] = mapped_column(Text(), nullable=True)
     newsletters: Mapped[list[Newsletter]] = relationship(
         back_populates="api_key",
         foreign_keys="Newsletter.api_key_id",
