@@ -36,10 +36,20 @@ logger = logging.getLogger(__name__)
 
 oauth_openai_router = APIRouter(prefix="/oauth/openai", tags=["oauth-openai"])
 
-# In-memory map of device_auth_id → {device_auth_id, user_code, interval, expires_in, uri}
+# In-memory map of device_auth_id → {device_auth_id, user_code, created_at}.
+# Entries older than _DEVICE_AUTH_TTL_SECONDS are pruned on every start/poll so
+# abandoned device flows (user closed the tab) can't accumulate indefinitely.
 _pending_device_auth: dict[str, dict[str, Any]] = {}
+_DEVICE_AUTH_TTL_SECONDS = 20 * 60
 
 _OAUTH_SENTINEL = "oauth:v1"
+
+
+def _prune_stale_device_auth() -> None:
+    cutoff = datetime.now(UTC).timestamp() - _DEVICE_AUTH_TTL_SECONDS
+    stale = [k for k, v in _pending_device_auth.items() if v.get("created_at", 0) < cutoff]
+    for k in stale:
+        _pending_device_auth.pop(k, None)
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +153,7 @@ def _materialize_oauth_connection(db: DbSession, bundle: TokenBundle) -> ApiKey:
 )
 def start_device_code(request: Request, db: DbSession) -> DeviceStartResponse:
     user = require_authenticated_user(request, db)
+    _prune_stale_device_auth()
     try:
         init: DeviceCodeInit = device_code_start()
     except OpenAIOAuthError as exc:
@@ -155,6 +166,7 @@ def start_device_code(request: Request, db: DbSession) -> DeviceStartResponse:
     _pending_device_auth[init.device_auth_id] = {
         "device_auth_id": init.device_auth_id,
         "user_code": init.user_code,
+        "created_at": datetime.now(UTC).timestamp(),
     }
 
     create_audit_event(
@@ -183,6 +195,7 @@ def poll_device_code(
     db: DbSession,
 ) -> DevicePollResponse:
     user = require_authenticated_user(request, db)
+    _prune_stale_device_auth()
 
     pending = _pending_device_auth.get(payload.device_auth_id)
     if pending is None:

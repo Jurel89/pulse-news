@@ -15,6 +15,7 @@ export function ConnectChatGPTModal({ onConnected, onCancel }: Props) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
+  const deadlineRef = useRef<number | null>(null);
 
   useEffect(() => {
     activeRef.current = true;
@@ -32,6 +33,7 @@ export function ConnectChatGPTModal({ onConnected, onCancel }: Props) {
       const data = await api.oauthOpenai.deviceStart();
       if (!activeRef.current) return;
       setInit(data);
+      deadlineRef.current = Date.now() + data.expires_in * 1000;
       setPhase("awaiting_user");
       schedulePoll(data, data.interval * 1000);
     } catch (err: unknown) {
@@ -49,6 +51,11 @@ export function ConnectChatGPTModal({ onConnected, onCancel }: Props) {
 
   async function doPoll(data: DeviceStartResponse) {
     if (!activeRef.current) return;
+    if (deadlineRef.current !== null && Date.now() > deadlineRef.current) {
+      setErrorMsg("Device code expired. Click Try Again to request a new one.");
+      setPhase("error");
+      return;
+    }
     setPhase("polling");
     try {
       const result = await api.oauthOpenai.devicePoll(data.device_auth_id);
