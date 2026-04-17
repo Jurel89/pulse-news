@@ -261,3 +261,34 @@ def test_refresh_returns_new_expiry():
     assert bundle.refresh_token == "new_refresh"
     # Expiry should be derived from the upstream expires_at, not now().
     assert abs(bundle.expires_at.timestamp() - future_ts) < 2
+
+
+def test_refresh_preserves_prior_refresh_token_when_upstream_omits_it():
+    """When upstream response omits refresh_token, keep the one we had.
+
+    Otherwise the stored refresh token would be wiped to "" and the session
+    becomes unrecoverable on the next refresh attempt.
+    """
+    payload = {
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_abc",
+            "chatgpt_plan_type": "plus",
+        }
+    }
+    new_access = _make_jwt(payload)
+    token_response = {
+        "access_token": new_access,
+        # refresh_token intentionally omitted
+        "expires_in": 3600,
+    }
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, json=token_response))
+        MockClient.return_value = mock_instance
+
+        bundle = refresh("prior_refresh_token_value")
+
+    assert bundle.refresh_token == "prior_refresh_token_value"

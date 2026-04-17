@@ -163,10 +163,13 @@ def generate(
     from app.oauth import openai_chatgpt as _oauth
 
     # --- Token freshness check ---
+    # SQLite returns naive datetimes even though we stored timezone-aware values;
+    # treat naive oauth_expires_at as UTC so the comparison below doesn't raise.
     now = datetime.now(UTC)
-    near_expiry = api_key_row.oauth_expires_at is None or now >= (
-        api_key_row.oauth_expires_at - _timedelta_300s()
-    )
+    expires_at = api_key_row.oauth_expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    near_expiry = expires_at is None or now >= (expires_at - _timedelta_300s())
     if near_expiry:
         logger.info("OAuth token near expiry; refreshing before generation.")
         try:

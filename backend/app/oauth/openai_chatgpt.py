@@ -221,7 +221,13 @@ def _exchange_code_internal(code: str, verifier: str, redirect_uri: str) -> Toke
 
 
 def refresh(refresh_token_value: str) -> TokenBundle:
-    """Exchange a refresh token for a new access token."""
+    """Exchange a refresh token for a new access token.
+
+    If the upstream response omits ``refresh_token``, we keep the one the
+    caller supplied so the stored value isn't wiped out — otherwise the
+    next refresh would send an empty token and the session would become
+    unrecoverable.
+    """
     with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
         response = client.post(
             TOKEN_URL,
@@ -236,7 +242,9 @@ def refresh(refresh_token_value: str) -> TokenBundle:
             f"Token refresh failed ({response.status_code}): {response.text[:200]}",
             status_code=response.status_code,
         )
-    return _build_bundle_from_token_response(response.json())
+    return _build_bundle_from_token_response(
+        response.json(), fallback_refresh_token=refresh_token_value
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -275,9 +283,15 @@ def extract_plan_type(payload: dict[str, Any]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _build_bundle_from_token_response(data: dict[str, Any]) -> TokenBundle:
+def _build_bundle_from_token_response(
+    data: dict[str, Any],
+    *,
+    fallback_refresh_token: str | None = None,
+) -> TokenBundle:
     access_token = data["access_token"]
-    refresh_token_value = data.get("refresh_token", "")
+    # OAuth refresh responses may omit refresh_token — in that case, keep the
+    # one the caller already has so we don't blow away a still-valid token.
+    refresh_token_value = data.get("refresh_token") or fallback_refresh_token or ""
 
     # Always use the upstream expires_at / expires_in value — never derive
     # from now() to avoid drift.
