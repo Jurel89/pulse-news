@@ -35,7 +35,11 @@ def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
     from app.ai_generation import generate_newsletter_content
     from app.api.newsletters import (
         SEND_ALLOWED_STATUSES,
+        _create_generation_run,
         _generation_meta_from_generated,
+        _mark_generation_failed,
+        _summarize_tool_loop_trace,
+        add_run_event,
         execute_newsletter_send,
     )
 
@@ -59,26 +63,83 @@ def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
                 SEND_ALLOWED_STATUSES,
             )
             return
-        generated = generate_newsletter_content(newsletter, db_session=session)
+
+        generation_run = _create_generation_run(session, newsletter, trigger_mode="scheduled-send")
+
+        try:
+            generated = generate_newsletter_content(newsletter, db_session=session)
+        except Exception as exc:
+            tool_summary = None
+            _mark_generation_failed(
+                session,
+                generation_run,
+                message=str(exc),
+                tool_loop_summary=tool_summary,
+            )
+            logger.error(
+                "Scheduled send blocked for newsletter %s: generation exception: %s",
+                newsletter.id,
+                exc,
+            )
+            return
+
         if generated.status == "error":
+            tool_summary = _summarize_tool_loop_trace(
+                getattr(generated, "tool_loop_trace_json", None)
+            )
+            _mark_generation_failed(
+                session,
+                generation_run,
+                message=generated.message or "Generation returned error status.",
+                tool_loop_summary=tool_summary,
+            )
             logger.error(
                 "Scheduled send blocked for newsletter %s: generation failed: %s",
                 newsletter.id,
                 generated.message,
             )
             return
-        newsletter.subject = generated.subject
-        newsletter.preheader = generated.preheader
-        newsletter.body_text = generated.body_text
-        session.add(newsletter)
-        session.commit()
-        execute_newsletter_send(
+
+        generation_run.run_status = "generated"
+        generation_run.result_message = "Generation succeeded."
+        session.add(generation_run)
+        add_run_event(
             session,
-            newsletter,
-            trigger_mode="scheduled-send",
-            fire_scope=datetime.now(UTC).replace(second=0, microsecond=0).isoformat(),
-            generation_meta=_generation_meta_from_generated(newsletter, generated),
+            generation_run,
+            event_type="generation",
+            event_status="generated",
+            message="AI generation succeeded for scheduled send.",
         )
+        session.commit()
+
+        # Pass generated content through params so the newsletter row only
+        # reflects the last *successful* send (Audit Finding 6). Previously we
+        # committed the mutation here, meaning a failed scheduled delivery
+        # would silently overwrite the stored newsletter content.
+        try:
+            send_response, _delivery_run = execute_newsletter_send(
+                session,
+                newsletter,
+                trigger_mode="scheduled-send",
+                fire_scope=datetime.now(UTC).replace(second=0, microsecond=0).isoformat(),
+                generation_meta=_generation_meta_from_generated(newsletter, generated),
+                generated_subject=generated.subject,
+                generated_preheader=generated.preheader,
+                generated_body_text=generated.body_text,
+            )
+        except Exception as exc:
+            logger.error(
+                "Scheduled delivery exception for newsletter %s: %s",
+                newsletter.id,
+                exc,
+            )
+            return
+        if _delivery_run.run_status in ("sent", "partial"):
+            newsletter.subject = generated.subject
+            newsletter.preheader = generated.preheader
+            newsletter.body_text = generated.body_text
+            session.add(newsletter)
+            session.commit()
     finally:
         session.close()
 

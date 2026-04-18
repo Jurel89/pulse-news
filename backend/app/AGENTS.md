@@ -33,7 +33,7 @@ FastAPI application package. Owns HTTP routing, the SQLAlchemy data model, the A
 ### Working In This Directory
 - The newsletter send flow is single-step: `POST /newsletters/{id}/run` → `generate_newsletter_content` → mutate subject/preheader/body_text on the newsletter → `execute_newsletter_send`. Keep it single-step. A generation failure is a hard 422.
 - No simulated/mock fallback code path. If the configured provider fails, the request fails — it does not fall back to a fake response.
-- The backend fetches any URLs referenced in the prompt itself (the previous product relied on the LLM to fetch, which was fragile). If you add tools/plugins to the generation pipeline, preserve that invariant.
+- The backend exposes `fetch_url` and `web_search` tools to the model during generation; the model decides when to invoke them. There is no server-side prefetch of URLs from the prompt — URL retrieval and web search are model-driven via the tool loop in `generation/tool_loop.py`.
 - Adjust `models.py` + generate a new Alembic migration + update the matching Pydantic schema in the same change. Never leave drift between those three.
 - All mutations go through `create_audit_event` to produce a row in `AuditEvent` — keep that invariant for any new write endpoint.
 

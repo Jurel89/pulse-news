@@ -309,7 +309,21 @@ def execute_newsletter_send(
     idempotency_key: str | None = None,
     fire_scope: str | None = None,
     generation_meta: GenerationMeta | None = None,
+    generated_subject: str | None = None,
+    generated_preheader: str | None = None,
+    generated_body_text: str | None = None,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
+    """Send a newsletter, optionally using freshly-generated content.
+
+    When ``generated_subject``, ``generated_preheader``, and
+    ``generated_body_text`` are supplied they are used for rendering instead
+    of reading from the mutable ``newsletter.*`` columns.  This lets the
+    caller defer mutating the newsletter row until after a successful send so
+    ``newsletter.subject/preheader/body_text`` always reflects the *last
+    successfully sent* content.  Callers that pre-populate the newsletter row
+    (e.g. the scheduler) can omit these and the function falls back to the
+    newsletter columns — backward compatible.
+    """
     validate_send_allowed(newsletter)
 
     active_recipients = get_active_recipients(newsletter)
@@ -320,13 +334,23 @@ def execute_newsletter_send(
             detail="Cannot send: no active recipients.",
         )
 
+    # Resolve effective content: prefer caller-supplied generated content so
+    # the newsletter row is not required to be pre-mutated.
+    effective_subject = generated_subject if generated_subject is not None else newsletter.subject
+    effective_preheader = (
+        generated_preheader if generated_preheader is not None else newsletter.preheader
+    )
+    effective_body_text = (
+        generated_body_text if generated_body_text is not None else newsletter.body_text
+    )
+
     attempt_key = idempotency_key or _build_newsletter_attempt_key(
         newsletter_id=newsletter.id,
         trigger_mode=trigger_mode,
         recipient_emails=active_recipient_emails,
-        subject=newsletter.subject,
-        preheader=newsletter.preheader,
-        body_text=newsletter.body_text,
+        subject=effective_subject,
+        preheader=effective_preheader,
+        body_text=effective_body_text,
         fire_scope=fire_scope,
     )
 
@@ -343,9 +367,9 @@ def execute_newsletter_send(
         model_name=newsletter.model_name,
         template_key=newsletter.template_key,
         recipient_count=len(active_recipient_emails),
-        snapshot_subject=newsletter.subject,
-        snapshot_preheader=newsletter.preheader,
-        snapshot_body_text=newsletter.body_text,
+        snapshot_subject=effective_subject,
+        snapshot_preheader=effective_preheader,
+        snapshot_body_text=effective_body_text,
         snapshot_recipient_emails=json.dumps(active_recipient_emails),
         snapshot_prompt=newsletter.prompt,
         snapshot_newsletter_name=newsletter.name,
@@ -359,15 +383,15 @@ def execute_newsletter_send(
     db.flush()
 
     try:
-        if not newsletter.body_text.strip():
+        if not (effective_body_text or "").strip():
             raise ValueError(
                 "Newsletter has no content to send. Add body text or run generation before sending."
             )
         rendered = render_newsletter_content(
             newsletter,
-            subject=newsletter.subject,
-            preheader=newsletter.preheader,
-            body=newsletter.body_text,
+            subject=effective_subject,
+            preheader=effective_preheader,
+            body=effective_body_text,
             generation_meta=generation_meta,
         )
         run.rendered_subject = rendered.subject
@@ -856,8 +880,21 @@ def run_newsletter(
     request: Request,
     db: DbSession,
 ) -> NewsletterSendResponse:
-    require_authenticated_user(request, db)
+    user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
+
+    # Audit: record that a manual run was initiated before any generation work.
+    create_audit_event(
+        db,
+        actor_email=user.email,
+        action="newsletter.run_initiated",
+        entity_type="newsletter",
+        entity_id=str(newsletter.id),
+        summary=(
+            f"Manual run initiated for newsletter '{newsletter.name}' (trigger_mode=manual-run)."
+        ),
+    )
+    db.commit()
 
     generation_run = _create_generation_run(db, newsletter, trigger_mode="manual-run")
 
@@ -865,6 +902,15 @@ def run_newsletter(
         generated = generate_newsletter_content(newsletter, db_session=db)
     except Exception as exc:
         _mark_generation_failed(db, generation_run, message=f"{type(exc).__name__}: {exc}")
+        create_audit_event(
+            db,
+            actor_email=user.email,
+            action="newsletter.run_failed",
+            entity_type="newsletter",
+            entity_id=str(newsletter.id),
+            summary=f"Generation failed for newsletter {newsletter.name}: {exc}",
+        )
+        db.commit()
         raise
 
     if generated.status == "error":
@@ -876,6 +922,15 @@ def run_newsletter(
                 getattr(generated, "tool_loop_trace_json", None)
             ),
         )
+        create_audit_event(
+            db,
+            actor_email=user.email,
+            action="newsletter.run_failed",
+            entity_type="newsletter",
+            entity_id=str(newsletter.id),
+            summary=f"Generation error for newsletter {newsletter.name}: {generated.message}",
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Generation failed: {generated.message}",
@@ -897,20 +952,39 @@ def run_newsletter(
         event_status="generated",
         message=generation_message,
     )
-
-    newsletter.subject = generated.subject
-    newsletter.preheader = generated.preheader
-    newsletter.body_text = generated.body_text
-    db.add(newsletter)
     db.commit()
 
+    # Pass generated content directly to execute_newsletter_send so the
+    # newsletter row is not mutated before we know the send succeeded.
+    # Semantic: newsletter.subject/preheader/body_text = "last successful send".
     response, _run = execute_newsletter_send(
         db,
         newsletter,
         trigger_mode="manual-run",
         fire_scope=str(uuid.uuid4()),
         generation_meta=_generation_meta_from_generated(newsletter, generated),
+        generated_subject=generated.subject,
+        generated_preheader=generated.preheader,
+        generated_body_text=generated.body_text,
     )
+
+    # Only update the newsletter row after a successful (or partial) send.
+    if _run.run_status in ("sent", "partial"):
+        newsletter.subject = generated.subject
+        newsletter.preheader = generated.preheader
+        newsletter.body_text = generated.body_text
+        db.add(newsletter)
+
+    create_audit_event(
+        db,
+        actor_email=user.email,
+        action="newsletter.run_completed",
+        entity_type="newsletter",
+        entity_id=str(newsletter.id),
+        summary=f"Run completed for {newsletter.name} with status {_run.run_status}",
+    )
+    db.commit()
+
     return response
 
 
@@ -920,7 +994,7 @@ def resume_newsletter_schedule(
     request: Request,
     db: DbSession,
 ) -> NewsletterDetail:
-    require_authenticated_user(request, db)
+    user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
 
     if not (newsletter.schedule_cron or "").strip():
@@ -944,6 +1018,17 @@ def resume_newsletter_schedule(
         ) from exc
 
     db.add(newsletter)
+    create_audit_event(
+        db,
+        actor_email=user.email,
+        action="newsletter.schedule_resumed",
+        entity_type="newsletter",
+        entity_id=str(newsletter.id),
+        summary=(
+            f"Schedule resumed for newsletter '{newsletter.name}' "
+            f"(cron: {newsletter.schedule_cron})."
+        ),
+    )
     db.commit()
     db.refresh(newsletter)
     from app.scheduler import sync_newsletter_schedule
@@ -958,10 +1043,18 @@ def pause_newsletter_schedule(
     request: Request,
     db: DbSession,
 ) -> NewsletterDetail:
-    require_authenticated_user(request, db)
+    user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     newsletter.schedule_enabled = False
     db.add(newsletter)
+    create_audit_event(
+        db,
+        actor_email=user.email,
+        action="newsletter.schedule_paused",
+        entity_type="newsletter",
+        entity_id=str(newsletter.id),
+        summary=f"Schedule paused for newsletter '{newsletter.name}'.",
+    )
     db.commit()
     db.refresh(newsletter)
     from app.scheduler import sync_newsletter_schedule

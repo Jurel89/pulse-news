@@ -355,6 +355,19 @@ def test_run_hard_stops_when_generation_fails(client: TestClient, monkeypatch):
     events = events_response.json()["items"]
     assert any(e["status"] == "failed" for e in events)
 
+    # Both run_initiated and run_failed audit rows must exist on generation failure.
+    audit_initiated = client.get("/api/audit?action=newsletter.run_initiated")
+    assert audit_initiated.status_code == 200
+    assert any(
+        item["entity_id"] == str(newsletter_id) for item in audit_initiated.json()["items"]
+    ), "newsletter.run_initiated audit row must exist"
+
+    audit_failed = client.get("/api/audit?action=newsletter.run_failed")
+    assert audit_failed.status_code == 200
+    assert any(item["entity_id"] == str(newsletter_id) for item in audit_failed.json()["items"]), (
+        "newsletter.run_failed audit row must exist"
+    )
+
 
 def test_newsletter_validation_requires_chatgpt_oauth_connection(client: TestClient):
     from app.database import get_session_maker
@@ -621,3 +634,293 @@ def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
     assert get_response.status_code == 200
     recipients = get_response.json()["recipients"]
     assert len(recipients) == 0
+
+
+# ---------------------------------------------------------------------------
+# Wave E: newsletter-row semantics + audit coverage
+# ---------------------------------------------------------------------------
+
+
+def _make_newsletter_with_recipient(client: TestClient) -> int:
+    """Create a newsletter with one active recipient and return its id."""
+    create_test_provider(client, "openai")
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Audit Test Newsletter",
+            "description": "For audit and send-semantic tests",
+            "prompt": "Write a brief about testing.",
+            "subject": "Original Subject",
+            "preheader": "Original Preheader",
+            "body_text": "Original body text.",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "testers",
+            "delivery_topic": "audit-test",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "reader@example.com",
+        },
+    )
+    assert create_response.status_code == 201
+    return create_response.json()["id"]
+
+
+def test_failed_send_does_not_mutate_newsletter_row(client: TestClient, monkeypatch):
+    """When send_newsletter_email returns a failed status, newsletter.subject/preheader/body_text
+    must remain unchanged — they should only be updated after a successful (or partial) send."""
+    import app.ai_generation
+    import app.email_delivery
+
+    bootstrap_operator(client)
+    newsletter_id = _make_newsletter_with_recipient(client)
+
+    monkeypatch.setattr(
+        "app.api.newsletters.generate_newsletter_content",
+        lambda newsletter, db_session=None: app.ai_generation.GeneratedContent(
+            status="generated",
+            mode="litellm",
+            message="Generated content successfully.",
+            subject="NEW Generated Subject",
+            preheader="NEW Generated Preheader",
+            body_text="NEW generated body content",
+            provider_snapshot_json="{}",
+        ),
+    )
+
+    # Patch send_newsletter_email to return a fully-failed result (all recipients failed).
+    # This exercises the real execute_newsletter_send path — the run is created with
+    # run_status="failed" and the function returns normally (no exception raised).
+    def _failed_send_email(**kwargs):
+        return app.email_delivery.ManualSendResult(
+            status="failed",
+            mode="resend",
+            message="SMTP connection refused.",
+            recipient_outcomes=[
+                app.email_delivery.RecipientSendOutcome(
+                    email="reader@example.com",
+                    status="failed",
+                    provider_id=None,
+                    detail="SMTP refused",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.api.newsletters.send_newsletter_email", _failed_send_email)
+    monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
+    import app.config
+
+    app.config.get_settings.cache_clear()
+
+    # Capture the newsletter state before the run.
+    pre_run = client.get(f"/api/newsletters/{newsletter_id}").json()
+    original_subject = pre_run["subject"]
+    original_preheader = pre_run["preheader"]
+    original_body_text = pre_run["body_text"]
+
+    run_response = client.post(f"/api/newsletters/{newsletter_id}/run")
+    # A failed send still returns 200 (the delivery run was created, just all recipients failed).
+    assert run_response.status_code == 200
+    assert run_response.json()["status"] == "failed"
+
+    # Newsletter row must NOT have been mutated by the generated content.
+    get_response = client.get(f"/api/newsletters/{newsletter_id}")
+    assert get_response.status_code == 200
+    fetched = get_response.json()
+    assert fetched["subject"] == original_subject, (
+        "newsletter.subject must not be updated when send fails"
+    )
+    assert fetched["preheader"] == original_preheader, (
+        "newsletter.preheader must not be updated when send fails"
+    )
+    assert fetched["body_text"] == original_body_text, (
+        "newsletter.body_text must not be updated when send fails"
+    )
+    # And confirm the generated content was NOT written (i.e., no silent substitution).
+    assert fetched["subject"] != "NEW Generated Subject"
+    assert fetched["preheader"] != "NEW Generated Preheader"
+    assert fetched["body_text"] != "NEW generated body content"
+
+
+def test_successful_send_updates_newsletter_row(client: TestClient, monkeypatch):
+    """After a successful send the newsletter row must reflect the newly generated content."""
+    import app.ai_generation
+    import app.email_delivery
+
+    bootstrap_operator(client)
+    newsletter_id = _make_newsletter_with_recipient(client)
+
+    monkeypatch.setattr(
+        "app.api.newsletters.generate_newsletter_content",
+        lambda newsletter, db_session=None: app.ai_generation.GeneratedContent(
+            status="generated",
+            mode="litellm",
+            message="Generated content successfully.",
+            subject="NEW Generated Subject",
+            preheader="NEW Generated Preheader",
+            body_text="NEW generated body content",
+            provider_snapshot_json="{}",
+        ),
+    )
+
+    class FakeResponse:
+        def read(self):
+            return b'{"id":"resend-msg-id"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("app.email_delivery.request.urlopen", lambda req, timeout: FakeResponse())
+    monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
+    import app.config
+
+    app.config.get_settings.cache_clear()
+
+    run_response = client.post(f"/api/newsletters/{newsletter_id}/run")
+    assert run_response.status_code == 200
+    assert run_response.json()["status"] == "sent"
+
+    get_response = client.get(f"/api/newsletters/{newsletter_id}")
+    assert get_response.status_code == 200
+    fetched = get_response.json()
+    assert fetched["subject"] == "NEW Generated Subject"
+    assert fetched["preheader"] == "NEW Generated Preheader"
+    assert fetched["body_text"] == "NEW generated body content"
+
+
+def test_run_newsletter_creates_audit_event(client: TestClient, monkeypatch):
+    """A manual run must produce a newsletter.run_initiated audit row."""
+    import app.ai_generation
+    import app.email_delivery
+
+    bootstrap_operator(client)
+    newsletter_id = _make_newsletter_with_recipient(client)
+
+    monkeypatch.setattr(
+        "app.api.newsletters.generate_newsletter_content",
+        lambda newsletter, db_session=None: app.ai_generation.GeneratedContent(
+            status="generated",
+            mode="litellm",
+            message="Generated content successfully.",
+            subject="Audit Subject",
+            preheader="Audit Preheader",
+            body_text="Audit body content",
+            provider_snapshot_json="{}",
+        ),
+    )
+
+    class FakeResponse:
+        def read(self):
+            return b'{"id":"resend-msg-id"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("app.email_delivery.request.urlopen", lambda req, timeout: FakeResponse())
+    monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
+    import app.config
+
+    app.config.get_settings.cache_clear()
+
+    run_response = client.post(f"/api/newsletters/{newsletter_id}/run")
+    assert run_response.status_code == 200
+
+    audit_response = client.get("/api/audit?action=newsletter.run_initiated")
+    assert audit_response.status_code == 200
+    items = audit_response.json()["items"]
+    assert len(items) >= 1
+    assert items[0]["action"] == "newsletter.run_initiated"
+    assert items[0]["entity_type"] == "newsletter"
+    assert str(newsletter_id) == items[0]["entity_id"]
+    assert "manual-run" in items[0]["summary"]
+
+
+def test_schedule_pause_creates_audit_event(client: TestClient):
+    """Pausing a schedule must produce a newsletter.schedule_paused audit row."""
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Pause Audit Test",
+            "description": "desc",
+            "prompt": "prompt",
+            "subject": "s",
+            "preheader": "p",
+            "body_text": "b",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "ops",
+            "delivery_topic": "pause-audit-test",
+            "timezone": "UTC",
+            "schedule_enabled": True,
+            "schedule_cron": "0 7 * * 1-5",
+            "status": "active",
+            "recipient_import_text": "reader@example.com",
+        },
+    )
+    assert create_response.status_code == 201
+    newsletter_id = create_response.json()["id"]
+
+    pause_response = client.post(f"/api/newsletters/{newsletter_id}/schedule/pause")
+    assert pause_response.status_code == 200
+
+    audit_response = client.get("/api/audit?action=newsletter.schedule_paused")
+    assert audit_response.status_code == 200
+    items = audit_response.json()["items"]
+    assert len(items) >= 1
+    assert items[0]["action"] == "newsletter.schedule_paused"
+    assert str(newsletter_id) == items[0]["entity_id"]
+
+
+def test_schedule_resume_creates_audit_event(client: TestClient):
+    """Resuming a schedule must produce a newsletter.schedule_resumed audit row."""
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Resume Audit Test",
+            "description": "desc",
+            "prompt": "prompt",
+            "subject": "s",
+            "preheader": "p",
+            "body_text": "b",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "ops",
+            "delivery_topic": "resume-audit-test",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "schedule_cron": "0 7 * * 1-5",
+            "status": "active",
+            "recipient_import_text": "reader@example.com",
+        },
+    )
+    assert create_response.status_code == 201
+    newsletter_id = create_response.json()["id"]
+
+    resume_response = client.post(f"/api/newsletters/{newsletter_id}/schedule/resume")
+    assert resume_response.status_code == 200
+
+    audit_response = client.get("/api/audit?action=newsletter.schedule_resumed")
+    assert audit_response.status_code == 200
+    items = audit_response.json()["items"]
+    assert len(items) >= 1
+    assert items[0]["action"] == "newsletter.schedule_resumed"
+    assert str(newsletter_id) == items[0]["entity_id"]

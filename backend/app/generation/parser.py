@@ -78,10 +78,12 @@ def validate_generated_content(*, subject: str, preheader: str, body_text: str) 
     We still reject the real unsubscribe/recipient substitution tokens,
     because those *are* leaked templating that would confuse recipients.
     """
+    if not subject.strip():
+        return "AI JSON output was missing or empty 'subject' field."
     if len(subject) > 120:
         return "Generated subject exceeds the 120 character limit."
     if not preheader.strip():
-        return "Generated output is missing a preheader."
+        return "AI JSON output was missing or empty 'preheader' field."
     if not body_text.strip():
         return "Generated output is missing the body content."
     if "%recipient_" in body_text or "%unsubscribe_" in body_text:

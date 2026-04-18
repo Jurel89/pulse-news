@@ -137,7 +137,10 @@ export function AuditLogsPage() {
         status: operationalStatus || undefined,
         search: operationalSearch.trim() || undefined,
         date_from: operationalDateFrom || undefined,
-        date_to: operationalDateTo || undefined
+        date_to: operationalDateTo || undefined,
+        // Opt in explicitly — the backend defaults include_runs to False after the
+        // audit-remediation change; the logs page always wants run rows visible.
+        include_runs: "true"
       });
 
       setOperationalEvents(payload.items);

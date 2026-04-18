@@ -24,7 +24,7 @@ Operator-facing single-page React/TypeScript UI. It talks exclusively to the bac
 ## For AI Agents
 
 ### Working In This Directory
-- Node 20, TypeScript strict mode, React 18 functional components with hooks.
+- Node 20, TypeScript strict mode, React 19 functional components with hooks.
 - No CSS-in-JS; styling lives in `src/styles.css`. Component-level style is via class names that are already defined there.
 - Don't introduce a new state-management library — local state + prop drilling from `App.tsx` is intentional for a product this small.
 

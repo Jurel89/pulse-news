@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import get_session_maker
-from app.models import NewsletterRecipient, NewsletterRun, NewsletterRunEvent, utc_now
+from app.models import AuditEvent, NewsletterRecipient, NewsletterRun, NewsletterRunEvent, utc_now
 
 logger = logging.getLogger(__name__)
 webhooks_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -92,6 +92,11 @@ async def handle_resend_webhook(request: Request) -> dict[str, str]:
                     select(NewsletterRecipient).where(NewsletterRecipient.email == email_address)
                 ).all()
                 reason = "bounce" if event_type == "email.bounced" else "complaint"
+                audit_action = (
+                    "recipient.suppressed_bounce"
+                    if event_type == "email.bounced"
+                    else "recipient.suppressed_complaint"
+                )
                 for recipient in recipients:
                     if recipient.status in ("subscribed",):
                         recipient.is_active = False
@@ -99,6 +104,16 @@ async def handle_resend_webhook(request: Request) -> dict[str, str]:
                         recipient.suppression_reason = reason
                         recipient.unsubscribed_at = utc_now()
                         session.add(recipient)
+                        session.add(
+                            AuditEvent(
+                                actor_email=None,
+                                action=audit_action,
+                                entity_type="newsletter_recipient",
+                                entity_id=str(recipient.id),
+                                summary=f"Suppressed {email_address} via Resend {event_type}",
+                                payload_json=json.dumps({"event_type": event_type}),
+                            )
+                        )
 
                 if recipients:
                     logger.info("Suppressed %s recipient(s) for %s", len(recipients), email_address)

@@ -33,42 +33,56 @@ export type RecipientSendOutcome = {
   detail: string;
 };
 
+export type NewsletterRunSummary = {
+  id: number;
+  newsletter_id: number;
+  run_type: string | null;
+  snapshot_newsletter_name: string | null;
+  snapshot_newsletter_slug?: string | null;
+  trigger_mode: string;
+  run_status: string;
+  provider_name: string;
+  model_name: string;
+  template_key: string;
+  recipient_count: number;
+  snapshot_subject: string;
+  snapshot_preheader: string | null;
+  snapshot_body_text: string;
+  snapshot_recipient_emails: string;
+  delivery_outcomes: string;
+  result_mode: string | null;
+  result_message: string | null;
+  failure_reason?: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NewsletterRunDetailView = NewsletterRunSummary & {
+  rendered_subject: string | null;
+  rendered_preheader: string | null;
+  rendered_html: string | null;
+  rendered_plain_text: string | null;
+  snapshot_prompt: string | null;
+  snapshot_delivery_topic: string | null;
+  snapshot_status_at_run: string | null;
+};
+
 export type NewsletterSendResult = {
   status: string;
   mode: string;
   message: string;
-  run: {
-    id: number;
-    newsletter_id: number;
-    run_type: string | null;
-    snapshot_newsletter_name: string | null;
-    trigger_mode: string;
-    run_status: string;
-    provider_name: string;
-    model_name: string;
-    template_key: string;
-    recipient_count: number;
-    snapshot_subject: string;
-    snapshot_preheader: string | null;
-    snapshot_body_text: string;
-    snapshot_recipient_emails: string;
-    delivery_outcomes: string;
-    result_mode: string | null;
-    result_message: string | null;
-    started_at: string | null;
-    completed_at: string | null;
-    created_at: string;
-    updated_at: string;
-  };
+  run: NewsletterRunSummary;
   recipient_outcomes: RecipientSendOutcome[];
 };
 
 export type RunListResponse = {
-  items: NewsletterSendResult["run"][];
+  items: NewsletterRunSummary[];
 };
 
 export type RunDetailResponse = {
-  run: NewsletterSendResult["run"];
+  run: NewsletterRunDetailView;
   newsletter_snapshot: NewsletterSummary | null;
   recipient_emails: string[];
   recipient_outcomes: RecipientSendOutcome[];

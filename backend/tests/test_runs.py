@@ -238,44 +238,37 @@ def test_duplicate_scheduled_send_uses_fire_scope(client: TestClient):
         session.close()
 
 
-def test_operational_events_endpoint_defaults_to_run_events_only(client: TestClient, monkeypatch):
+def test_operational_events_endpoint_excludes_runs_by_default(client: TestClient, monkeypatch):
+    """Default (include_runs omitted / false) must return only run_event rows."""
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
     _stub_generation_and_delivery(monkeypatch)
 
     run_response = client.post(f"/api/newsletters/{newsletter['id']}/run")
     assert run_response.status_code == 200
-    delivery_run = run_response.json()["run"]
 
+    # Default — include_runs not passed, so False
     events_response = client.get(
         "/api/runs/events",
         params={"search": newsletter["name"]},
     )
     assert events_response.status_code == 200
-
     items = events_response.json()["items"]
-    assert items
-    assert all(item["source"] == "run_event" for item in items)
-    assert any(item["run_id"] == delivery_run["id"] for item in items)
-
-    run_feed_response = client.get(
-        "/api/runs/events",
-        params={"search": newsletter["name"], "include_runs": True},
+    assert items, "Expected run_event rows even with default include_runs=false"
+    assert all(item["source"] == "run_event" for item in items), (
+        "Default response must only include run_event-source entries"
     )
-    assert run_feed_response.status_code == 200
-    run_feed_items = run_feed_response.json()["items"]
-    assert any(item["source"] == "run" for item in run_feed_items)
 
-    run_items = [
-        item
-        for item in run_feed_items
-        if item["source"] == "run" and item["run_id"] == delivery_run["id"]
-    ]
-    assert run_items
-    assert run_items[0]["event_type"] == "run-manual-run"
-    assert run_items[0]["status"] == delivery_run["run_status"]
-    assert run_items[0]["related_entity"].endswith(f"Run #{delivery_run['id']}")
+    # Explicit ?include_runs=false also returns only run_event rows
+    explicit_false_response = client.get(
+        "/api/runs/events",
+        params={"search": newsletter["name"], "include_runs": "false"},
+    )
+    assert explicit_false_response.status_code == 200
+    explicit_items = explicit_false_response.json()["items"]
+    assert all(item["source"] == "run_event" for item in explicit_items)
 
+    # event_type filter still works
     delivery_events_response = client.get(
         "/api/runs/events",
         params={"event_type": "delivery"},
@@ -286,6 +279,7 @@ def test_operational_events_endpoint_defaults_to_run_events_only(client: TestCli
     assert all(item["source"] == "run_event" for item in delivery_items)
     assert all(item["event_type"] == "delivery" for item in delivery_items)
 
+    # status filter still works
     status_events_response = client.get(
         "/api/runs/events",
         params={"status": "sent"},
@@ -294,3 +288,37 @@ def test_operational_events_endpoint_defaults_to_run_events_only(client: TestCli
     status_items = status_events_response.json()["items"]
     assert status_items
     assert all(item["status"] == "sent" for item in status_items)
+
+
+def test_operational_events_endpoint_includes_runs_when_requested(client: TestClient, monkeypatch):
+    """?include_runs=true must return both run and run_event rows."""
+    bootstrap_operator(client)
+    newsletter = create_newsletter(client)
+    _stub_generation_and_delivery(monkeypatch)
+
+    run_response = client.post(f"/api/newsletters/{newsletter['id']}/run")
+    assert run_response.status_code == 200
+    delivery_run = run_response.json()["run"]
+
+    events_response = client.get(
+        "/api/runs/events",
+        params={"search": newsletter["name"], "include_runs": "true"},
+    )
+    assert events_response.status_code == 200
+    items = events_response.json()["items"]
+    assert items
+
+    sources = {item["source"] for item in items}
+    assert "run" in sources, "include_runs=true response must include run-source entries"
+    assert "run_event" in sources, (
+        "include_runs=true response must include run_event-source entries"
+    )
+    assert any(item["run_id"] == delivery_run["id"] for item in items)
+
+    run_items = [
+        item for item in items if item["source"] == "run" and item["run_id"] == delivery_run["id"]
+    ]
+    assert run_items
+    assert run_items[0]["event_type"] == "run-manual-run"
+    assert run_items[0]["status"] == delivery_run["run_status"]
+    assert run_items[0]["related_entity"].endswith(f"Run #{delivery_run['id']}")

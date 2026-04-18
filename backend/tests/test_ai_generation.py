@@ -123,16 +123,22 @@ def test_generate_newsletter_content_uses_litellm_when_provider_credentials_exis
     assert result.body_text == "- Fundraising signals\n- Ops playbook updates"
     completion_mock.assert_called_once()
     assert completion_mock.call_args.kwargs["model"] == "openai/gpt-4o-mini"
-    prompt_text = completion_mock.call_args.kwargs["messages"][0]["content"]
-    assert "Instructions:" in prompt_text
-    assert "Write the newsletter with:" in prompt_text
-    assert '{"subject":"...","preheader":"...","body_markdown":"..."}' in prompt_text
+    messages = completion_mock.call_args.kwargs["messages"]
+    # System message carries the platform contract; user message carries the newsletter content.
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    system_text = messages[0]["content"]
+    user_text = messages[1]["content"]
+    assert '{"subject":"...","preheader":"...","body_markdown":"..."}' in system_text
     # Without a concrete current date, Kimi anchors to its training cutoff
     # and produces stale news. Enforce that today's date is injected.
     from datetime import UTC, datetime
 
-    assert datetime.now(UTC).date().isoformat() in prompt_text
-    assert "Today is " in prompt_text
+    assert datetime.now(UTC).date().isoformat() in system_text
+    assert "Today is " in system_text
+    # Newsletter-specific content lives in the user message, not the system message.
+    assert newsletter.prompt in user_text
+    assert newsletter.name in user_text
 
 
 def test_generate_newsletter_content_returns_error_when_litellm_raises_by_default(
@@ -1040,3 +1046,90 @@ def test_kimi_user_agent_merges_with_existing_extra_headers(client: TestClient, 
     headers = completion_mock.call_args.kwargs["extra_headers"]
     assert headers["User-Agent"] == "claude-code/0.1.0"
     assert headers["X-Custom"] == "value"
+
+
+def test_generate_newsletter_content_fails_loudly_when_subject_missing(
+    client: TestClient,
+    monkeypatch,
+):
+    """Missing 'subject' in AI JSON must produce an error, not silently fall
+    back to newsletter.name. Operators must see the generation failure so they
+    can diagnose prompt drift."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(name="My Newsletter", description="A fallback description")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            '{"preheader":"Great preheader","body_markdown":"Body content here."}'
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "error"
+    assert "subject" in result.message
+    # Must NOT silently substitute newsletter.name
+    assert result.subject != "My Newsletter"
+
+
+def test_generate_newsletter_content_fails_loudly_when_preheader_missing(
+    client: TestClient,
+    monkeypatch,
+):
+    """Missing 'preheader' in AI JSON must produce an error, not silently fall
+    back to newsletter.description."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(
+        name="My Newsletter", description="Should not appear as silent fallback"
+    )
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            '{"subject":"Good Subject","body_markdown":"Body content here."}'
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "error"
+    assert "preheader" in result.message
+    # Must NOT silently substitute newsletter.description
+    assert result.preheader != "Should not appear as silent fallback"
+
+
+def test_generate_newsletter_content_fails_loudly_when_subject_empty_string(
+    client: TestClient,
+    monkeypatch,
+):
+    """An explicit empty-string 'subject' is the same as missing — must fail."""
+    import app.ai_generation
+
+    newsletter = build_newsletter(name="My Newsletter")
+    completion_mock = Mock(
+        return_value=make_completion_response(
+            '{"subject":"","preheader":"Good preheader","body_markdown":"Body."}'
+        )
+    )
+    monkeypatch.setattr(app.ai_generation, "completion", completion_mock)
+    monkeypatch.setattr(
+        app.ai_generation,
+        "_resolve_api_key_for_newsletter",
+        Mock(return_value=make_api_key_resolution(api_key="test-key")),
+    )
+
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "error"
+    assert "subject" in result.message

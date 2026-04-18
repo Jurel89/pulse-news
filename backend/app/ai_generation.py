@@ -440,29 +440,33 @@ def _generate_via_openai_chatgpt(
             "Treat this as the authoritative current date."
         )
 
-        prompt = "\n".join(
+        # System message: platform-level output contract only.
+        # User message: newsletter-specific content verbatim.
+        # The adapter takes a single ``prompt`` string; we prepend the system
+        # block with a clear role marker so the Responses API instructions
+        # field remains a neutral writing-assistant persona.  A future refactor
+        # could pass a messages list directly to the adapter, but that would
+        # require changes to the httpx body builder — too invasive for this
+        # wave.
+        system_block = "\n".join(
             [
-                "You are writing a newsletter.",
-                "",
                 current_date_line,
                 "",
+                "Return your response as strict JSON with this exact shape "
+                "and no prose outside it:",
+                '{"subject":"...","preheader":"...","body_markdown":"..."}',
+            ]
+        )
+        user_block = "\n".join(
+            [
                 f"Newsletter name: {newsletter.name}",
                 f"Description: {newsletter.description or 'None'}",
                 f"Audience: {newsletter.audience_name}",
                 "",
-                "Instructions:",
                 newsletter.prompt or "",
-                "",
-                "Write the newsletter with:",
-                "1. A subject line",
-                "2. A preheader",
-                "3. A body in markdown format",
-                "",
-                "Return strict JSON with this shape:",
-                '{"subject":"...","preheader":"...","body_markdown":"..."}',
-                "Do not return prose outside JSON.",
             ]
         )
+        prompt = f"[SYSTEM]\n{system_block}\n\n[USER]\n{user_block}"
 
         try:
             result = _chatgpt_generate(
@@ -513,9 +517,32 @@ def _parse_structured_generation_output(
     if parsed is None:
         return None
 
-    subject = str(parsed.get("subject") or newsletter.name).strip() or newsletter.name
-    preheader = str(parsed.get("preheader") or newsletter.description or "").strip()
+    subject = str(parsed.get("subject") or "").strip()
+    preheader = str(parsed.get("preheader") or "").strip()
     body_text = str(parsed.get("body_markdown") or "").strip()
+
+    if not subject:
+        return GeneratedContent(
+            status="error",
+            mode="litellm",
+            message="AI JSON output was missing or empty 'subject' field.",
+            subject="",
+            preheader=preheader,
+            body_text=body_text,
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
+        )
+
+    if not preheader:
+        return GeneratedContent(
+            status="error",
+            mode="litellm",
+            message="AI JSON output was missing or empty 'preheader' field.",
+            subject=subject,
+            preheader="",
+            body_text=body_text,
+            provider_snapshot_json=_provider_snapshot_json(newsletter),
+        )
+
     if not body_text:
         return GeneratedContent(
             status="error",
@@ -587,45 +614,35 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
     if credential_resolution.api_key is None:
         return _error_generate(newsletter, credential_resolution.detail)
 
-    # Anchor the model to today's real date so it searches for *current* news
-    # instead of defaulting to its training cutoff. Without this, Kimi
-    # confidently produces e.g. Week 25 / June 2025 content even with the
-    # web_search tool available.
+    # Platform-level system message: output contract only.  The date anchor is
+    # kept so the model knows "today" without relying on its training cutoff.
+    # Heavy-handed search directives ("use web_search", "reject >7 day results")
+    # are intentionally omitted — they belong in operator prompts that actually
+    # want recency, and the tool registry already advertises the tools.
     today = datetime.now(UTC).date()
     iso_week = today.isocalendar()
     current_date_line = (
         f"Today is {today.isoformat()} (ISO week {iso_week.week} of {iso_week.year}). "
-        "Treat this as the authoritative current date. Any mention of "
-        '"this week" or "last 7 days" in the instructions below refers '
-        f"to the window ending on {today.isoformat()}. Do not rely on your "
-        "training data's sense of the current date — use the web_search "
-        "tool with queries that include the current month and year to "
-        "surface genuinely recent sources, and reject search results that "
-        "pre-date the last 7 days unless they are the only coverage of an "
-        "event from this window."
+        "Treat this as the authoritative current date."
     )
 
-    prompt = "\n".join(
+    system_message = "\n".join(
         [
-            "You are writing a newsletter.",
-            "",
             current_date_line,
             "",
+            "You are a newsletter writing assistant.",
+            "Return your response as strict JSON with this exact shape and no prose outside it:",
+            '{"subject":"...","preheader":"...","body_markdown":"..."}',
+        ]
+    )
+
+    user_message = "\n".join(
+        [
             f"Newsletter name: {newsletter.name}",
             f"Description: {newsletter.description or 'None'}",
             f"Audience: {newsletter.audience_name}",
             "",
-            "Instructions:",
             newsletter.prompt or "",
-            "",
-            "Write the newsletter with:",
-            "1. A subject line",
-            "2. A preheader",
-            "3. A body in markdown format",
-            "",
-            "Return strict JSON with this shape:",
-            '{"subject":"...","preheader":"...","body_markdown":"..."}',
-            "Do not return prose outside JSON.",
         ]
     )
 
@@ -666,7 +683,10 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
 
         response, tool_loop_trace = _run_completion_with_tool_loop(
             model=_provider_model_name(newsletter),
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message},
+            ],
             api_key=api_key,
             completion_kwargs=completion_kwargs,
             client_side_tools=_provider_requires_client_side_tool_resolution(provider_name),

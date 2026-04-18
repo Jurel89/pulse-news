@@ -405,7 +405,7 @@ export function NewsletterEditorPage({
               >
                 <option value="">
                   {availableApiKeys.length > 0
-                    ? "No pinned credential selected (fail closed)"
+                    ? "No pinned credential — environment default (OPENAI_API_KEY, ANTHROPIC_API_KEY, …) will be used when available"
                     : form.provider_name === "openai_chatgpt"
                       ? "No OAuth connection available — connect in Settings > API Keys"
                       : "No matching API keys available"}
@@ -431,7 +431,7 @@ export function NewsletterEditorPage({
               >
                 <option value="">
                   {availableResendApiKeys.length > 0
-                    ? "No pinned Resend key selected (fail closed)"
+                    ? "No pinned Resend key — environment default (RESEND_API_KEY) will be used when available"
                     : "No active Resend API keys — add one in Settings > API Keys"}
                 </option>
                 {missingResendKeyOption ? (
@@ -564,6 +564,10 @@ export function NewsletterEditorPage({
             />
           </label>
         </div>
+
+        {isDirty ? (
+          <p className="form-notice">You have unsaved changes. Save before running.</p>
+        ) : null}
 
         <div className="form-actions">
           <button className="primary-button" disabled={busy} onClick={() => void handleSubmit()} type="button">

@@ -534,6 +534,7 @@ class NewsletterRunSummary(BaseModel):
     newsletter_id: int
     run_type: str | None = None
     snapshot_newsletter_name: str | None = None
+    snapshot_newsletter_slug: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     trigger_mode: str
@@ -554,6 +555,23 @@ class NewsletterRunSummary(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class NewsletterRunDetail(NewsletterRunSummary):
+    """Richer view of a run that includes the rendered output and prompt snapshot.
+
+    These fields are what an operator needs to answer "what was actually sent?"
+    and "what prompt produced this?" — the run row already stores them, but the
+    list-view summary intentionally omits them to keep payloads light.
+    """
+
+    rendered_subject: str | None = None
+    rendered_preheader: str | None = None
+    rendered_html: str | None = None
+    rendered_plain_text: str | None = None
+    snapshot_prompt: str | None = None
+    snapshot_delivery_topic: str | None = None
+    snapshot_status_at_run: str | None = None
 
 
 class NewsletterRunEventSummary(BaseModel):
@@ -587,8 +605,9 @@ class RunListResponse(BaseModel):
 
 
 class RunDetailResponse(BaseModel):
-    run: NewsletterRunSummary
+    run: NewsletterRunDetail
     # Snapshot captured at run time; older runs may not have a full newsletter snapshot.
+    # The run itself is the authoritative record of what was sent.
     newsletter_snapshot: NewsletterSummary | None = None
     recipient_emails: list[str]
     recipient_outcomes: list[RecipientSendOutcomeResponse]

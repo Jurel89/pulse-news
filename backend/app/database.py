@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Iterator
@@ -59,7 +60,7 @@ def _project_root_working_directory() -> Iterator[None]:
 
 
 def _repair_invalid_provider_state(session: Session) -> None:
-    from app.models import ApiKey, Provider
+    from app.models import ApiKey, AuditEvent, Provider
 
     providers = session.scalars(select(Provider).where(Provider.is_enabled.is_(True))).all()
     disabled_count = 0
@@ -82,6 +83,21 @@ def _repair_invalid_provider_state(session: Session) -> None:
                 f"because no active API key exists for type "
                 f"'{provider.provider_type}'"
             )
+            session.add(
+                AuditEvent(
+                    actor_email="system:startup-repair",
+                    action="provider.auto_disabled",
+                    entity_type="provider",
+                    entity_id=str(provider.id),
+                    summary=(
+                        f"Provider '{provider.name}' auto-disabled at startup: "
+                        f"no active API key for type '{provider.provider_type}'"
+                    ),
+                    payload_json=json.dumps(
+                        {"provider_type": provider.provider_type, "provider_id": provider.id}
+                    ),
+                )
+            )
 
     if disabled_count > 0:
         session.commit()
@@ -96,7 +112,7 @@ def _ensure_system_settings_row(session: Session) -> None:
 
 
 def _disable_legacy_chatgpt_manual_keys(session: Session) -> None:
-    from app.models import ApiKey
+    from app.models import ApiKey, AuditEvent
 
     legacy = session.scalars(
         select(ApiKey).where(
@@ -108,6 +124,19 @@ def _disable_legacy_chatgpt_manual_keys(session: Session) -> None:
     for key in legacy:
         key.is_active = False
         session.add(key)
+        session.add(
+            AuditEvent(
+                actor_email="system:startup-repair",
+                action="api_key.auto_disabled",
+                entity_type="api_key",
+                entity_id=str(key.id),
+                summary=(
+                    f"Legacy manual API key '{key.name}' auto-disabled at startup: "
+                    f"ChatGPT subscription requires OAuth"
+                ),
+                payload_json=json.dumps({"key_id": key.id, "provider_type": "openai_chatgpt"}),
+            )
+        )
         logger.warning(
             f"Disabled legacy manual API key '{key.name}' (id={key.id}) for "
             f"openai_chatgpt — ChatGPT subscription requires OAuth."
@@ -118,7 +147,7 @@ def _disable_legacy_chatgpt_manual_keys(session: Session) -> None:
 
 
 def _repair_legacy_chatgpt_models(session: Session) -> None:
-    from app.models import Newsletter, Provider
+    from app.models import AuditEvent, Newsletter, Provider
     from app.oauth.openai_chatgpt import CHATGPT_DEFAULT_MODEL, CHATGPT_SUPPORTED_MODELS
 
     repaired_providers = 0
@@ -131,6 +160,21 @@ def _repair_legacy_chatgpt_models(session: Session) -> None:
             provider.default_model = CHATGPT_DEFAULT_MODEL
             session.add(provider)
             repaired_providers += 1
+            session.add(
+                AuditEvent(
+                    actor_email="system:startup-repair",
+                    action="provider.model_auto_repaired",
+                    entity_type="provider",
+                    entity_id=str(provider.id),
+                    summary=(
+                        f"Provider '{provider.name}' model repaired at startup "
+                        f"from '{old_model}' to '{CHATGPT_DEFAULT_MODEL}'"
+                    ),
+                    payload_json=json.dumps(
+                        {"old_model": old_model, "new_model": CHATGPT_DEFAULT_MODEL}
+                    ),
+                )
+            )
             logger.warning(
                 f"Repaired provider '{provider.name}' (id={provider.id}) model "
                 f"from '{old_model}' to '{CHATGPT_DEFAULT_MODEL}'"
@@ -146,6 +190,21 @@ def _repair_legacy_chatgpt_models(session: Session) -> None:
             newsletter.model_name = CHATGPT_DEFAULT_MODEL
             session.add(newsletter)
             repaired_newsletters += 1
+            session.add(
+                AuditEvent(
+                    actor_email="system:startup-repair",
+                    action="newsletter.model_auto_repaired",
+                    entity_type="newsletter",
+                    entity_id=str(newsletter.id),
+                    summary=(
+                        f"Newsletter '{newsletter.name}' model repaired at startup "
+                        f"from '{old_model}' to '{CHATGPT_DEFAULT_MODEL}'"
+                    ),
+                    payload_json=json.dumps(
+                        {"old_model": old_model, "new_model": CHATGPT_DEFAULT_MODEL}
+                    ),
+                )
+            )
             logger.warning(
                 f"Repaired newsletter '{newsletter.name}' (id={newsletter.id}) model "
                 f"from '{old_model}' to '{CHATGPT_DEFAULT_MODEL}'"
@@ -160,7 +219,7 @@ def _repair_legacy_chatgpt_models(session: Session) -> None:
 
 
 def _disable_broken_chatgpt_oauth_rows(session: Session) -> None:
-    from app.models import ApiKey
+    from app.models import ApiKey, AuditEvent
 
     broken = session.scalars(
         select(ApiKey).where(
@@ -176,6 +235,19 @@ def _disable_broken_chatgpt_oauth_rows(session: Session) -> None:
             key.is_active = False
             session.add(key)
             disabled_count += 1
+            session.add(
+                AuditEvent(
+                    actor_email="system:startup-repair",
+                    action="api_key.auto_disabled",
+                    entity_type="api_key",
+                    entity_id=str(key.id),
+                    summary=(
+                        f"Broken ChatGPT OAuth connection '{key.name}' auto-disabled at startup: "
+                        f"no refresh token"
+                    ),
+                    payload_json=json.dumps({"key_id": key.id, "reason": "missing_refresh_token"}),
+                )
+            )
             logger.warning(
                 f"Disabled broken ChatGPT OAuth connection '{key.name}' (id={key.id}) "
                 f"because it has no refresh token and cannot be refreshed."

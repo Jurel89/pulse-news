@@ -1,52 +1,13 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
+import type { NewsletterRunSummary as RunSummary, NewsletterRunDetailView, RunDetailResponse } from "../../lib/api";
 import type { NewsletterSummary } from "../newsletters/newsletter-types";
 import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 
-type RunSummary = {
-  id: number;
-  newsletter_id: number;
-  run_type: string | null;
-  snapshot_newsletter_name: string | null;
-  trigger_mode: string;
-  run_status: string;
-  provider_name: string;
-  model_name: string;
-  template_key: string;
-  recipient_count: number;
-  snapshot_subject: string;
-  snapshot_preheader: string | null;
-  snapshot_body_text: string;
-  snapshot_recipient_emails: string;
-  delivery_outcomes: string;
-  result_mode: string | null;
-  result_message: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
+type RunDetail = RunDetailResponse;
 
-type RunDetail = {
-  run: RunSummary;
-  newsletter_snapshot: NewsletterSummary | null;
-  recipient_emails: string[];
-  recipient_outcomes: Array<{
-    email: string;
-    status: string;
-    provider_id: string | null;
-    detail: string;
-  }>;
-  events: Array<{
-    id: number;
-    event_type: string;
-    event_status: string;
-    message: string;
-    provider_id: string | null;
-    created_at: string;
-  }>;
-};
+type ContentTab = "html" | "plain" | "prompt";
 
 type RunDashboardPageProps = {
   newsletters: NewsletterSummary[];
@@ -89,6 +50,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   const [runDetails, setRunDetails] = useState<Map<number, RunDetail>>(new Map());
+  const [contentTab, setContentTab] = useState<ContentTab>("html");
   const [newsletterId, setNewsletterId] = useState("");
   const [runType, setRunType] = useState("");
   const [runStatus, setRunStatus] = useState("");
@@ -183,6 +145,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
   const stats = {
     totalRuns: runs.length,
     deliveryRuns: runs.filter((r) => r.run_type === "delivery").length,
+    generationRuns: runs.filter((r) => r.run_type === "generation").length,
     totalRecipients: runs.reduce((sum, r) => sum + r.recipient_count, 0)
   };
 
@@ -216,6 +179,10 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
           <strong>{stats.deliveryRuns}</strong>
         </article>
         <article className="info-card">
+          <span className="status-label">Generation Runs</span>
+          <strong>{stats.generationRuns}</strong>
+        </article>
+        <article className="info-card">
           <span className="status-label">Total Recipients</span>
           <strong>{stats.totalRecipients.toLocaleString()}</strong>
         </article>
@@ -247,6 +214,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
           >
             <option value="">Any type</option>
             <option value="delivery">Delivery</option>
+            <option value="generation">Generation</option>
           </select>
         </div>
 
@@ -259,6 +227,8 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
           >
             <option value="">Any status</option>
             <option value="pending">Pending</option>
+            <option value="generating">Generating</option>
+            <option value="generated">Generated</option>
             <option value="sending">Sending</option>
             <option value="sent">Sent</option>
             <option value="partial">Partial</option>
@@ -422,6 +392,11 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
 
                               <hr className="form-divider" />
 
+                              <h5>Sent Content</h5>
+                              <RunContentTabs detail={expandedDetail} activeTab={contentTab} onChangeTab={setContentTab} />
+
+                              <hr className="form-divider" />
+
                               <h5>Recipient Outcomes</h5>
                               <div className="newsletter-list compact">
                                 {expandedDetail.recipient_outcomes.length > 0 ? (
@@ -493,5 +468,118 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
         </div>
       )}
     </section>
+  );
+}
+
+type RunContentTabsProps = {
+  detail: RunDetail;
+  activeTab: ContentTab;
+  onChangeTab: (tab: ContentTab) => void;
+};
+
+function RunContentTabs({ detail, activeTab, onChangeTab }: RunContentTabsProps) {
+  const run = detail.run as NewsletterRunDetailView;
+  const renderedHtml = run.rendered_html;
+  const renderedPlain = run.rendered_plain_text ?? run.snapshot_body_text;
+  const promptSnapshot = run.snapshot_prompt ?? "";
+  const renderedSubject = run.rendered_subject ?? run.snapshot_subject;
+  const renderedPreheader = run.rendered_preheader ?? run.snapshot_preheader ?? "";
+
+  return (
+    <div className="run-content-panel">
+      <div className="newsletter-meta">
+        <div>
+          <dt>Subject</dt>
+          <dd>{renderedSubject || "—"}</dd>
+        </div>
+        <div>
+          <dt>Preheader</dt>
+          <dd>{renderedPreheader || "—"}</dd>
+        </div>
+      </div>
+
+      <div className="nav-pills" role="tablist" aria-label="Sent content views" style={{ marginTop: "var(--sp-2)" }}>
+        <button
+          aria-selected={activeTab === "html"}
+          className={activeTab === "html" ? "nav-pill active" : "nav-pill"}
+          onClick={() => onChangeTab("html")}
+          role="tab"
+          type="button"
+        >
+          HTML
+        </button>
+        <button
+          aria-selected={activeTab === "plain"}
+          className={activeTab === "plain" ? "nav-pill active" : "nav-pill"}
+          onClick={() => onChangeTab("plain")}
+          role="tab"
+          type="button"
+        >
+          Plain Text
+        </button>
+        <button
+          aria-selected={activeTab === "prompt"}
+          className={activeTab === "prompt" ? "nav-pill active" : "nav-pill"}
+          onClick={() => onChangeTab("prompt")}
+          role="tab"
+          type="button"
+        >
+          Prompt Snapshot
+        </button>
+      </div>
+
+      <div style={{ marginTop: "var(--sp-2)" }}>
+        {activeTab === "html" ? (
+          renderedHtml ? (
+            (() => {
+              // Strip meta-refresh tags before passing to the iframe — belt-and-braces
+              // defence against top-level navigation in browsers that allow meta-refresh
+              // even with sandbox="" (e.g. some Chromium versions before the csp attribute
+              // was honoured universally).
+              const safeHtml = renderedHtml ? renderedHtml.replace(/<meta[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "") : renderedHtml;
+              // csp enforces a Content-Security-Policy inside the srcdoc document
+              // (Chrome 61+, Firefox 70+). default-src 'none' blocks meta-refresh
+              // initiated navigations and any network fetch the sandboxed doc might
+              // attempt. Style/image/font sources are kept for cosmetic rendering.
+              // The csp attribute is not yet in React's type definitions, so we pass
+              // it via a spread cast to avoid a TS2322 error while keeping runtime
+              // behaviour identical.
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const cspAttr = { csp: "default-src 'none'; style-src 'unsafe-inline' 'self'; img-src data: https:; font-src data: https:;" } as any;
+              return (
+                <iframe
+                  title="Rendered HTML"
+                  // Sandbox without allow-scripts/allow-same-origin — the stored
+                  // HTML is operator/AI content that we never want to execute.
+                  sandbox=""
+                  srcDoc={safeHtml}
+                  style={{ width: "100%", minHeight: 480, border: "1px solid var(--border-subtle)", borderRadius: "6px", background: "#fff" }}
+                  {...cspAttr}
+                />
+              );
+            })()
+          ) : (
+            <p className="cell-secondary">
+              No rendered HTML was captured for this run. Older runs created before the run-content capture
+              landed will not have this field.
+            </p>
+          )
+        ) : null}
+        {activeTab === "plain" ? (
+          <div className="plain-preview">
+            <pre>{renderedPlain || "No plain-text output recorded."}</pre>
+          </div>
+        ) : null}
+        {activeTab === "prompt" ? (
+          <div className="plain-preview">
+            <p className="cell-secondary">
+              Prompts are stored in plaintext. Avoid embedding API keys, passwords, or other secrets
+              in the prompt — anyone with operator access can read this snapshot.
+            </p>
+            <pre>{promptSnapshot || "No prompt snapshot recorded for this run."}</pre>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
