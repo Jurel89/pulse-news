@@ -406,6 +406,53 @@ def test_oauth_refresh_updates_token(auth_client):
     assert data["expires_in_seconds"] > 3600
 
 
+def test_device_code_poll_403_authorization_unknown_is_pending():
+    """OpenAI returns 403 deviceauth_authorization_unknown while the user
+    has not yet authorised the device.
+
+    This must be treated as a retryable pending state, not a fatal error.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from app.oauth.openai_chatgpt import device_code_poll
+
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = '{"error":"deviceauth_authorization_unknown"}'
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = mock_response
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
+        result = device_code_poll("dev_auth_123", "USER-CODE")
+
+    assert result is None
+
+
+def test_device_code_poll_403_other_is_fatal():
+    """A 403 with any other error code must still be treated as fatal."""
+    from unittest.mock import MagicMock, patch
+
+    from app.oauth.openai_chatgpt import OpenAIOAuthError, device_code_poll
+
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = '{"error":"access_denied"}'
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = mock_response
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            device_code_poll("dev_auth_123", "USER-CODE")
+
+    assert exc_info.value.status_code == 403
+
+
 def test_oauth_delete_removes_connection(auth_client):
     from app.oauth.openai_chatgpt import DeviceCodeInit
 

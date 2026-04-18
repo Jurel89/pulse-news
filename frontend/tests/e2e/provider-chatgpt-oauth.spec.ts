@@ -105,6 +105,18 @@ test('chatgpt subscription preset shows oauth prompt and non-codex default model
   // The modal title should reference ChatGPT / device connection
   await expect(modal).toContainText('ChatGPT');
 
+  await expect(modal).toContainText('Waiting for you to authorise');
+
+  // Wait past the first poll interval. OpenAI typically returns interval=5s;
+  // waiting 8s ensures the backend has polled at least once. After the fix,
+  // a 403 deviceauth_authorization_unknown response is treated as pending,
+  // so the modal must remain usable instead of falling into an error state.
+  await page.waitForTimeout(8000);
+  await expect(modal).toBeVisible();
+  await expect(modal.locator('.error-banner')).not.toBeVisible();
+  const waitingText = modal.locator('p').filter({ hasText: /Waiting for you to authorise|Checking for authorisation/ });
+  await expect(waitingText).toBeVisible();
+
   // The default model should not be a codex model
   const defaultModelInput = page.locator('input[list="provider-model-options"]');
   const defaultValue = await defaultModelInput.inputValue();

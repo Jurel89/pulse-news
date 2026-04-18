@@ -166,9 +166,11 @@ def device_code_poll(device_auth_id: str, user_code: str) -> TokenBundle | None:
 
     if response.status_code not in (200, 201):
         body = response.text[:200]
-        # 400 with "authorization_pending" is also "still waiting" for some
-        # implementations; treat it as None rather than a hard error.
-        if "authorization_pending" in body:
+        # Retryable "still waiting" states — OpenAI returns these while the
+        # user has not yet completed device authorization.
+        if response.status_code == 400 and "authorization_pending" in body:
+            return None
+        if response.status_code == 403 and "deviceauth_authorization_unknown" in body:
             return None
         raise OpenAIOAuthError(
             f"Device-code poll failed ({response.status_code}): {body}",
