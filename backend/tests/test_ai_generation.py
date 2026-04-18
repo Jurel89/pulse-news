@@ -947,12 +947,16 @@ def test_chatgpt_oauth_falls_back_to_active_when_pinned_is_inactive(
     pinned_id = inactive_pinned.id
     session.close()
 
+    from app.generation.openai_chatgpt import ChatGPTGenerationResult
+
     chatgpt_generate_mock = Mock(
-        return_value={
-            "subject": "Fallback Subject",
-            "preheader": "Fallback Preheader",
-            "body_markdown": "Fallback Body",
-        }
+        return_value=ChatGPTGenerationResult(
+            content=(
+                '{"subject":"Fallback Subject",'
+                '"preheader":"Fallback Preheader",'
+                '"body_markdown":"Fallback Body"}'
+            ),
+        )
     )
     monkeypatch.setattr(
         app.generation.openai_chatgpt,
