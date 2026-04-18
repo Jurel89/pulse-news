@@ -336,9 +336,7 @@ def execute_newsletter_send(
 
     # Resolve effective content: prefer caller-supplied generated content so
     # the newsletter row is not required to be pre-mutated.
-    effective_subject = (
-        generated_subject if generated_subject is not None else newsletter.subject
-    )
+    effective_subject = generated_subject if generated_subject is not None else newsletter.subject
     effective_preheader = (
         generated_preheader if generated_preheader is not None else newsletter.preheader
     )
@@ -893,8 +891,7 @@ def run_newsletter(
         entity_type="newsletter",
         entity_id=str(newsletter.id),
         summary=(
-            f"Manual run initiated for newsletter '{newsletter.name}' "
-            "(trigger_mode=manual-run)."
+            f"Manual run initiated for newsletter '{newsletter.name}' (trigger_mode=manual-run)."
         ),
     )
     db.commit()

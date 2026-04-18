@@ -255,9 +255,9 @@ def test_operational_events_endpoint_excludes_runs_by_default(client: TestClient
     assert events_response.status_code == 200
     items = events_response.json()["items"]
     assert items, "Expected run_event rows even with default include_runs=false"
-    assert all(
-        item["source"] == "run_event" for item in items
-    ), "Default response must only include run_event-source entries"
+    assert all(item["source"] == "run_event" for item in items), (
+        "Default response must only include run_event-source entries"
+    )
 
     # Explicit ?include_runs=false also returns only run_event rows
     explicit_false_response = client.get(
@@ -290,9 +290,7 @@ def test_operational_events_endpoint_excludes_runs_by_default(client: TestClient
     assert all(item["status"] == "sent" for item in status_items)
 
 
-def test_operational_events_endpoint_includes_runs_when_requested(
-    client: TestClient, monkeypatch
-):
+def test_operational_events_endpoint_includes_runs_when_requested(client: TestClient, monkeypatch):
     """?include_runs=true must return both run and run_event rows."""
     bootstrap_operator(client)
     newsletter = create_newsletter(client)
@@ -312,15 +310,13 @@ def test_operational_events_endpoint_includes_runs_when_requested(
 
     sources = {item["source"] for item in items}
     assert "run" in sources, "include_runs=true response must include run-source entries"
-    assert (
-        "run_event" in sources
-    ), "include_runs=true response must include run_event-source entries"
+    assert "run_event" in sources, (
+        "include_runs=true response must include run_event-source entries"
+    )
     assert any(item["run_id"] == delivery_run["id"] for item in items)
 
     run_items = [
-        item
-        for item in items
-        if item["source"] == "run" and item["run_id"] == delivery_run["id"]
+        item for item in items if item["source"] == "run" and item["run_id"] == delivery_run["id"]
     ]
     assert run_items
     assert run_items[0]["event_type"] == "run-manual-run"

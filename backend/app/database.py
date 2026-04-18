@@ -245,9 +245,7 @@ def _disable_broken_chatgpt_oauth_rows(session: Session) -> None:
                         f"Broken ChatGPT OAuth connection '{key.name}' auto-disabled at startup: "
                         f"no refresh token"
                     ),
-                    payload_json=json.dumps(
-                        {"key_id": key.id, "reason": "missing_refresh_token"}
-                    ),
+                    payload_json=json.dumps({"key_id": key.id, "reason": "missing_refresh_token"}),
                 )
             )
             logger.warning(

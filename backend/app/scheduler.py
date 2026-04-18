@@ -64,9 +64,7 @@ def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
             )
             return
 
-        generation_run = _create_generation_run(
-            session, newsletter, trigger_mode="scheduled-send"
-        )
+        generation_run = _create_generation_run(session, newsletter, trigger_mode="scheduled-send")
 
         try:
             generated = generate_newsletter_content(newsletter, db_session=session)

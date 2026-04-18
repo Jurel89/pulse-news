@@ -359,16 +359,14 @@ def test_run_hard_stops_when_generation_fails(client: TestClient, monkeypatch):
     audit_initiated = client.get("/api/audit?action=newsletter.run_initiated")
     assert audit_initiated.status_code == 200
     assert any(
-        item["entity_id"] == str(newsletter_id)
-        for item in audit_initiated.json()["items"]
+        item["entity_id"] == str(newsletter_id) for item in audit_initiated.json()["items"]
     ), "newsletter.run_initiated audit row must exist"
 
     audit_failed = client.get("/api/audit?action=newsletter.run_failed")
     assert audit_failed.status_code == 200
-    assert any(
-        item["entity_id"] == str(newsletter_id)
-        for item in audit_failed.json()["items"]
-    ), "newsletter.run_failed audit row must exist"
+    assert any(item["entity_id"] == str(newsletter_id) for item in audit_failed.json()["items"]), (
+        "newsletter.run_failed audit row must exist"
+    )
 
 
 def test_newsletter_validation_requires_chatgpt_oauth_connection(client: TestClient):
@@ -714,6 +712,7 @@ def test_failed_send_does_not_mutate_newsletter_row(client: TestClient, monkeypa
     monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
     monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
     import app.config
+
     app.config.get_settings.cache_clear()
 
     # Capture the newsletter state before the run.
@@ -781,6 +780,7 @@ def test_successful_send_updates_newsletter_row(client: TestClient, monkeypatch)
     monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
     monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
     import app.config
+
     app.config.get_settings.cache_clear()
 
     run_response = client.post(f"/api/newsletters/{newsletter_id}/run")
@@ -830,6 +830,7 @@ def test_run_newsletter_creates_audit_event(client: TestClient, monkeypatch):
     monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
     monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
     import app.config
+
     app.config.get_settings.cache_clear()
 
     run_response = client.post(f"/api/newsletters/{newsletter_id}/run")
