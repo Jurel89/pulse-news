@@ -76,9 +76,9 @@ def create_newsletter_with_run(*, provider_id: str, email: str = "reader@example
             slug=f"webhook-brief-{provider_id}",
             description="Webhook processing test",
             prompt="Generate a delivery status test.",
-            draft_subject="Webhook Brief",
-            draft_preheader="Delivery event processing",
-            draft_body_text="Delivery event body",
+            subject="Webhook Brief",
+            preheader="Delivery event processing",
+            body_text="Delivery event body",
             provider_name="openai",
             model_name="gpt-4o-mini",
             template_key="signal",
@@ -93,7 +93,7 @@ def create_newsletter_with_run(*, provider_id: str, email: str = "reader@example
         session.add(
             NewsletterRun(
                 newsletter_id=newsletter.id,
-                trigger_mode="manual-send",
+                trigger_mode="manual-run",
                 run_status="sent",
                 provider_name="openai",
                 model_name="gpt-4o-mini",

@@ -19,7 +19,9 @@ export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const visibleActions = actions.filter((action) => !action.hidden);
 
   useEffect(() => {
     function updateMenuPosition() {
@@ -28,14 +30,32 @@ export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps
       }
 
       const rect = triggerRef.current.getBoundingClientRect();
-      const menuWidth = 180;
       const spacing = 8;
-      const left = align === "left"
+      const estimatedItemHeight = 40;
+      const estimatedMenuHeight = visibleActions.length * estimatedItemHeight + spacing * 2;
+      const menuRect = menuRef.current?.getBoundingClientRect();
+      const menuWidth = Math.max(menuRect?.width ?? 180, 180);
+      const menuHeight = menuRect?.height ?? estimatedMenuHeight;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+
+      let left = align === "left"
         ? rect.left
-        : Math.max(spacing, rect.right - menuWidth);
+        : rect.right - menuWidth;
+      left = Math.min(Math.max(spacing, left), viewportWidth - menuWidth - spacing);
+
+      const fitsBelow = rect.bottom + spacing + menuHeight <= viewportHeight - spacing;
+      const fitsAbove = rect.top - spacing - menuHeight >= spacing;
+
+      let top = rect.bottom + spacing;
+      if (!fitsBelow && fitsAbove) {
+        top = rect.top - menuHeight - spacing;
+      } else if (!fitsBelow) {
+        top = Math.max(spacing, viewportHeight - menuHeight - spacing);
+      }
 
       setMenuPosition({
-        top: rect.bottom + spacing,
+        top,
         left,
       });
     }
@@ -46,18 +66,25 @@ export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps
       return;
     }
 
+    const frameId = window.requestAnimationFrame(updateMenuPosition);
+
     window.addEventListener("resize", updateMenuPosition);
     window.addEventListener("scroll", updateMenuPosition, true);
 
     return () => {
+      window.cancelAnimationFrame(frameId);
       window.removeEventListener("resize", updateMenuPosition);
       window.removeEventListener("scroll", updateMenuPosition, true);
     };
-  }, [align, isOpen]);
+  }, [align, isOpen, visibleActions.length]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const clickedTrigger = dropdownRef.current?.contains(target) ?? false;
+      const clickedMenu = menuRef.current?.contains(target) ?? false;
+
+      if (!clickedTrigger && !clickedMenu) {
         setIsOpen(false);
       }
     }
@@ -82,8 +109,6 @@ export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps
       };
     }
   }, [isOpen]);
-
-  const visibleActions = actions.filter((action) => !action.hidden);
 
   if (visibleActions.length === 0) {
     return null;
@@ -117,6 +142,7 @@ export function ActionDropdown({ actions, align = "right" }: ActionDropdownProps
       {isOpen && menuPosition
         ? createPortal(
             <div
+              ref={menuRef}
               className="action-dropdown-menu action-dropdown-menu-portal"
               role="menu"
               style={{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px` }}

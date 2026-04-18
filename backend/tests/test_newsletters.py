@@ -45,6 +45,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PULSE_NEWS_ENVIRONMENT", "development")
 
     import app.api.auth
+    import app.api.newsletters
     import app.api.public
     import app.api.router
     import app.auth
@@ -64,6 +65,7 @@ def client(tmp_path, monkeypatch):
     reload(app.schemas)
     reload(app.auth)
     reload(app.api.auth)
+    reload(app.api.newsletters)
     reload(app.api.public)
     reload(app.api.router)
     reload(app.main)
@@ -92,9 +94,6 @@ def test_newsletter_crud_flow(client: TestClient):
             "name": "Daily Brief",
             "description": "Morning AI news digest",
             "prompt": "Summarize the top AI infrastructure news for founders.",
-            "draft_subject": "Daily Brief: AI infrastructure headlines",
-            "draft_preheader": "Five stories to scan before breakfast",
-            "draft_body_text": "Story one\n\nStory two\n\nStory three",
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
             "template_key": "signal",
@@ -113,11 +112,7 @@ def test_newsletter_crud_flow(client: TestClient):
     assert created_newsletter["slug"] == "daily-brief"
     assert created_newsletter["status"] == "active"
     assert len(created_newsletter["recipients"]) == 3
-    assert created_newsletter["draft_subject"] == "Daily Brief: AI infrastructure headlines"
-    assert created_newsletter["approved_revision_id"] is not None
-    assert (
-        created_newsletter["draft_head_revision_id"] == created_newsletter["approved_revision_id"]
-    )
+    assert created_newsletter["subject"] == ""
 
     list_response = client.get("/api/newsletters")
     assert list_response.status_code == 200
@@ -131,9 +126,6 @@ def test_newsletter_crud_flow(client: TestClient):
             "name": "Daily Brief Europe",
             "description": "Morning AI news digest for Europe",
             "prompt": "Summarize the top AI infrastructure news for European operators.",
-            "draft_subject": "Daily Brief Europe",
-            "draft_preheader": "European operator scan",
-            "draft_body_text": "Updated copy block",
             "provider_name": "anthropic",
             "model_name": "claude-3-5-sonnet-latest",
             "template_key": "ledger",
@@ -166,7 +158,10 @@ def test_newsletter_crud_flow(client: TestClient):
     assert len(list_after_delete.json()) == 0
 
 
-def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
+def test_generate_content_and_run_flow(client: TestClient, monkeypatch):
+    import app.ai_generation
+    import app.email_delivery
+
     bootstrap_operator(client)
 
     create_test_provider(client, "openai")
@@ -177,9 +172,9 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
             "name": "Draft Test",
             "description": "Testing draft generation",
             "prompt": "Write a brief about testing using https://example.com/source.",
-            "draft_subject": "Draft Test Subject",
-            "draft_preheader": "Draft preheader",
-            "draft_body_text": "Initial body",
+            "subject": "Draft Test Subject",
+            "preheader": "Draft preheader",
+            "body_text": "Initial body",
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
             "template_key": "signal",
@@ -194,215 +189,362 @@ def test_generate_draft_flow_uses_normalized_result_shape(client: TestClient):
     assert create_response.status_code == 201
     newsletter_id = create_response.json()["id"]
 
-    generate_response = client.post(f"/api/newsletters/{newsletter_id}/generate-draft")
-    assert generate_response.status_code == 200
-    result = generate_response.json()
+    import app.ai_generation
+
+    monkeypatch.setattr(
+        "app.api.newsletters.generate_newsletter_content",
+        lambda newsletter, db_session=None: app.ai_generation.GeneratedContent(
+            status="generated",
+            mode="litellm",
+            message="Generated content successfully.",
+            subject="Generated Subject",
+            preheader="Generated preheader",
+            body_text="Generated body content",
+            provider_snapshot_json="{}",
+        ),
+    )
+
+    class FakeResponse:
+        def read(self):
+            return b'{"id":"resend-msg-id"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("app.email_delivery.request.urlopen", lambda req, timeout: FakeResponse())
+    monkeypatch.setenv("PULSE_NEWS_RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("PULSE_NEWS_RESEND_FROM_EMAIL", "newsletter@example.com")
+    app.config.get_settings.cache_clear()
+
+    run_response = client.post(f"/api/newsletters/{newsletter_id}/run")
+    assert run_response.status_code == 200
+    result = run_response.json()
 
     assert "status" in result
     assert "mode" in result
     assert "message" in result
-    assert "newsletter" in result
     assert "run" in result
-    assert result["revision_id"] is not None
-    assert result["newsletter"]["id"] == newsletter_id
-    assert result["newsletter"]["draft_head_revision_id"] == result["revision_id"]
-    assert result["newsletter"]["approved_revision_id"] != result["revision_id"]
-    assert result["run"]["revision_id"] == result["revision_id"]
+    assert "recipient_outcomes" in result
+    assert result["status"] == "sent"
+    assert result["run"]["newsletter_id"] == newsletter_id
+    assert result["run"]["run_type"] == "delivery"
+    assert result["run"]["trigger_mode"] == "manual-run"
+    assert len(result["recipient_outcomes"]) == 1
+    assert result["recipient_outcomes"][0]["email"] == "test@example.com"
 
     get_response = client.get(f"/api/newsletters/{newsletter_id}")
     assert get_response.status_code == 200
     fetched_newsletter = get_response.json()
-    assert fetched_newsletter["draft_head_revision_id"] == result["revision_id"]
-    assert fetched_newsletter["approved_revision_id"] != result["revision_id"]
-
-    revisions_response = client.get(f"/api/newsletters/{newsletter_id}/revisions")
-    assert revisions_response.status_code == 200
-    latest_revision = revisions_response.json()["items"][0]
-    assert latest_revision["id"] == result["revision_id"]
-    assert "https://example.com/source" in (latest_revision["source_bundle_snapshot_json"] or "")
-    if result["mode"] == "litellm":
-        assert latest_revision["highlights_json"] is not None
-        assert latest_revision["source_references_json"] is not None
-    assert latest_revision["provider_snapshot_json"] is not None
-    assert "openai/" in latest_revision["provider_snapshot_json"]
-    if result["mode"] == "litellm":
-        assert latest_revision["raw_response_hash"] is not None
+    assert fetched_newsletter["id"] == newsletter_id
+    assert fetched_newsletter["subject"] == "Generated Subject"
+    assert fetched_newsletter["preheader"] == "Generated preheader"
+    assert fetched_newsletter["body_text"] == "Generated body content"
+    assert fetched_newsletter["recipients"][0]["email"] == "test@example.com"
 
 
-def test_revision_history_and_approval_flow(client: TestClient):
+def test_run_hard_stops_when_generation_fails(client: TestClient, monkeypatch):
+    import app.ai_generation
+    import app.email_delivery
+
     bootstrap_operator(client)
     create_test_provider(client, "openai")
 
     create_response = client.post(
         "/api/newsletters",
         json={
-            "name": "Approval Test",
-            "description": "Testing revision approval",
-            "prompt": "Write a brief about approvals.",
-            "draft_subject": "Approval Subject",
-            "draft_preheader": "Approval preheader",
-            "draft_body_text": "Initial approved body",
+            "name": "Fail Test",
+            "description": "Testing generation failure hard stop",
+            "prompt": "Write a brief that will fail.",
+            "subject": "Fail Test Subject",
+            "preheader": "Fail preheader",
+            "body_text": "Initial body",
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
             "template_key": "signal",
             "audience_name": "testers",
-            "delivery_topic": "approval-test",
+            "delivery_topic": "fail-test",
             "timezone": "UTC",
             "schedule_enabled": False,
             "status": "active",
-            "recipient_import_text": "approver@example.com",
+            "recipient_import_text": "test@example.com",
         },
     )
     assert create_response.status_code == 201
-    created = create_response.json()
-
-    generate_response = client.post(f"/api/newsletters/{created['id']}/generate-draft")
-    assert generate_response.status_code == 200
-    generated_revision_id = generate_response.json()["revision_id"]
-
-    revisions_response = client.get(f"/api/newsletters/{created['id']}/revisions")
-    assert revisions_response.status_code == 200
-    revisions = revisions_response.json()["items"]
-    assert len(revisions) == 2
-    assert revisions[0]["id"] == generated_revision_id
-    assert revisions[0]["state"] == "candidate"
-    assert revisions[1]["state"] == "approved"
-
-    approve_response = client.post(
-        f"/api/newsletters/{created['id']}/revisions/{generated_revision_id}/approve"
-    )
-    assert approve_response.status_code == 200
-    approved_payload = approve_response.json()
-    assert approved_payload["revision"]["id"] == generated_revision_id
-    assert approved_payload["revision"]["state"] == "approved"
-    assert approved_payload["newsletter"]["approved_revision_id"] == generated_revision_id
-    assert approved_payload["newsletter"]["draft_head_revision_id"] == generated_revision_id
-
-    revisions_after = client.get(f"/api/newsletters/{created['id']}/revisions")
-    assert revisions_after.status_code == 200
-    revisions_by_id = {item["id"]: item for item in revisions_after.json()["items"]}
-    assert revisions_by_id[generated_revision_id]["state"] == "approved"
-    assert revisions_by_id[created["approved_revision_id"]]["state"] == "superseded"
-
-
-def test_candidate_revision_cannot_be_sent_until_approved(client: TestClient):
-    bootstrap_operator(client)
-    create_test_provider(client, "openai")
-
-    create_response = client.post(
-        "/api/newsletters",
-        json={
-            "name": "Candidate Send Test",
-            "description": "Candidate approval enforcement",
-            "prompt": "Write a brief about approvals.",
-            "draft_subject": "Approved Subject",
-            "draft_preheader": "Approved preheader",
-            "draft_body_text": "Initial approved body",
-            "provider_name": "openai",
-            "model_name": "gpt-4o-mini",
-            "template_key": "signal",
-            "audience_name": "testers",
-            "delivery_topic": "candidate-send",
-            "timezone": "UTC",
-            "schedule_enabled": False,
-            "status": "active",
-            "recipient_import_text": "approver@example.com",
-        },
-    )
     newsletter_id = create_response.json()["id"]
-    generated_revision_id = client.post(f"/api/newsletters/{newsletter_id}/generate-draft").json()[
-        "revision_id"
+
+    urlopen_calls = []
+    original_urlopen = app.email_delivery.request.urlopen
+
+    def tracking_urlopen(req, timeout=None):
+        urlopen_calls.append(req)
+        return original_urlopen(req, timeout)
+
+    monkeypatch.setattr(
+        "app.api.newsletters.generate_newsletter_content",
+        lambda newsletter, db_session=None: app.ai_generation.GeneratedContent(
+            status="error",
+            mode="none",
+            message="Provider rejected the request.",
+            subject="",
+            preheader="",
+            body_text="",
+            provider_snapshot_json="{}",
+        ),
+    )
+    monkeypatch.setattr(app.email_delivery.request, "urlopen", tracking_urlopen)
+
+    run_response = client.post(f"/api/newsletters/{newsletter_id}/run")
+    assert run_response.status_code == 422
+    assert "Generation failed" in run_response.json()["detail"]
+    assert len(urlopen_calls) == 0
+
+    # Generation failures must be visible in the operational logs so operators
+    # aren't blind when the AI step breaks.
+    runs_response = client.get(f"/api/runs?newsletter_id={newsletter_id}")
+    assert runs_response.status_code == 200
+    runs = runs_response.json()["items"]
+    failed_generation_runs = [
+        r for r in runs if r["run_type"] == "generation" and r["run_status"] == "failed"
     ]
+    assert len(failed_generation_runs) == 1
+    assert "Provider rejected the request." in (failed_generation_runs[0]["failure_reason"] or "")
 
-    send_response = client.post(
-        f"/api/newsletters/{newsletter_id}/revisions/{generated_revision_id}/send"
+    events_response = client.get(
+        f"/api/runs/events?newsletter_id={newsletter_id}&event_type=generation"
     )
-    assert send_response.status_code == 409
-    assert "Only the approved revision can be sent" in send_response.json()["detail"]
+    assert events_response.status_code == 200
+    events = events_response.json()["items"]
+    assert any(e["status"] == "failed" for e in events)
 
 
-def test_updating_job_does_not_mutate_candidate_revision(client: TestClient):
+def test_newsletter_validation_requires_chatgpt_oauth_connection(client: TestClient):
+    from app.database import get_session_maker
+    from app.models import Provider
+
     bootstrap_operator(client)
-    create_test_provider(client, "openai")
-    create_response = client.post(
+
+    session = get_session_maker()()
+    provider = Provider(
+        name="ChatGPT Subscription",
+        provider_type="openai_chatgpt",
+        is_enabled=True,
+        default_model="gpt-5.4",
+    )
+    session.add(provider)
+    session.commit()
+    session.refresh(provider)
+    provider_id = provider.id
+    session.close()
+
+    response = client.post(
         "/api/newsletters",
         json={
-            "name": "Candidate Version Test",
-            "description": "Draft mutation test",
-            "prompt": "Write a brief about versions.",
-            "draft_subject": "Initial subject",
-            "draft_preheader": "Initial preheader",
-            "draft_body_text": "Initial body",
-            "provider_name": "openai",
-            "model_name": "gpt-4o-mini",
+            "name": "ChatGPT Newsletter",
+            "description": "Needs an OAuth-backed provider",
+            "prompt": "Summarize the top AI product launches this week.",
+            "provider_id": provider_id,
+            "provider_name": "openai_chatgpt",
+            "model_name": "gpt-5.4",
             "template_key": "signal",
-            "audience_name": "testers",
-            "delivery_topic": "candidate-version",
+            "audience_name": "operators",
+            "delivery_topic": "chatgpt-newsletter",
             "timezone": "UTC",
             "schedule_enabled": False,
             "status": "active",
-            "recipient_import_text": "approver@example.com",
+            "recipient_import_text": "reader@example.com",
         },
     )
-    detail = create_response.json()
-    newsletter_id = detail["id"]
-    first_candidate_revision_id = client.post(
-        f"/api/newsletters/{newsletter_id}/generate-draft"
-    ).json()["revision_id"]
 
-    detail_response = client.get(f"/api/newsletters/{newsletter_id}")
-    detail_payload = detail_response.json()
-    detail_payload["name"] = "Updated job name"
-    detail_payload["notes"] = "Updated job notes"
-    update_response = client.put(f"/api/newsletters/{newsletter_id}", json=detail_payload)
-    assert update_response.status_code == 200
-
-    revisions = client.get(f"/api/newsletters/{newsletter_id}/revisions").json()["items"]
-    assert revisions[0]["id"] == first_candidate_revision_id
-    assert revisions[0]["state"] == "candidate"
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "OAuth connection" in detail
+    assert "API key" not in detail
 
 
-def test_updating_revision_uses_dedicated_revision_endpoint(client: TestClient):
+def test_newsletter_rejects_manual_chatgpt_api_key(client: TestClient):
+    """A legacy manual API key for openai_chatgpt must not be pinned to a newsletter."""
+    from app.crypto import encrypt_secret
+    from app.database import get_session_maker
+    from app.models import ApiKey, Provider
+
     bootstrap_operator(client)
-    create_test_provider(client, "openai")
-    create_response = client.post(
+
+    session = get_session_maker()()
+    provider = Provider(
+        name="ChatGPT Subscription",
+        provider_type="openai_chatgpt",
+        is_enabled=True,
+        default_model="gpt-5.4",
+    )
+    session.add(provider)
+    session.commit()
+    session.refresh(provider)
+    provider_id = provider.id
+
+    # Create an active OAuth connection so provider validation passes
+    oauth_key = ApiKey(
+        name="ChatGPT Plus",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value=encrypt_secret("oauth:v1"),
+        oauth_access_token=encrypt_secret("atok"),
+        oauth_refresh_token=encrypt_secret("rtok"),
+        is_active=True,
+    )
+    session.add(oauth_key)
+
+    # Create a legacy manual key for openai_chatgpt
+    manual_key = ApiKey(
+        name="Legacy ChatGPT Key",
+        provider_type="openai_chatgpt",
+        key_value=encrypt_secret("sk-legacy"),
+        is_active=True,
+    )
+    session.add(manual_key)
+    session.commit()
+    session.refresh(manual_key)
+    manual_key_id = manual_key.id
+    session.close()
+
+    response = client.post(
         "/api/newsletters",
         json={
-            "name": "Revision Edit Test",
-            "description": "Revision endpoint test",
-            "prompt": "Write a brief about revision edits.",
-            "draft_subject": "Initial subject",
-            "draft_preheader": "Initial preheader",
-            "draft_body_text": "Initial body",
-            "provider_name": "openai",
-            "model_name": "gpt-4o-mini",
+            "name": "ChatGPT Newsletter",
+            "description": "Should fail with manual key",
+            "prompt": "Summarize.",
+            "provider_id": provider_id,
+            "provider_name": "openai_chatgpt",
+            "model_name": "gpt-5.4",
             "template_key": "signal",
-            "audience_name": "testers",
-            "delivery_topic": "revision-edit",
+            "audience_name": "operators",
+            "delivery_topic": "chatgpt-newsletter",
             "timezone": "UTC",
             "schedule_enabled": False,
             "status": "active",
-            "recipient_import_text": "approver@example.com",
+            "api_key_id": manual_key_id,
+            "recipient_import_text": "reader@example.com",
         },
     )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "OAuth connection" in detail
+    assert "manual API key" in detail
+
+
+def test_form_options_shows_oauth_connection_for_chatgpt(client: TestClient):
+    """An OAuth connection for ChatGPT must appear as 'OAuth Connection', not a masked key."""
+    from app.crypto import encrypt_secret
+    from app.database import get_session_maker
+    from app.models import ApiKey
+
+    bootstrap_operator(client)
+
+    session = get_session_maker()()
+    oauth_key = ApiKey(
+        name="ChatGPT Plus",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value=encrypt_secret("oauth:v1"),
+        oauth_access_token=encrypt_secret("atok"),
+        oauth_refresh_token=encrypt_secret("rtok"),
+        is_active=True,
+    )
+    session.add(oauth_key)
+    session.commit()
+    session.close()
+
+    response = client.get("/api/newsletters/form-options")
+    assert response.status_code == 200
+    data = response.json()
+    chatgpt_keys = [k for k in data["api_keys"] if k["provider_type"] == "openai_chatgpt"]
+    assert len(chatgpt_keys) == 1
+    assert chatgpt_keys[0]["masked_key"] == "OAuth Connection"
+    assert chatgpt_keys[0]["auth_type"] == "oauth"
+
+
+def test_schedule_pause_and_resume_flow(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+
+    create_response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "Scheduled Brief",
+            "description": "Scheduled delivery test",
+            "prompt": "Write a brief about schedules.",
+            "subject": "Scheduled Brief",
+            "preheader": "Schedule test preheader",
+            "body_text": "Schedule test body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "operators",
+            "delivery_topic": "scheduled-brief",
+            "timezone": "UTC",
+            "schedule_enabled": True,
+            "schedule_cron": "0 7 * * 1-5",
+            "status": "active",
+            "recipient_import_text": "schedule@example.com",
+        },
+    )
+    assert create_response.status_code == 201
     newsletter_id = create_response.json()["id"]
-    first_candidate_revision_id = client.post(
-        f"/api/newsletters/{newsletter_id}/generate-draft"
-    ).json()["revision_id"]
 
-    update_revision_response = client.patch(
-        f"/api/newsletters/{newsletter_id}/revisions/{first_candidate_revision_id}",
+    pause_response = client.post(f"/api/newsletters/{newsletter_id}/schedule/pause")
+    assert pause_response.status_code == 200
+    paused_newsletter = pause_response.json()
+    assert paused_newsletter["schedule_enabled"] is False
+    assert paused_newsletter["status"] == "active"
+
+    resume_response = client.post(f"/api/newsletters/{newsletter_id}/schedule/resume")
+    assert resume_response.status_code == 200
+    resumed_newsletter = resume_response.json()
+    assert resumed_newsletter["schedule_enabled"] is True
+    assert resumed_newsletter["schedule_cron"] == "0 7 * * 1-5"
+    assert resumed_newsletter["status"] == "active"
+
+
+def test_archive_newsletter_disables_schedule(client: TestClient):
+    bootstrap_operator(client)
+    create_test_provider(client, "openai")
+
+    create_response = client.post(
+        "/api/newsletters",
         json={
-            "subject": "Updated candidate subject",
-            "preheader": "Updated candidate preheader",
-            "body_text": "Updated candidate body",
+            "name": "Archive Brief",
+            "description": "Archive flow test",
+            "prompt": "Write a brief about archives.",
+            "subject": "Archive Brief",
+            "preheader": "Archive preheader",
+            "body_text": "Archive body",
+            "provider_name": "openai",
+            "model_name": "gpt-4o-mini",
+            "template_key": "signal",
+            "audience_name": "operators",
+            "delivery_topic": "archive-brief",
+            "timezone": "UTC",
+            "schedule_enabled": True,
+            "schedule_cron": "0 8 * * 1-5",
+            "status": "active",
+            "recipient_import_text": "archive@example.com",
         },
     )
-    assert update_revision_response.status_code == 200
-    updated_revision = update_revision_response.json()["revision"]
-    assert updated_revision["id"] == first_candidate_revision_id
-    assert updated_revision["subject"] == "Updated candidate subject"
-    assert updated_revision["body_text"] == "Updated candidate body"
+    assert create_response.status_code == 201
+    newsletter_id = create_response.json()["id"]
+
+    archive_response = client.post(f"/api/newsletters/{newsletter_id}/archive")
+    assert archive_response.status_code == 200
+    archived_newsletter = archive_response.json()
+    assert archived_newsletter["status"] == "archived"
+    assert archived_newsletter["schedule_enabled"] is False
+
+    get_response = client.get(f"/api/newsletters/{newsletter_id}")
+    assert get_response.status_code == 200
+    assert get_response.json()["status"] == "archived"
 
 
 def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
@@ -416,9 +558,9 @@ def test_unsubscribe_suppresses_future_manual_sends(client: TestClient):
             "name": "Unsubscribe Test",
             "description": "Testing unsubscribe suppression",
             "prompt": "Write a brief.",
-            "draft_subject": "Unsubscribe Test",
-            "draft_preheader": "Test preheader",
-            "draft_body_text": "Test body",
+            "subject": "Unsubscribe Test",
+            "preheader": "Test preheader",
+            "body_text": "Test body",
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
             "template_key": "signal",

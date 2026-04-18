@@ -6,11 +6,11 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
-from app.auth import get_email_delivery_mode, require_authenticated_user
+from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.crypto import decrypt_secret, encrypt_secret
 from app.deps import DbSession
-from app.models import ApiKey, AuditEvent, OperationMode, Provider
+from app.models import ApiKey, AuditEvent, Provider
 from app.schemas import (
     ApiKeyCreateRequest,
     ApiKeyDetail,
@@ -58,17 +58,29 @@ def mask_api_key(key_value: str) -> str:
 
 
 def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
-    try:
-        decrypted_key_value = decrypt_secret(api_key.key_value)
-    except Exception:
-        decrypted_key_value = None
+    auth_type = getattr(api_key, "auth_type", "api_key") or "api_key"
+
+    if auth_type == "oauth":
+        plan = api_key.oauth_plan_type or "Connected"
+        masked = f"ChatGPT ({plan})"
+    else:
+        try:
+            decrypted_key_value = decrypt_secret(api_key.key_value)
+        except Exception:
+            decrypted_key_value = None
+        masked = mask_api_key(decrypted_key_value) if decrypted_key_value else "****"
+
     return ApiKeyDetail(
         id=api_key.id,
         name=api_key.name,
         provider_type=api_key.provider_type,
-        masked_key=mask_api_key(decrypted_key_value) if decrypted_key_value else "****",
+        masked_key=masked,
         from_email=api_key.from_email,
         is_active=api_key.is_active,
+        auth_type=api_key.auth_type,
+        oauth_plan_type=api_key.oauth_plan_type,
+        oauth_account_id=api_key.oauth_account_id,
+        oauth_expires_at=api_key.oauth_expires_at,
         last_used_at=api_key.last_used_at,
         created_at=api_key.created_at,
         updated_at=api_key.updated_at,
@@ -78,15 +90,13 @@ def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
 def _count_active_keys_for_provider(db: DbSession, provider_type: str) -> int:
     from sqlalchemy import func
 
-    return (
-        db.scalar(
-            select(func.count(ApiKey.id)).where(
-                ApiKey.provider_type == provider_type,
-                ApiKey.is_active.is_(True),
-            )
-        )
-        or 0
-    )
+    where_clause = [
+        ApiKey.provider_type == provider_type,
+        ApiKey.is_active.is_(True),
+    ]
+    if provider_type == "openai_chatgpt":
+        where_clause.append(ApiKey.auth_type == "oauth")
+    return db.scalar(select(func.count(ApiKey.id)).where(*where_clause)) or 0
 
 
 def _has_enabled_providers_for_type(db: DbSession, provider_type: str) -> bool:
@@ -251,6 +261,20 @@ def delete_api_key(api_key_id: int, request: Request, db: DbSession) -> Response
 def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTestResponse:
     require_authenticated_user(request, db)
     api_key = get_api_key_or_404(db, api_key_id)
+
+    if getattr(api_key, "auth_type", "api_key") == "oauth":
+        has_token = api_key.oauth_access_token is not None
+        return ApiKeyTestResponse(
+            status="ok" if has_token else "warning",
+            message=(
+                "OAuth ChatGPT connection is active."
+                if has_token
+                else "OAuth connection found but access token is missing. Re-connect."
+            ),
+            provider_type=api_key.provider_type,
+            masked_key=f"ChatGPT ({api_key.oauth_plan_type or 'Connected'})",
+        )
+
     try:
         decrypted_key_value = decrypt_secret(api_key.key_value).strip()
     except Exception as exc:
@@ -308,24 +332,12 @@ def test_api_key(api_key_id: int, request: Request, db: DbSession) -> ApiKeyTest
 
     if api_key.provider_type == "resend":
         if not resend_sender:
-            delivery_mode = get_email_delivery_mode(db_session=db)
-            if delivery_mode == OperationMode.SIMULATED.value:
-                mode_guidance = (
-                    "Current email delivery mode is simulated, so preview-only sends can still "
-                    "run locally without a sender email."
-                )
-            else:
-                mode_guidance = (
-                    "Newsletter sends fail closed in live mode. Switch email delivery mode to "
-                    "simulated in system settings for local preview-only runs without a sender "
-                    "email."
-                )
             return ApiKeyTestResponse(
                 status="warning",
                 message=(
                     "Resend API key is active, but no sender email is configured. "
                     "Add a Sender Email to this API key or set PULSE_NEWS_RESEND_FROM_EMAIL. "
-                    f"{mode_guidance}"
+                    "Newsletter sends fail closed without a sender email."
                 ),
                 provider_type=api_key.provider_type,
                 masked_key=mask_api_key(decrypted_key_value),

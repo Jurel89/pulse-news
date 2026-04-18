@@ -1,30 +1,28 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
+import uuid
 from zoneinfo import available_timezones
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
-from app.ai_generation import generate_newsletter_draft
+from app.ai_generation import generate_newsletter_content
 from app.api.providers import get_provider_models
 from app.auth import require_authenticated_user
 from app.config import get_settings
 from app.crypto import decrypt_secret
 from app.deps import DbSession
-from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email, send_test_email
-from app.email_templates import render_newsletter_content
-from app.idempotency import build_delivery_attempt_key
+from app.email_delivery import RecipientDeliveryTarget, send_newsletter_email
+from app.email_templates import GenerationMeta, render_newsletter_content
 from app.models import (
     ApiKey,
     AuditEvent,
-    DeliveryProfile,
-    DraftRevision,
     EmailTemplate,
-    GenerationProfile,
     Newsletter,
     NewsletterRecipient,
     NewsletterRun,
@@ -32,25 +30,15 @@ from app.models import (
     Provider,
     utc_now,
 )
+from app.oauth.openai_chatgpt import CHATGPT_SUPPORTED_MODELS
 from app.schemas import (
-    DraftRevisionApproveResponse,
-    DraftRevisionDetailResponse,
-    DraftRevisionListResponse,
-    DraftRevisionSummary,
-    DraftRevisionUpdateRequest,
     NewsletterCreateRequest,
     NewsletterDetail,
-    NewsletterGenerationResponse,
     NewsletterJobUpdateRequest,
-    NewsletterPreviewResponse,
     NewsletterRunSummary,
-    NewsletterSendRequest,
     NewsletterSendResponse,
     NewsletterSummary,
-    NewsletterTestSendRequest,
-    NewsletterTestSendResponse,
 )
-from app.source_pipeline.service import build_source_bundle, serialize_source_bundle
 
 newsletters_router = APIRouter(prefix="/newsletters", tags=["newsletters"])
 
@@ -94,10 +82,6 @@ def create_audit_event(
     )
 
 
-def get_active_recipient_emails(newsletter: Newsletter) -> list[str]:
-    return [recipient.email for recipient in get_active_recipients(newsletter)]
-
-
 def get_active_recipients(newsletter: Newsletter) -> list[NewsletterRecipient]:
     return [
         recipient
@@ -120,159 +104,23 @@ def get_newsletter_or_404(db: DbSession, newsletter_id: int) -> Newsletter:
     return newsletter
 
 
-def get_revision_or_404(db: DbSession, newsletter: Newsletter, revision_id: int) -> DraftRevision:
-    revision = db.scalar(
-        select(DraftRevision).where(
-            DraftRevision.id == revision_id,
-            DraftRevision.newsletter_id == newsletter.id,
-        )
-    )
-    if revision is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found.")
-    return revision
-
-
-def _next_revision_number(newsletter: Newsletter) -> int:
-    if not newsletter.revisions:
-        return 1
-    return max(revision.version_number for revision in newsletter.revisions) + 1
-
-
-def _create_revision(
-    newsletter: Newsletter,
-    *,
-    state: str,
-    origin: str,
-    created_by_email: str | None,
-    subject: str,
-    preheader: str | None,
-    body_text: str,
-    prompt_snapshot: str | None,
-    source_bundle_snapshot_json: str | None = None,
-    highlights_json: str | None = None,
-    source_references_json: str | None = None,
-    provider_snapshot_json: str | None = None,
-    token_usage_json: str | None = None,
-    raw_response_hash: str | None = None,
-    generation_run_id: int | None = None,
-) -> DraftRevision:
-    revision = DraftRevision(
-        newsletter=newsletter,
-        version_number=_next_revision_number(newsletter),
-        state=state,
-        origin=origin,
-        created_by_email=created_by_email,
-        subject=subject,
-        preheader=preheader,
-        body_text=body_text,
-        prompt_snapshot=prompt_snapshot,
-        source_bundle_snapshot_json=source_bundle_snapshot_json,
-        highlights_json=highlights_json,
-        source_references_json=source_references_json,
-        provider_snapshot_json=provider_snapshot_json,
-        token_usage_json=token_usage_json,
-        raw_response_hash=raw_response_hash,
-        generation_run_id=generation_run_id,
-    )
-    return revision
-
-
-def _ensure_revision_projection(newsletter: Newsletter) -> DraftRevision | None:
-    if newsletter.draft_head_revision is not None:
-        return newsletter.draft_head_revision
-
-    if newsletter.approved_revision is not None:
-        newsletter.draft_head_revision = newsletter.approved_revision
-        return newsletter.draft_head_revision
-
-    if newsletter.revisions:
-        sorted_revisions = sorted(
-            newsletter.revisions, key=lambda revision: revision.version_number
-        )
-        newsletter.approved_revision = next(
-            (revision for revision in reversed(sorted_revisions) if revision.state == "approved"),
-            sorted_revisions[0],
-        )
-        newsletter.draft_head_revision = sorted_revisions[-1]
-        return newsletter.draft_head_revision
-
-    imported_revision = _create_revision(
-        newsletter,
-        state="approved",
-        origin="imported",
-        created_by_email=None,
-        subject=newsletter.draft_subject,
-        preheader=newsletter.draft_preheader,
-        body_text=newsletter.draft_body_text,
-        prompt_snapshot=newsletter.prompt,
-    )
-    newsletter.approved_revision = imported_revision
-    newsletter.draft_head_revision = imported_revision
-    return imported_revision
-
-
-def _draft_revision(newsletter: Newsletter) -> DraftRevision | None:
-    return _ensure_revision_projection(newsletter)
-
-
-def _approved_revision(newsletter: Newsletter) -> DraftRevision | None:
-    _ensure_revision_projection(newsletter)
-    return newsletter.approved_revision
-
-
-def _ordered_revisions(newsletter: Newsletter) -> list[DraftRevision]:
-    return sorted(newsletter.revisions, key=lambda revision: revision.version_number, reverse=True)
-
-
-def _approve_revision(newsletter: Newsletter, revision: DraftRevision) -> DraftRevision:
-    if revision.newsletter_id != newsletter.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Revision not found for this newsletter.",
-        )
-
-    for candidate in newsletter.revisions:
-        if candidate.id == revision.id:
-            candidate.state = "approved"
-            continue
-        if candidate.state == "approved":
-            candidate.state = "superseded"
-
-    newsletter.approved_revision = revision
-    newsletter.draft_head_revision = revision
-    newsletter.draft_subject = revision.subject
-    newsletter.draft_preheader = revision.preheader
-    newsletter.draft_body_text = revision.body_text
-    return revision
-
-
 def _summary_payload(newsletter: Newsletter) -> dict:
-    draft_revision = _draft_revision(newsletter)
     return {
         "id": newsletter.id,
         "name": newsletter.name,
         "slug": newsletter.slug,
         "description": newsletter.description,
         "prompt": newsletter.prompt,
-        "draft_subject": draft_revision.subject if draft_revision else newsletter.draft_subject,
-        "draft_preheader": draft_revision.preheader
-        if draft_revision
-        else newsletter.draft_preheader,
-        "draft_body_text": draft_revision.body_text
-        if draft_revision
-        else newsletter.draft_body_text,
+        "subject": newsletter.subject,
+        "preheader": newsletter.preheader,
+        "body_text": newsletter.body_text,
         "provider_id": newsletter.provider_id,
         "provider_name": newsletter.provider_name,
         "model_name": newsletter.model_name,
         "template_key": newsletter.template_key,
         "api_key_id": newsletter.api_key_id,
         "resend_api_key_id": newsletter.resend_api_key_id,
-        "generation_profile_id": newsletter.generation_profile_id,
-        "delivery_profile_id": newsletter.delivery_profile_id,
-        "approved_revision_id": newsletter.approved_revision.id
-        if newsletter.approved_revision
-        else None,
-        "draft_head_revision_id": draft_revision.id if draft_revision else None,
+        "from_email": newsletter.from_email,
         "audience_name": newsletter.audience_name,
         "delivery_topic": newsletter.delivery_topic,
         "timezone": newsletter.timezone,
@@ -314,7 +162,7 @@ def parse_recipient_import_text(recipient_import_text: str) -> list[str]:
             normalized.append(email)
     if invalid:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid email format: {', '.join(invalid[:5])}",
         )
     return normalized
@@ -375,7 +223,7 @@ def serialize_newsletter_detail(newsletter: Newsletter) -> NewsletterDetail:
 def validate_send_allowed(newsletter: Newsletter) -> None:
     if newsletter.status not in SEND_ALLOWED_STATUSES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Cannot send newsletter while status is '{newsletter.status}'.",
         )
 
@@ -383,7 +231,7 @@ def validate_send_allowed(newsletter: Newsletter) -> None:
 def validate_schedule_allowed(newsletter: Newsletter) -> None:
     if newsletter.status not in SCHEDULE_ALLOWED_STATUSES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Cannot schedule newsletter in '{newsletter.status}' status.",
         )
 
@@ -400,41 +248,22 @@ def validate_schedule_configuration(newsletter: Newsletter) -> None:
     CronTrigger.from_crontab(schedule_cron, timezone=timezone)
 
 
-def create_newsletter_run(
-    newsletter: Newsletter,
-    revision: DraftRevision,
+def _build_newsletter_attempt_key(
     *,
-    run_type: str,
+    newsletter_id: int,
     trigger_mode: str,
-    run_status: str,
-    result_mode: str | None = None,
-    result_message: str | None = None,
-    recipient_emails: list[str] | None = None,
-) -> NewsletterRun:
-    snapshot_recipient_emails = recipient_emails or get_active_recipient_emails(newsletter)
-    return NewsletterRun(
-        newsletter_id=newsletter.id,
-        revision_id=revision.id,
-        run_type=run_type,
-        trigger_mode=trigger_mode,
-        run_status=run_status,
-        provider_name=newsletter.provider_name,
-        model_name=newsletter.model_name,
-        template_key=newsletter.template_key,
-        recipient_count=len(snapshot_recipient_emails),
-        snapshot_subject=revision.subject,
-        snapshot_preheader=revision.preheader,
-        snapshot_body_text=revision.body_text,
-        snapshot_recipient_emails=json.dumps(snapshot_recipient_emails),
-        delivery_outcomes="[]",
-        result_mode=result_mode,
-        result_message=result_message,
-        snapshot_prompt=newsletter.prompt,
-        snapshot_newsletter_name=newsletter.name,
-        snapshot_newsletter_slug=newsletter.slug,
-        snapshot_delivery_topic=newsletter.delivery_topic,
-        snapshot_status_at_run=newsletter.status,
-    )
+    recipient_emails: list[str],
+    subject: str,
+    preheader: str | None,
+    body_text: str,
+    fire_scope: str | None = None,
+) -> str:
+    normalized_recipients = ",".join(sorted(email.strip().lower() for email in recipient_emails))
+    recipient_digest = hashlib.sha256(normalized_recipients.encode("utf-8")).hexdigest()[:16]
+    snapshot = "\n".join((subject.strip(), (preheader or "").strip(), body_text.strip()))
+    content_digest = hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:16]
+    scope = fire_scope or "default"
+    return f"newsletter-{newsletter_id}-{trigger_mode}-{scope}-{content_digest}-{recipient_digest}"
 
 
 def add_run_event(
@@ -476,32 +305,28 @@ def execute_newsletter_send(
     db: DbSession,
     newsletter: Newsletter,
     *,
-    revision: DraftRevision | None = None,
     trigger_mode: str,
     idempotency_key: str | None = None,
     fire_scope: str | None = None,
+    generation_meta: GenerationMeta | None = None,
 ) -> tuple[NewsletterSendResponse, NewsletterRun]:
     validate_send_allowed(newsletter)
-    resolved_revision = revision or _approved_revision(newsletter)
-    if resolved_revision is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Cannot send newsletter without an approved revision.",
-        )
 
     active_recipients = get_active_recipients(newsletter)
     active_recipient_emails = [recipient.email for recipient in active_recipients]
     if not active_recipient_emails:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Cannot send: no active recipients.",
         )
 
-    attempt_key = idempotency_key or build_delivery_attempt_key(
+    attempt_key = idempotency_key or _build_newsletter_attempt_key(
         newsletter_id=newsletter.id,
-        revision_id=resolved_revision.id,
         trigger_mode=trigger_mode,
         recipient_emails=active_recipient_emails,
+        subject=newsletter.subject,
+        preheader=newsletter.preheader,
+        body_text=newsletter.body_text,
         fire_scope=fire_scope,
     )
 
@@ -511,7 +336,6 @@ def execute_newsletter_send(
 
     run = NewsletterRun(
         newsletter_id=newsletter.id,
-        revision_id=resolved_revision.id,
         run_type="delivery",
         trigger_mode=trigger_mode,
         run_status="pending",
@@ -519,9 +343,9 @@ def execute_newsletter_send(
         model_name=newsletter.model_name,
         template_key=newsletter.template_key,
         recipient_count=len(active_recipient_emails),
-        snapshot_subject=resolved_revision.subject,
-        snapshot_preheader=resolved_revision.preheader,
-        snapshot_body_text=resolved_revision.body_text,
+        snapshot_subject=newsletter.subject,
+        snapshot_preheader=newsletter.preheader,
+        snapshot_body_text=newsletter.body_text,
         snapshot_recipient_emails=json.dumps(active_recipient_emails),
         snapshot_prompt=newsletter.prompt,
         snapshot_newsletter_name=newsletter.name,
@@ -535,16 +359,16 @@ def execute_newsletter_send(
     db.flush()
 
     try:
-        if not resolved_revision.body_text.strip():
+        if not newsletter.body_text.strip():
             raise ValueError(
-                "Newsletter has no content to send. "
-                "Add body text or generate a draft before sending."
+                "Newsletter has no content to send. Add body text or run generation before sending."
             )
         rendered = render_newsletter_content(
             newsletter,
-            subject=resolved_revision.subject,
-            preheader=resolved_revision.preheader,
-            body=resolved_revision.body_text,
+            subject=newsletter.subject,
+            preheader=newsletter.preheader,
+            body=newsletter.body_text,
+            generation_meta=generation_meta,
         )
         run.rendered_subject = rendered.subject
         run.rendered_preheader = rendered.preheader
@@ -634,9 +458,6 @@ def list_newsletters(request: Request, db: DbSession) -> list[NewsletterSummary]
         .where(Newsletter.deleted_at.is_(None))
         .order_by(Newsletter.updated_at.desc())
     ).all()
-    for newsletter in newsletters:
-        _ensure_revision_projection(newsletter)
-    db.flush()
     return [
         NewsletterSummary.model_validate(_summary_payload(newsletter)) for newsletter in newsletters
     ]
@@ -655,17 +476,16 @@ def create_newsletter(
         slug=ensure_unique_slug(db, desired_slug=slugify(payload.name)),
         description=payload.description,
         prompt=payload.prompt,
-        draft_subject=payload.draft_subject,
-        draft_preheader=payload.draft_preheader,
-        draft_body_text=payload.draft_body_text,
+        subject="",
+        preheader=None,
+        body_text="",
         provider_id=payload.provider_id,
         provider_name=payload.provider_name,
         model_name=payload.model_name,
         template_key=payload.template_key,
         api_key_id=payload.api_key_id,
         resend_api_key_id=payload.resend_api_key_id,
-        generation_profile_id=payload.generation_profile_id,
-        delivery_profile_id=payload.delivery_profile_id,
+        from_email=payload.from_email,
         audience_name=payload.audience_name,
         delivery_topic=payload.delivery_topic,
         timezone=payload.timezone,
@@ -674,18 +494,6 @@ def create_newsletter(
         status=payload.status,
         notes=payload.notes,
     )
-    initial_revision = _create_revision(
-        newsletter,
-        state="approved",
-        origin="imported",
-        created_by_email=user.email,
-        subject=payload.draft_subject,
-        preheader=payload.draft_preheader,
-        body_text=payload.draft_body_text,
-        prompt_snapshot=payload.prompt,
-    )
-    newsletter.approved_revision = initial_revision
-    newsletter.draft_head_revision = initial_revision
     upsert_newsletter_recipients(newsletter, payload.recipient_import_text)
 
     try:
@@ -693,7 +501,7 @@ def create_newsletter(
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid schedule configuration: {exc}",
         ) from exc
 
@@ -729,6 +537,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
     built_in_templates = [
         {"key": "signal", "name": "Signal", "is_system": True},
         {"key": "ledger", "name": "Ledger", "is_system": True},
+        {"key": "corporate", "name": "Corporate", "is_system": True},
     ]
 
     existing_keys = {t["key"] for t in template_options}
@@ -760,76 +569,65 @@ def get_form_options(request: Request, db: DbSession) -> dict:
     api_keys = db.scalars(
         select(ApiKey).where(ApiKey.is_active.is_(True)).order_by(ApiKey.name)
     ).all()
-    api_key_options = [
-        {
-            "id": k.id,
-            "name": k.name,
-            "provider_type": k.provider_type,
-            "masked_key": mask_api_key(k.key_value),
-            "from_email": k.from_email,
-        }
-        for k in api_keys
-    ]
-
-    generation_profiles = db.scalars(
-        select(GenerationProfile)
-        .where(GenerationProfile.is_enabled.is_(True))
-        .order_by(GenerationProfile.name)
-    ).all()
-    delivery_profiles = db.scalars(
-        select(DeliveryProfile)
-        .where(DeliveryProfile.is_enabled.is_(True))
-        .order_by(DeliveryProfile.name)
-    ).all()
+    api_key_options = []
+    for k in api_keys:
+        if getattr(k, "auth_type", "api_key") == "oauth":
+            masked = "OAuth Connection"
+        else:
+            masked = mask_api_key(k.key_value)
+        api_key_options.append(
+            {
+                "id": k.id,
+                "name": k.name,
+                "provider_type": k.provider_type,
+                "masked_key": masked,
+                "from_email": k.from_email,
+                "auth_type": getattr(k, "auth_type", "api_key"),
+            }
+        )
 
     return {
         "templates": template_options,
         "providers": provider_options,
         "models": models,
         "api_keys": api_key_options,
-        "generation_profiles": [
-            {
-                "id": profile.id,
-                "name": profile.name,
-                "provider_id": profile.provider_id,
-                "model_name": profile.model_name,
-                "api_key_binding_mode": profile.api_key_binding_mode,
-                "api_key_id": profile.api_key_id,
-            }
-            for profile in generation_profiles
-        ],
-        "delivery_profiles": [
-            {
-                "id": profile.id,
-                "name": profile.name,
-                "provider_type": profile.provider_type,
-                "api_key_binding_mode": profile.api_key_binding_mode,
-                "api_key_id": profile.api_key_id,
-                "from_email": profile.from_email,
-            }
-            for profile in delivery_profiles
-        ],
         "timezones": sorted(available_timezones()),
     }
 
 
+BUILT_IN_TEMPLATE_KEYS = frozenset({"signal", "ledger", "corporate"})
+
+
 def _ensure_template_exists(db: DbSession, template_key: str) -> None:
-    if template_key in {"signal", "ledger"}:
+    if template_key in BUILT_IN_TEMPLATE_KEYS:
         return
     exists = db.scalar(select(EmailTemplate).where(EmailTemplate.key == template_key))
     if exists is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Template '{template_key}' does not exist.",
         )
 
 
 def _get_active_api_key_for_provider(db: DbSession, provider_type: str) -> ApiKey | None:
-    return db.scalar(
-        select(ApiKey).where(
-            ApiKey.provider_type == provider_type,
-            ApiKey.is_active.is_(True),
+    query = select(ApiKey).where(
+        ApiKey.provider_type == provider_type,
+        ApiKey.is_active.is_(True),
+    )
+    if provider_type == "openai_chatgpt":
+        query = query.where(ApiKey.auth_type == "oauth")
+    return db.scalar(query)
+
+
+def _missing_provider_credential_detail(provider: Provider) -> str:
+    if provider.provider_type == "openai_chatgpt":
+        return (
+            f"Provider '{provider.name}' has no active OAuth connection configured. "
+            f"Connect a ChatGPT account for provider type '{provider.provider_type}' first."
         )
+    return (
+        f"Provider '{provider.name}' has no active API key configured. "
+        f"Create an API key for provider type '{provider.provider_type}' first."
     )
 
 
@@ -841,17 +639,17 @@ def _validate_newsletter_entities(
         provider = db.scalar(select(Provider).where(Provider.id == payload.provider_id))
         if provider is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Provider does not exist.",
             )
         if not provider.is_enabled:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Provider is disabled.",
             )
         if provider.provider_type != payload.provider_name:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="provider_name does not match provider type.",
             )
 
@@ -859,11 +657,7 @@ def _validate_newsletter_entities(
         if active_key is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Provider '{provider.name}' has no active API key configured. "
-                    f"Create an API key for provider type "
-                    f"'{provider.provider_type}' first."
-                ),
+                detail=_missing_provider_credential_detail(provider),
             )
 
     elif payload.provider_name:
@@ -886,11 +680,7 @@ def _validate_newsletter_entities(
         if active_key is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Provider '{provider.name}' has no active API key configured. "
-                    f"Create an API key for provider type "
-                    f"'{provider.provider_type}' first."
-                ),
+                detail=_missing_provider_credential_detail(provider),
             )
 
     api_key: ApiKey | None = None
@@ -898,13 +688,19 @@ def _validate_newsletter_entities(
         api_key = db.scalar(select(ApiKey).where(ApiKey.id == payload.api_key_id))
         if api_key is None or not api_key.is_active:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="API key is missing or inactive.",
             )
         if api_key.provider_type != payload.provider_name:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="API key provider_type does not match newsletter provider.",
+            )
+        auth_type = getattr(api_key, "auth_type", "api_key")
+        if api_key.provider_type == "openai_chatgpt" and auth_type != "oauth":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="ChatGPT provider requires an OAuth connection, not a manual API key.",
             )
 
     resend_key: ApiKey | None = None
@@ -912,33 +708,23 @@ def _validate_newsletter_entities(
         resend_key = db.scalar(select(ApiKey).where(ApiKey.id == payload.resend_api_key_id))
         if resend_key is None or not resend_key.is_active:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Resend API key is missing or inactive.",
             )
         if resend_key.provider_type != "resend":
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Resend API key must have provider_type 'resend'.",
             )
 
-    if payload.generation_profile_id is not None:
-        generation_profile = db.scalar(
-            select(GenerationProfile).where(GenerationProfile.id == payload.generation_profile_id)
-        )
-        if generation_profile is None or not generation_profile.is_enabled:
+    if provider and provider.provider_type == "openai_chatgpt" and payload.model_name:
+        if payload.model_name not in CHATGPT_SUPPORTED_MODELS:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Generation profile is missing or disabled.",
-            )
-
-    if payload.delivery_profile_id is not None:
-        delivery_profile = db.scalar(
-            select(DeliveryProfile).where(DeliveryProfile.id == payload.delivery_profile_id)
-        )
-        if delivery_profile is None or not delivery_profile.is_enabled:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Delivery profile is missing or disabled.",
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Model '{payload.model_name}' is not supported for ChatGPT subscription. "
+                    f"Supported models: {', '.join(sorted(CHATGPT_SUPPORTED_MODELS))}."
+                ),
             )
 
     _ensure_template_exists(db, payload.template_key)
@@ -949,388 +735,179 @@ def _validate_newsletter_entities(
 def get_newsletter(newsletter_id: int, request: Request, db: DbSession) -> NewsletterDetail:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    _ensure_revision_projection(newsletter)
-    db.flush()
     return serialize_newsletter_detail(newsletter)
 
 
-@newsletters_router.get("/{newsletter_id}/preview", response_model=NewsletterPreviewResponse)
-def preview_newsletter(
-    newsletter_id: int,
-    revision_id: int | None,
-    request: Request,
-    db: DbSession,
-) -> NewsletterPreviewResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    if revision_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "revision_id is required. Use an explicit revision preview endpoint or "
-                "provide a revision_id."
-            ),
-        )
-    revision = get_revision_or_404(db, newsletter, revision_id)
-    rendered = render_newsletter_content(
-        newsletter,
-        subject=revision.subject,
-        preheader=revision.preheader,
-        body=revision.body_text,
-    )
-    return NewsletterPreviewResponse(
-        subject=rendered.subject,
-        preheader=rendered.preheader,
-        html=rendered.html,
-        plain_text=rendered.plain_text,
-        template_key=rendered.template_key,
-    )
+def _summarize_tool_loop_trace(trace_json: str | None) -> str | None:
+    """Produce a one-line summary of the tool-loop trace for the logs page.
 
-
-@newsletters_router.get(
-    "/{newsletter_id}/revisions/{revision_id}/preview",
-    response_model=NewsletterPreviewResponse,
-)
-def preview_newsletter_revision(
-    newsletter_id: int,
-    revision_id: int,
-    request: Request,
-    db: DbSession,
-) -> NewsletterPreviewResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = get_revision_or_404(db, newsletter, revision_id)
-    rendered = render_newsletter_content(
-        newsletter,
-        subject=revision.subject,
-        preheader=revision.preheader,
-        body=revision.body_text,
-    )
-    return NewsletterPreviewResponse(
-        subject=rendered.subject,
-        preheader=rendered.preheader,
-        html=rendered.html,
-        plain_text=rendered.plain_text,
-        template_key=rendered.template_key,
-    )
-
-
-@newsletters_router.post("/{newsletter_id}/test-send", response_model=NewsletterTestSendResponse)
-def test_send_newsletter(
-    newsletter_id: int,
-    payload: NewsletterTestSendRequest,
-    request: Request,
-    db: DbSession,
-) -> NewsletterTestSendResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    if payload.revision_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "revision_id is required. Use an explicit revision test-send endpoint or "
-                "provide a revision_id."
-            ),
-        )
-    revision = get_revision_or_404(db, newsletter, payload.revision_id)
-    rendered = render_newsletter_content(
-        newsletter,
-        subject=revision.subject,
-        preheader=revision.preheader,
-        body=revision.body_text,
-    )
-
-    run = create_newsletter_run(
-        newsletter,
-        revision,
-        run_type="test_send",
-        trigger_mode="test-send",
-        run_status="sending",
-        recipient_emails=[payload.to_email],
-    )
-    db.add(run)
-    db.flush()
-
+    Operators need to know at a glance whether web search actually fired or
+    whether the provider silently ignored our tool payload. Format example:
+      "Tool loop: 2 iterations; finish_reasons=tool_calls,stop; tool_calls=1,0"
+    """
+    if not trace_json:
+        return None
     try:
-        result = send_test_email(
-            settings=get_settings(),
-            rendered=rendered,
-            to_email=payload.to_email,
-            newsletter=newsletter,
-            db_session=db,
-        )
-    except RuntimeError as exc:
-        run.run_status = "failed"
-        run.result_mode = "resend"
-        run.result_message = str(exc)
-        run.completed_at = utc_now()
-        add_run_event(
-            db,
-            run,
-            event_type="delivery",
-            event_status="failed",
-            message=str(exc),
-        )
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-
-    run.run_status = result.status
-    run.result_mode = result.mode
-    run.result_message = result.message
-    run.completed_at = utc_now()
-    add_run_event(
-        db,
-        run,
-        event_type="delivery",
-        event_status=result.status,
-        message=result.message,
-        provider_id=result.provider_id,
+        trace = json.loads(trace_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(trace, list) or not trace:
+        return None
+    finish_reasons = ",".join(
+        str(entry.get("finish_reason") or "?") for entry in trace if isinstance(entry, dict)
     )
-    db.commit()
-
-    return NewsletterTestSendResponse(
-        status=result.status,
-        mode=result.mode,
-        message=result.message,
-        provider_id=result.provider_id,
-        to_email=result.to_email,
+    tool_call_counts = ",".join(
+        str(entry.get("tool_calls_count") or 0) for entry in trace if isinstance(entry, dict)
+    )
+    return (
+        f"Tool loop: {len(trace)} iteration(s); "
+        f"finish_reasons={finish_reasons}; tool_calls={tool_call_counts}"
     )
 
 
-@newsletters_router.post(
-    "/{newsletter_id}/revisions/{revision_id}/test-send",
-    response_model=NewsletterTestSendResponse,
-)
-def test_send_newsletter_revision(
-    newsletter_id: int,
-    revision_id: int,
-    payload: NewsletterTestSendRequest,
-    request: Request,
-    db: DbSession,
-) -> NewsletterTestSendResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = get_revision_or_404(db, newsletter, revision_id)
-    rendered = render_newsletter_content(
-        newsletter,
-        subject=revision.subject,
-        preheader=revision.preheader,
-        body=revision.body_text,
-    )
-    run = create_newsletter_run(
-        newsletter,
-        revision,
-        run_type="test_send",
-        trigger_mode="test-send",
-        run_status="sending",
-        recipient_emails=[payload.to_email],
-    )
-    db.add(run)
-    db.flush()
+def _generation_meta_from_generated(newsletter: Newsletter, generated) -> GenerationMeta:
+    """Build the render-time footer facts from what the backend observed on the
+    generation call — never trust the model to self-report identity or cost."""
+    input_tokens: int | None = None
     try:
-        result = send_test_email(
-            settings=get_settings(),
-            rendered=rendered,
-            to_email=payload.to_email,
-            newsletter=newsletter,
-            db_session=db,
-        )
-    except RuntimeError as exc:
-        run.run_status = "failed"
-        run.result_mode = "resend"
-        run.result_message = str(exc)
-        run.completed_at = utc_now()
-        add_run_event(db, run, event_type="delivery", event_status="failed", message=str(exc))
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        usage = json.loads(getattr(generated, "token_usage_json", None) or "{}")
+        raw = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        if isinstance(raw, int):
+            input_tokens = raw
+        elif isinstance(raw, str) and raw.isdigit():
+            input_tokens = int(raw)
+    except (json.JSONDecodeError, ValueError):
+        input_tokens = None
 
-    run.run_status = result.status
-    run.result_mode = result.mode
-    run.result_message = result.message
-    run.completed_at = utc_now()
-    add_run_event(
-        db,
-        run,
-        event_type="delivery",
-        event_status=result.status,
-        message=result.message,
-        provider_id=result.provider_id,
-    )
-    db.commit()
-    return NewsletterTestSendResponse(
-        status=result.status,
-        mode=result.mode,
-        message=result.message,
-        provider_id=result.provider_id,
-        to_email=result.to_email,
+    return GenerationMeta(
+        provider=(newsletter.provider_name or None),
+        model=(newsletter.model_name or None),
+        input_tokens=input_tokens,
     )
 
 
-@newsletters_router.post(
-    "/{newsletter_id}/generate-draft",
-    response_model=NewsletterGenerationResponse,
-)
-def generate_draft(
-    newsletter_id: int,
-    request: Request,
+def _create_generation_run(
     db: DbSession,
-) -> NewsletterGenerationResponse:
-    user = require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    generated = generate_newsletter_draft(newsletter, db_session=db)
-    source_bundle_snapshot_json = serialize_source_bundle(build_source_bundle(newsletter))
-    revision = _create_revision(
-        newsletter,
-        state="candidate",
-        origin="llm" if generated.status in {"generated", "fallback"} else "manual",
-        created_by_email=user.email,
-        subject=generated.subject,
-        preheader=generated.preheader,
-        body_text=generated.body_text,
-        prompt_snapshot=newsletter.prompt,
-        source_bundle_snapshot_json=source_bundle_snapshot_json,
-        highlights_json=generated.highlights_json,
-        source_references_json=generated.source_references_json,
-        provider_snapshot_json=generated.provider_snapshot_json,
-        token_usage_json=generated.token_usage_json,
-        raw_response_hash=generated.raw_response_hash,
-    )
-    newsletter.draft_head_revision = revision
-    db.add(revision)
-    db.flush()
-    run = create_newsletter_run(
-        newsletter,
-        revision,
+    newsletter: Newsletter,
+    *,
+    trigger_mode: str,
+) -> NewsletterRun:
+    active_recipient_emails = [recipient.email for recipient in get_active_recipients(newsletter)]
+    run = NewsletterRun(
+        newsletter_id=newsletter.id,
         run_type="generation",
-        trigger_mode="manual-generate",
-        run_status=generated.status,
-        result_mode=generated.mode,
-        result_message=generated.message,
+        trigger_mode=trigger_mode,
+        run_status="generating",
+        provider_name=newsletter.provider_name,
+        model_name=newsletter.model_name,
+        template_key=newsletter.template_key,
+        recipient_count=len(active_recipient_emails),
+        snapshot_subject=newsletter.subject,
+        snapshot_preheader=newsletter.preheader,
+        snapshot_body_text=newsletter.body_text,
+        snapshot_recipient_emails=json.dumps(active_recipient_emails),
+        snapshot_prompt=newsletter.prompt,
+        snapshot_newsletter_name=newsletter.name,
+        snapshot_newsletter_slug=newsletter.slug,
+        snapshot_delivery_topic=newsletter.delivery_topic,
+        snapshot_status_at_run=newsletter.status,
+        delivery_outcomes="[]",
+        attempt_key=f"generation-{newsletter.id}-{uuid.uuid4()}",
+        started_at=utc_now(),
     )
-    db.add(newsletter)
     db.add(run)
-    db.flush()
-    revision.generation_run_id = run.id
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def _mark_generation_failed(
+    db: DbSession,
+    run: NewsletterRun,
+    *,
+    message: str,
+    tool_loop_summary: str | None = None,
+) -> None:
+    full_message = message
+    if tool_loop_summary:
+        full_message = f"{message} [{tool_loop_summary}]"
+    run.run_status = "failed"
+    run.failure_reason = full_message
+    run.result_message = f"AI generation failed: {full_message}"
+    run.completed_at = utc_now()
+    db.add(run)
     add_run_event(
         db,
         run,
         event_type="generation",
-        event_status=generated.status,
-        message=generated.message,
+        event_status="failed",
+        message=full_message,
     )
-
-    if generated.status in {"ok", "fallback", "generated"} and newsletter.api_key_id:
-        api_key_obj = db.scalar(select(ApiKey).where(ApiKey.id == newsletter.api_key_id))
-        if api_key_obj:
-            api_key_obj.last_used_at = utc_now()
-
     db.commit()
-    db.refresh(newsletter)
-    db.refresh(run)
-    return NewsletterGenerationResponse(
-        status=generated.status,
-        mode=generated.mode,
-        message=generated.message,
-        revision_id=revision.id,
-        newsletter=serialize_newsletter_detail(newsletter),
-        run=NewsletterRunSummary.model_validate(run),
-    )
 
 
-@newsletters_router.get(
-    "/{newsletter_id}/revisions",
-    response_model=DraftRevisionListResponse,
-)
-def list_newsletter_revisions(
+@newsletters_router.post("/{newsletter_id}/run", response_model=NewsletterSendResponse)
+def run_newsletter(
     newsletter_id: int,
     request: Request,
     db: DbSession,
-) -> DraftRevisionListResponse:
+) -> NewsletterSendResponse:
     require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
-    _ensure_revision_projection(newsletter)
-    db.flush()
-    return DraftRevisionListResponse(
-        items=[
-            DraftRevisionSummary.model_validate(revision)
-            for revision in _ordered_revisions(newsletter)
-        ]
-    )
 
+    generation_run = _create_generation_run(db, newsletter, trigger_mode="manual-run")
 
-@newsletters_router.post(
-    "/{newsletter_id}/revisions/{revision_id}/approve",
-    response_model=DraftRevisionApproveResponse,
-)
-def approve_newsletter_revision(
-    newsletter_id: int,
-    revision_id: int,
-    request: Request,
-    db: DbSession,
-) -> DraftRevisionApproveResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = db.scalar(select(DraftRevision).where(DraftRevision.id == revision_id))
-    if revision is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found.")
+    try:
+        generated = generate_newsletter_content(newsletter, db_session=db)
+    except Exception as exc:
+        _mark_generation_failed(db, generation_run, message=f"{type(exc).__name__}: {exc}")
+        raise
 
-    approved = _approve_revision(newsletter, revision)
-    db.add(newsletter)
-    db.add(approved)
-    db.commit()
-    db.refresh(newsletter)
-    db.refresh(approved)
-    return DraftRevisionApproveResponse(
-        revision=DraftRevisionSummary.model_validate(approved),
-        newsletter=serialize_newsletter_detail(newsletter),
-    )
-
-
-@newsletters_router.get(
-    "/{newsletter_id}/revisions/{revision_id}",
-    response_model=DraftRevisionDetailResponse,
-)
-def get_newsletter_revision(
-    newsletter_id: int,
-    revision_id: int,
-    request: Request,
-    db: DbSession,
-) -> DraftRevisionDetailResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = get_revision_or_404(db, newsletter, revision_id)
-    return DraftRevisionDetailResponse(revision=DraftRevisionSummary.model_validate(revision))
-
-
-@newsletters_router.patch(
-    "/{newsletter_id}/revisions/{revision_id}",
-    response_model=DraftRevisionDetailResponse,
-)
-def update_newsletter_revision(
-    newsletter_id: int,
-    revision_id: int,
-    payload: DraftRevisionUpdateRequest,
-    request: Request,
-    db: DbSession,
-) -> DraftRevisionDetailResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = get_revision_or_404(db, newsletter, revision_id)
-    if revision.state == "approved":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Approved revisions are immutable. Create or approve a new candidate instead.",
+    if generated.status == "error":
+        _mark_generation_failed(
+            db,
+            generation_run,
+            message=generated.message,
+            tool_loop_summary=_summarize_tool_loop_trace(
+                getattr(generated, "tool_loop_trace_json", None)
+            ),
         )
-    revision.subject = payload.subject.strip()
-    revision.preheader = payload.preheader.strip() if payload.preheader else None
-    revision.body_text = payload.body_text.strip()
-    db.add(revision)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Generation failed: {generated.message}",
+        )
+
+    tool_loop_summary = _summarize_tool_loop_trace(getattr(generated, "tool_loop_trace_json", None))
+    generation_message = "AI generation succeeded."
+    if tool_loop_summary:
+        generation_message = f"{generation_message} {tool_loop_summary}"
+
+    generation_run.run_status = "generated"
+    generation_run.result_message = generation_message
+    generation_run.completed_at = utc_now()
+    db.add(generation_run)
+    add_run_event(
+        db,
+        generation_run,
+        event_type="generation",
+        event_status="generated",
+        message=generation_message,
+    )
+
+    newsletter.subject = generated.subject
+    newsletter.preheader = generated.preheader
+    newsletter.body_text = generated.body_text
+    db.add(newsletter)
     db.commit()
-    db.refresh(revision)
-    return DraftRevisionDetailResponse(revision=DraftRevisionSummary.model_validate(revision))
+
+    response, _run = execute_newsletter_send(
+        db,
+        newsletter,
+        trigger_mode="manual-run",
+        fire_scope=str(uuid.uuid4()),
+        generation_meta=_generation_meta_from_generated(newsletter, generated),
+    )
+    return response
 
 
 @newsletters_router.post("/{newsletter_id}/schedule/resume", response_model=NewsletterDetail)
@@ -1344,7 +921,7 @@ def resume_newsletter_schedule(
 
     if not (newsletter.schedule_cron or "").strip():
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Cannot resume schedule without a cron expression.",
         )
 
@@ -1358,7 +935,7 @@ def resume_newsletter_schedule(
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid schedule configuration: {exc}",
         ) from exc
 
@@ -1389,68 +966,6 @@ def pause_newsletter_schedule(
     return serialize_newsletter_detail(newsletter)
 
 
-@newsletters_router.post("/{newsletter_id}/send", response_model=NewsletterSendResponse)
-def send_newsletter(
-    newsletter_id: int,
-    request: Request,
-    db: DbSession,
-    payload: NewsletterSendRequest | None = None,
-) -> NewsletterSendResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    if payload is None or payload.revision_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "revision_id is required. Use an explicit revision send endpoint or provide "
-                "a revision_id."
-            ),
-        )
-    revision = get_revision_or_404(db, newsletter, payload.revision_id)
-    if revision.id != (newsletter.approved_revision_id or 0):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only the approved revision can be sent. Approve the revision first.",
-        )
-    response, _run = execute_newsletter_send(
-        db,
-        newsletter,
-        revision=revision,
-        trigger_mode="manual-send",
-        idempotency_key=payload.idempotency_key,
-    )
-    return response
-
-
-@newsletters_router.post(
-    "/{newsletter_id}/revisions/{revision_id}/send",
-    response_model=NewsletterSendResponse,
-)
-def send_newsletter_revision(
-    newsletter_id: int,
-    revision_id: int,
-    request: Request,
-    db: DbSession,
-    payload: NewsletterSendRequest | None = None,
-) -> NewsletterSendResponse:
-    require_authenticated_user(request, db)
-    newsletter = get_newsletter_or_404(db, newsletter_id)
-    revision = get_revision_or_404(db, newsletter, revision_id)
-    if revision.id != (newsletter.approved_revision_id or 0):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only the approved revision can be sent. Approve the revision first.",
-        )
-    response, _run = execute_newsletter_send(
-        db,
-        newsletter,
-        revision=revision,
-        trigger_mode="manual-send",
-        idempotency_key=payload.idempotency_key if payload else None,
-    )
-    return response
-
-
 @newsletters_router.put("/{newsletter_id}", response_model=NewsletterDetail)
 def update_newsletter(
     newsletter_id: int,
@@ -1476,8 +991,7 @@ def update_newsletter(
     newsletter.template_key = payload.template_key
     newsletter.api_key_id = payload.api_key_id
     newsletter.resend_api_key_id = payload.resend_api_key_id
-    newsletter.generation_profile_id = payload.generation_profile_id
-    newsletter.delivery_profile_id = payload.delivery_profile_id
+    newsletter.from_email = payload.from_email
     newsletter.audience_name = payload.audience_name
     newsletter.delivery_topic = payload.delivery_topic
     newsletter.timezone = payload.timezone
@@ -1493,7 +1007,7 @@ def update_newsletter(
     except ValueError as exc:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid schedule configuration: {exc}",
         ) from exc
 
@@ -1519,7 +1033,6 @@ def pause_newsletter(newsletter_id: int, request: Request, db: DbSession) -> New
     user = require_authenticated_user(request, db)
     newsletter = get_newsletter_or_404(db, newsletter_id)
     newsletter.status = "paused"
-    newsletter.schedule_enabled = False
     db.add(newsletter)
     create_audit_event(
         db,

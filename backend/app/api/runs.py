@@ -7,9 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import String, cast, func, or_, select
 
 from app.auth import require_authenticated_user
-from app.config import get_settings
 from app.deps import DbSession
-from app.email_delivery import retrieve_email_status
 from app.models import NewsletterRun, NewsletterRunEvent
 from app.schemas import (
     NewsletterRunEventSummary,
@@ -20,7 +18,6 @@ from app.schemas import (
     RecipientSendOutcomeResponse,
     RunDetailResponse,
     RunListResponse,
-    RunReconciliationResponse,
 )
 
 runs_router = APIRouter(prefix="/runs", tags=["runs"])
@@ -80,7 +77,6 @@ def list_runs(
     request: Request,
     db: DbSession,
     newsletter_id: int | None = None,
-    revision_id: int | None = None,
     run_type: str | None = None,
     run_status: str | None = None,
     trigger_mode: str | None = None,
@@ -91,8 +87,6 @@ def list_runs(
     statement = select(NewsletterRun).order_by(NewsletterRun.created_at.desc())
     if newsletter_id is not None:
         statement = statement.where(NewsletterRun.newsletter_id == newsletter_id)
-    if revision_id is not None:
-        statement = statement.where(NewsletterRun.revision_id == revision_id)
     if run_type is not None:
         statement = statement.where(NewsletterRun.run_type == run_type)
     if run_status is not None:
@@ -263,9 +257,9 @@ def get_run_detail(run_id: int, request: Request, db: DbSession) -> RunDetailRes
         slug=run.snapshot_newsletter_slug or "",
         description=None,
         prompt=run.snapshot_prompt or "",
-        draft_subject=run.rendered_subject or run.snapshot_subject,
-        draft_preheader=run.rendered_preheader or run.snapshot_preheader,
-        draft_body_text=run.rendered_plain_text or run.snapshot_body_text,
+        subject=run.rendered_subject or run.snapshot_subject,
+        preheader=run.rendered_preheader or run.snapshot_preheader,
+        body_text=run.rendered_plain_text or run.snapshot_body_text,
         provider_name=run.provider_name,
         model_name=run.model_name,
         template_key=run.template_key,
@@ -288,52 +282,4 @@ def get_run_detail(run_id: int, request: Request, db: DbSession) -> RunDetailRes
             for outcome in json.loads(run.delivery_outcomes or "[]")
         ],
         events=[NewsletterRunEventSummary.model_validate(event) for event in run.events],
-    )
-
-
-@runs_router.post("/{run_id}/reconcile", response_model=RunReconciliationResponse)
-def reconcile_run_delivery(
-    run_id: int,
-    request: Request,
-    db: DbSession,
-) -> RunReconciliationResponse:
-    require_authenticated_user(request, db)
-    run = get_run_or_404(db, run_id)
-    stored_outcomes = json.loads(run.delivery_outcomes or "[]")
-    created_events: list[NewsletterRunEvent] = []
-
-    existing_events = {
-        (e.provider_id, e.event_status)
-        for e in run.events
-        if e.event_type == "reconciliation" and e.provider_id
-    }
-
-    for outcome in stored_outcomes:
-        reconciliation = retrieve_email_status(
-            settings=get_settings(),
-            provider_id=outcome.get("provider_id"),
-            current_mode=run.result_mode,
-            newsletter=run.newsletter,
-            db_session=db,
-        )
-        event_key = (reconciliation.provider_id, reconciliation.event_status)
-        if reconciliation.provider_id and event_key in existing_events:
-            continue
-
-        event = NewsletterRunEvent(
-            run_id=run.id,
-            event_type="reconciliation",
-            event_status=reconciliation.event_status,
-            message=reconciliation.message,
-            provider_id=reconciliation.provider_id,
-        )
-        db.add(event)
-        created_events.append(event)
-
-    db.commit()
-    for event in created_events:
-        db.refresh(event)
-
-    return RunReconciliationResponse(
-        events=[NewsletterRunEventSummary.model_validate(event) for event in created_events]
     )

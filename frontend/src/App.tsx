@@ -5,7 +5,6 @@ import { RunDashboardPage } from "./features/dashboard/RunDashboardPage";
 import { LoginPage } from "./features/auth/LoginPage";
 import { NewsletterEditorPage } from "./features/newsletters/NewsletterEditorPage";
 import { NewsletterListPage } from "./features/newsletters/NewsletterListPage";
-import { NewsletterPreviewPage } from "./features/newsletters/NewsletterPreviewPage";
 import { toNewsletterInput, type NewsletterSummary, type NewsletterDetail, type NewsletterInput } from "./features/newsletters/newsletter-types";
 import { AccountPage } from "./features/settings/AccountPage";
 import { EmailTemplatesPage, EmailTemplateEditor } from "./features/templates/EmailTemplatesPage";
@@ -34,7 +33,6 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
   const [editingNewsletter, setEditingNewsletter] = useState<NewsletterDetail | null>(null);
-  const [previewingNewsletter, setPreviewingNewsletter] = useState<NewsletterSummary | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<EmailTemplateDetail | null>(null);
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
@@ -149,7 +147,6 @@ export default function App() {
 
   function resetAllEditors() {
     setEditingNewsletter(null);
-    setPreviewingNewsletter(null);
     setShowEditor(false);
     setEditingTemplate(null);
     setShowTemplateEditor(false);
@@ -167,33 +164,10 @@ export default function App() {
     });
   }
 
-  async function handleChangeOperationModes(modes: {
-    ai_generation_mode?: "live" | "simulated";
-    email_delivery_mode?: "live" | "simulated";
-  }) {
-    await runAuthAction(async () => {
-      const updatedSettings = await api.updateSystemSettings(modes);
-      setSession((current) =>
-        asLoadedSession({
-          ...current,
-          ai_generation_mode: updatedSettings.ai_generation_mode,
-          email_delivery_mode: updatedSettings.email_delivery_mode,
-        }),
-      );
-
-      const modesChanged = [
-        modes.ai_generation_mode ? `AI generation: ${updatedSettings.ai_generation_mode}` : null,
-        modes.email_delivery_mode ? `Email delivery: ${updatedSettings.email_delivery_mode}` : null,
-      ].filter(Boolean);
-
-      setNotice(`System settings updated (${modesChanged.join(", ")}).`);
-    });
-  }
-
   const navItems = useMemo(
     () => [
       { id: "dashboard" as const, label: "Dashboard" },
-      { id: "newsletters" as const, label: "Jobs" },
+      { id: "newsletters" as const, label: "Newsletters" },
       { id: "templates" as const, label: "Templates" },
       { id: "providers" as const, label: "Providers" },
       { id: "apikeys" as const, label: "API Keys" },
@@ -210,9 +184,8 @@ export default function App() {
         : await api.createNewsletter(payload);
       void savedNewsletter;
       await loadNewsletters();
-      setNotice(`Job ${newsletterId ? "updated" : "created"} successfully.`);
+      setNotice(`Newsletter ${newsletterId ? "updated" : "created"} successfully.`);
       setEditingNewsletter(null);
-      setPreviewingNewsletter(null);
       setShowEditor(false);
       setActiveView("newsletters");
     });
@@ -274,12 +247,14 @@ export default function App() {
     });
   }
 
-  async function handleGenerateNewsletter(newsletterId: number) {
+  async function handleRunNewsletter(newsletterId: number) {
     await runAuthAction(async () => {
-      const result = await api.generateNewsletter(newsletterId);
+      const result = await api.runNewsletter(newsletterId);
       await loadNewsletters();
-      setEditingNewsletter(result.newsletter);
       setNotice(result.message);
+      setEditingNewsletter(null);
+      setShowEditor(false);
+      setActiveView("newsletters");
     });
   }
 
@@ -379,7 +354,7 @@ export default function App() {
       await api.apiKeys.update(apiKeyId, {
         name: apiKey.name,
         provider_type: apiKey.provider_type,
-        key_value: null as unknown as string,
+        key_value: null,
         from_email: apiKey.from_email,
         is_active: active
       });
@@ -444,10 +419,7 @@ export default function App() {
             currentUser={currentUser}
             error={error}
             notice={notice}
-            aiGenerationMode={session.ai_generation_mode}
-            emailDeliveryMode={session.email_delivery_mode}
             onChangePassword={handleChangePassword}
-            onChangeOperationModes={handleChangeOperationModes}
             onLogout={handleLogout}
           />
         );
@@ -563,6 +535,7 @@ export default function App() {
             }}
             onDelete={handleDeleteApiKey}
             onToggleActive={handleToggleApiKey}
+            onRefresh={() => void loadApiKeys()}
           />
         );
 
@@ -570,19 +543,6 @@ export default function App() {
         return <AuditLogsPage />;
 
       case "newsletters":
-        if (previewingNewsletter) {
-          return (
-            <NewsletterPreviewPage
-              newsletter={previewingNewsletter}
-              onBack={() => setPreviewingNewsletter(null)}
-              onOpenRuns={(runId) => {
-                setSelectedRunId(runId);
-                setPreviewingNewsletter(null);
-                setActiveView("dashboard");
-              }}
-            />
-          );
-        }
         if (showEditor) {
           return (
             <NewsletterEditorPage
@@ -592,7 +552,7 @@ export default function App() {
                 setEditingNewsletter(null);
                 setShowEditor(false);
               }}
-              onGenerate={editingNewsletter ? () => handleGenerateNewsletter(editingNewsletter.id) : undefined}
+              onRun={handleRunNewsletter}
               onSave={handleSaveNewsletter}
             />
           );
@@ -601,7 +561,9 @@ export default function App() {
           <NewsletterListPage
             items={newsletters}
             loading={newslettersLoading}
+            busy={busy}
             error={error}
+            notice={notice}
             onDismissError={() => setError(null)}
             onArchive={handleArchiveNewsletter}
             onCreate={() => {
@@ -618,10 +580,7 @@ export default function App() {
                 setError(err instanceof Error ? err.message : "Failed to load newsletter details.");
               }
             }}
-            onPreview={(newsletter) => {
-              setPreviewingNewsletter(newsletter);
-              setShowEditor(false);
-            }}
+            onRun={handleRunNewsletter}
             onPause={handlePauseNewsletter}
             onResume={handleResumeNewsletter}
             onSchedulePause={handleSchedulePause}

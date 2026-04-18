@@ -5,6 +5,8 @@ from importlib import reload
 import pytest
 from fastapi.testclient import TestClient
 
+CHATGPT_SUBSCRIPTION_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"]
+
 
 def create_test_api_key(client: TestClient, provider_type: str = "openai") -> int:
     response = client.post(
@@ -103,6 +105,7 @@ def test_provider_presets_endpoint_returns_presets(client: TestClient):
     assert "anthropic" in keys
     assert "zai" in keys
     assert "kimi" in keys
+    assert "openai_chatgpt" in keys
     for preset in presets:
         assert "key" in preset
         assert "name" in preset
@@ -111,6 +114,11 @@ def test_provider_presets_endpoint_returns_presets(client: TestClient):
 
     kimi_preset = next(p for p in presets if p["key"] == "kimi")
     assert kimi_preset["base_url"] == "https://api.kimi.com/coding/v1"
+
+    openai_chatgpt_preset = next(p for p in presets if p["key"] == "openai_chatgpt")
+    assert openai_chatgpt_preset["auth_mode"] == "oauth"
+    assert openai_chatgpt_preset["supports_discovery"] is False
+    assert openai_chatgpt_preset["recommended_models"] == CHATGPT_SUBSCRIPTION_MODELS
 
 
 def test_provider_toggle_preserves_configuration(client: TestClient):
@@ -161,9 +169,9 @@ def test_template_deletion_blocked_when_referenced_by_newsletter(client: TestCli
             "name": "Template Guard Test",
             "description": "Uses custom template",
             "prompt": "Test",
-            "draft_subject": "Subject",
-            "draft_preheader": "Pre",
-            "draft_body_text": "Body",
+            "subject": "Subject",
+            "preheader": "Pre",
+            "body_text": "Body",
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
             "template_key": "custom-test",
@@ -171,7 +179,7 @@ def test_template_deletion_blocked_when_referenced_by_newsletter(client: TestCli
             "delivery_topic": "test",
             "timezone": "UTC",
             "schedule_enabled": False,
-            "status": "draft",
+            "status": "active",
             "recipient_import_text": "test@example.com",
         },
     )
@@ -190,9 +198,9 @@ def test_newsletter_validation_rejects_unknown_provider_type(client: TestClient)
             "name": "Bad Provider",
             "description": "Uses fake provider",
             "prompt": "Test",
-            "draft_subject": "Subject",
-            "draft_preheader": "Pre",
-            "draft_body_text": "Body",
+            "subject": "Subject",
+            "preheader": "Pre",
+            "body_text": "Body",
             "provider_name": "totally-fake-provider-xyz",
             "model_name": "fake-model",
             "template_key": "signal",
@@ -200,7 +208,7 @@ def test_newsletter_validation_rejects_unknown_provider_type(client: TestClient)
             "delivery_topic": "test",
             "timezone": "UTC",
             "schedule_enabled": False,
-            "status": "draft",
+            "status": "active",
             "recipient_import_text": "test@example.com",
         },
     )
@@ -229,9 +237,9 @@ def test_newsletter_validation_rejects_disabled_provider(client: TestClient):
             "name": "Disabled Provider Test",
             "description": "Should be rejected",
             "prompt": "Test",
-            "draft_subject": "Subject",
-            "draft_preheader": "Pre",
-            "draft_body_text": "Body",
+            "subject": "Subject",
+            "preheader": "Pre",
+            "body_text": "Body",
             "provider_id": provider_id,
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
@@ -240,7 +248,7 @@ def test_newsletter_validation_rejects_disabled_provider(client: TestClient):
             "delivery_topic": "test",
             "timezone": "UTC",
             "schedule_enabled": False,
-            "status": "draft",
+            "status": "active",
             "recipient_import_text": "test@example.com",
         },
     )
@@ -259,9 +267,9 @@ def test_newsletter_validation_accepts_any_model_name(client: TestClient):
             "name": "Custom Model Test",
             "description": "Should be accepted",
             "prompt": "Test",
-            "draft_subject": "Subject",
-            "draft_preheader": "Pre",
-            "draft_body_text": "Body",
+            "subject": "Subject",
+            "preheader": "Pre",
+            "body_text": "Body",
             "provider_id": provider_id,
             "provider_name": "openai",
             "model_name": "nonexistent-model-xyz-999",
@@ -270,7 +278,7 @@ def test_newsletter_validation_accepts_any_model_name(client: TestClient):
             "delivery_topic": "test",
             "timezone": "UTC",
             "schedule_enabled": False,
-            "status": "draft",
+            "status": "active",
             "recipient_import_text": "test@example.com",
         },
     )
@@ -301,9 +309,9 @@ def test_newsletter_validation_rejects_mismatched_api_key_type(client: TestClien
             "name": "Key Mismatch Test",
             "description": "Should be rejected",
             "prompt": "Test",
-            "draft_subject": "Subject",
-            "draft_preheader": "Pre",
-            "draft_body_text": "Body",
+            "subject": "Subject",
+            "preheader": "Pre",
+            "body_text": "Body",
             "provider_id": provider_id,
             "provider_name": "openai",
             "model_name": "gpt-4o-mini",
@@ -313,7 +321,7 @@ def test_newsletter_validation_rejects_mismatched_api_key_type(client: TestClien
             "delivery_topic": "test",
             "timezone": "UTC",
             "schedule_enabled": False,
-            "status": "draft",
+            "status": "active",
             "recipient_import_text": "test@example.com",
         },
     )

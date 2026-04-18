@@ -13,6 +13,7 @@ from app.ai_generation import (
 from app.auth import require_authenticated_user
 from app.deps import DbSession
 from app.models import ApiKey, AuditEvent, Provider
+from app.oauth.openai_chatgpt import CHATGPT_SUPPORTED_MODELS
 from app.schemas import (
     ProviderCreateRequest,
     ProviderDetail,
@@ -26,6 +27,20 @@ providers_router = APIRouter(prefix="/providers", tags=["providers"])
 
 PROVIDER_MODEL_CATALOG: dict[str, list[str]] = {}
 
+OPENAI_CHATGPT_RECOMMENDED_MODELS = list(CHATGPT_SUPPORTED_MODELS)
+
+
+def _validate_chatgpt_model(model_name: str | None) -> None:
+    if model_name and model_name not in CHATGPT_SUPPORTED_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Model '{model_name}' is not supported for ChatGPT subscription. "
+                f"Supported models: {', '.join(sorted(CHATGPT_SUPPORTED_MODELS))}."
+            ),
+        )
+
+
 RECOMMENDED_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o-mini", "gpt-4o", "o4-mini"],
     "anthropic": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"],
@@ -38,6 +53,7 @@ RECOMMENDED_MODELS: dict[str, list[str]] = {
     ],
     "zai": ["glm-5.1", "glm-5-turbo"],
     "kimi": ["kimi-k2.5", "kimi-k2-turbo-preview"],
+    "openai_chatgpt": OPENAI_CHATGPT_RECOMMENDED_MODELS,
 }
 
 PROVIDER_PRESETS = [
@@ -93,6 +109,16 @@ PROVIDER_PRESETS = [
         "recommended_models": ["kimi-k2.5", "kimi-k2-turbo-preview"],
         "supports_discovery": True,
     },
+    {
+        "key": "openai_chatgpt",
+        "name": "OpenAI ChatGPT (Subscription)",
+        "adapter": "openai_chatgpt",
+        "base_url": "https://chatgpt.com/backend-api",
+        "recommended_models": OPENAI_CHATGPT_RECOMMENDED_MODELS,
+        "supports_discovery": False,
+        # Signals to the frontend that this provider uses OAuth rather than an API key.
+        "auth_mode": "oauth",
+    },
 ]
 
 
@@ -141,9 +167,67 @@ def _safe_decrypt(key_value: str) -> str | None:
         return None
 
 
+def _uses_oauth_connection(provider_type: str) -> bool:
+    return provider_type == "openai_chatgpt"
+
+
+def _validate_chatgpt_oauth_token(api_key: ApiKey, db: DbSession) -> bool:
+    """Check that the stored OAuth token is usable.
+
+    If the access token is expired but a refresh token exists, attempt a
+    refresh — matching the runtime behavior that auto-refreshes before
+    generation.  The refreshed tokens are persisted back to the ApiKey row.
+    Only report failure if the token is truly unrecoverable.
+    """
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    from app.crypto import decrypt_secret, encrypt_secret
+    from app.oauth import openai_chatgpt as _oauth
+
+    try:
+        access_token = decrypt_secret(api_key.oauth_access_token)
+    except Exception:
+        return False
+    if not access_token:
+        return False
+
+    expires_at = api_key.oauth_expires_at
+    is_expired = False
+    if expires_at is not None:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        is_expired = _dt.now(UTC) >= expires_at
+
+    if is_expired:
+        try:
+            raw_refresh = decrypt_secret(api_key.oauth_refresh_token)
+            if raw_refresh:
+                bundle = _oauth.refresh(raw_refresh)
+                api_key.oauth_access_token = encrypt_secret(bundle.access_token)
+                api_key.oauth_refresh_token = encrypt_secret(bundle.refresh_token)
+                api_key.oauth_expires_at = bundle.expires_at
+                db.commit()
+                return True
+        except Exception:
+            pass
+        return False
+
+    return True
+
+
+def _missing_provider_credential_detail(provider_type: str) -> str:
+    if _uses_oauth_connection(provider_type):
+        return (
+            f"No active OAuth connection found for provider type '{provider_type}'. "
+            "Connect a ChatGPT account first."
+        )
+    return f"No active API key found for provider type '{provider_type}'. Create an API key first."
+
+
 def get_provider_models(provider: Provider, *, db: DbSession | None = None) -> list[str]:
     api_key: str | None = None
-    if db is not None:
+    if db is not None and not _uses_oauth_connection(provider.provider_type):
         active_key = _get_active_api_key(db, provider.provider_type)
         if active_key:
             api_key = _safe_decrypt(active_key.key_value)
@@ -176,7 +260,7 @@ def list_providers(request: Request, db: DbSession) -> list[ProviderSummary]:
 
 
 def _get_active_api_key(db: DbSession, provider_type: str) -> ApiKey | None:
-    return db.scalar(
+    query = (
         select(ApiKey)
         .where(
             ApiKey.provider_type == provider_type,
@@ -184,6 +268,10 @@ def _get_active_api_key(db: DbSession, provider_type: str) -> ApiKey | None:
         )
         .order_by(ApiKey.updated_at.desc(), ApiKey.id.desc())
     )
+    # For the OAuth provider, only OAuth rows are valid credentials.
+    if provider_type == "openai_chatgpt":
+        query = query.where(ApiKey.auth_type == "oauth")
+    return db.scalar(query)
 
 
 @providers_router.post("", response_model=ProviderDetail, status_code=status.HTTP_201_CREATED)
@@ -198,11 +286,11 @@ def create_provider(
     if active_key is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"No active API key found for provider type "
-                f"'{payload.provider_type}'. Create an API key first."
-            ),
+            detail=_missing_provider_credential_detail(payload.provider_type),
         )
+
+    if payload.provider_type == "openai_chatgpt":
+        _validate_chatgpt_model(payload.default_model)
 
     provider = Provider(
         name=payload.name,
@@ -241,7 +329,7 @@ def list_preset_models(
     require_authenticated_user(request, db)
     active_key = _get_active_api_key(db, provider_type)
     api_key: str | None = None
-    if active_key:
+    if active_key and not _uses_oauth_connection(provider_type):
         api_key = _safe_decrypt(active_key.key_value)
     models = discover_models_for_provider(provider_type, api_key=api_key)
     recommended = RECOMMENDED_MODELS.get(provider_type, [])
@@ -259,7 +347,7 @@ def list_preset_models(
     verified_model: str | None = None
     verification_message: str | None = None
     model_to_verify = recommended[0] if recommended else None
-    if model_to_verify:
+    if model_to_verify and not _uses_oauth_connection(provider_type):
         active_key = _get_active_api_key(db, provider_type)
         if active_key:
             api_key = _safe_decrypt(active_key.key_value)
@@ -300,10 +388,12 @@ def update_provider(
     if active_key is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"No active API key found for provider type "
-                f"'{effective_provider_type}'. Create an API key first."
-            ),
+            detail=_missing_provider_credential_detail(effective_provider_type),
+        )
+
+    if effective_provider_type == "openai_chatgpt":
+        _validate_chatgpt_model(
+            payload.default_model if payload.default_model is not None else provider.default_model
         )
 
     provider.name = payload.name or provider.name
@@ -374,7 +464,7 @@ def list_provider_models(
     model_to_verify = (
         provider.default_model or (RECOMMENDED_MODELS.get(provider.provider_type, [None])[0])
     )
-    if model_to_verify:
+    if model_to_verify and not _uses_oauth_connection(provider.provider_type):
         active_key = _get_active_api_key(db, provider.provider_type)
         if active_key:
             api_key = _safe_decrypt(active_key.key_value)
@@ -418,10 +508,40 @@ def test_provider(provider_id: int, request: Request, db: DbSession) -> Provider
     if not has_active_api_key:
         return ProviderTestResponse(
             status="warning",
-            message="Provider is enabled but has no active API key configured.",
+            message=(
+                "Provider is enabled but has no active OAuth connection configured."
+                if provider.provider_type == "openai_chatgpt"
+                else "Provider is enabled but has no active API key configured."
+            ),
             provider_type=provider.provider_type,
             default_model=provider.default_model,
             has_active_api_key=False,
+        )
+
+    # openai_chatgpt uses OAuth — validate token health instead of a LiteLLM ping.
+    if provider.provider_type == "openai_chatgpt":
+        oauth_active = (
+            active_key is not None and getattr(active_key, "auth_type", "api_key") == "oauth"
+        )
+        if not oauth_active:
+            return ProviderTestResponse(
+                status="warning",
+                message="ChatGPT OAuth connection required.",
+                provider_type=provider.provider_type,
+                default_model=provider.default_model,
+                has_active_api_key=False,
+            )
+        token_ok = _validate_chatgpt_oauth_token(active_key, db)
+        return ProviderTestResponse(
+            status="ok" if token_ok else "warning",
+            message=(
+                "ChatGPT OAuth connection is healthy."
+                if token_ok
+                else "ChatGPT OAuth token is expired or invalid. Re-connect."
+            ),
+            provider_type=provider.provider_type,
+            default_model=provider.default_model,
+            has_active_api_key=has_active_api_key,
         )
 
     try:

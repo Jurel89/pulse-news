@@ -2,20 +2,12 @@ import { FormEvent, useState } from "react";
 
 import type { UserSummary } from "../../lib/api";
 
-type OperationMode = "live" | "simulated";
-
 type AccountPageProps = {
   busy: boolean;
   currentUser: UserSummary;
   error: string | null;
   notice: string | null;
-  aiGenerationMode: OperationMode;
-  emailDeliveryMode: OperationMode;
   onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  onChangeOperationModes: (modes: {
-    ai_generation_mode?: OperationMode;
-    email_delivery_mode?: OperationMode;
-  }) => Promise<void>;
   onLogout: () => Promise<void>;
 };
 
@@ -24,10 +16,7 @@ export function AccountPage({
   currentUser,
   error,
   notice,
-  aiGenerationMode,
-  emailDeliveryMode,
   onChangePassword,
-  onChangeOperationModes,
   onLogout
 }: AccountPageProps) {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -38,18 +27,6 @@ export function AccountPage({
     await onChangePassword(currentPassword, newPassword);
     setCurrentPassword("");
     setNewPassword("");
-  }
-
-  function describeMode(mode: OperationMode, domain: "ai" | "email") {
-    if (domain === "ai") {
-      return mode === "live"
-        ? "Live mode uses configured AI providers to generate real drafts."
-        : "Simulated mode generates local fallback drafts without requiring live AI keys.";
-    }
-
-    return mode === "live"
-      ? "Live mode sends real emails when delivery credentials are configured."
-      : "Simulated mode keeps delivery in preview-only flows without sending real emails.";
   }
 
   return (
@@ -63,65 +40,6 @@ export function AccountPage({
           Log Out
         </button>
       </header>
-
-      <div className="form-section">
-        <h3 className="form-section-title">Operation Mode</h3>
-        <label>
-          <span>AI generation mode</span>
-          <div className="checkbox-row" style={{ margin: "var(--sp-2) 0 var(--sp-3)" }}>
-            <span
-              className={aiGenerationMode === "live" ? "status-badge status-active" : "status-badge status-paused"}
-              style={{ textTransform: "uppercase" }}
-            >
-              {aiGenerationMode === "simulated" ? "simulation" : aiGenerationMode}
-            </span>
-            <span className="help-text" style={{ color: "var(--color-text-secondary)", fontSize: "var(--font-sm)" }}>
-              {describeMode(aiGenerationMode, "ai")}
-            </span>
-          </div>
-          <select
-            disabled={busy}
-            onChange={(event) =>
-              void onChangeOperationModes({
-                ai_generation_mode: event.target.value as OperationMode,
-              })
-            }
-            value={aiGenerationMode}
-          >
-            <option value="live">Live</option>
-            <option value="simulated">Simulation</option>
-          </select>
-        </label>
-
-        <label>
-          <span>Email delivery mode</span>
-          <div className="checkbox-row" style={{ margin: "var(--sp-2) 0 var(--sp-3)" }}>
-            <span
-              className={emailDeliveryMode === "live" ? "status-badge status-active" : "status-badge status-paused"}
-              style={{ textTransform: "uppercase" }}
-            >
-              {emailDeliveryMode === "simulated" ? "simulation" : emailDeliveryMode}
-            </span>
-            <span className="help-text" style={{ color: "var(--color-text-secondary)", fontSize: "var(--font-sm)" }}>
-              {describeMode(emailDeliveryMode, "email")}
-            </span>
-          </div>
-          <select
-            disabled={busy}
-            onChange={(event) =>
-              void onChangeOperationModes({
-                email_delivery_mode: event.target.value as OperationMode,
-              })
-            }
-            value={emailDeliveryMode}
-          >
-            <option value="live">Live</option>
-            <option value="simulated">Simulation</option>
-          </select>
-        </label>
-      </div>
-
-      <hr className="form-divider" />
 
       <form className="auth-form" onSubmit={handleSubmit}>
         <h3 className="form-section-title">Security</h3>

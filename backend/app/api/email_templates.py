@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
-from html import escape
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -13,23 +11,11 @@ from app.models import AuditEvent, EmailTemplate, Newsletter
 from app.schemas import (
     EmailTemplateCreateRequest,
     EmailTemplateDetail,
-    EmailTemplatePreviewRequest,
-    EmailTemplatePreviewResponse,
     EmailTemplateSummary,
     EmailTemplateUpdateRequest,
 )
 
 email_templates_router = APIRouter(prefix="/email-templates", tags=["email-templates"])
-
-PLACEHOLDER_RE = re.compile(r"{{\s*([a-zA-Z0-9_]+)\s*}}")
-DEFAULT_PREVIEW_VARIABLES = {
-    "subject": "Sample subject",
-    "preheader": "Sample preheader text",
-    "headline": "Pulse News Preview",
-    "newsletter_name": "Pulse News",
-    "body_html": "<p>This is a sample email template preview.</p>",
-    "content": "<p>This is a sample email template preview.</p>",
-}
 
 TEMPLATE_PRESETS = [
     {
@@ -308,19 +294,6 @@ def serialize_email_template_detail(email_template: EmailTemplate) -> EmailTempl
     )
 
 
-def render_template_preview(html_template: str, variables: dict[str, str]) -> str:
-    merged_variables = {**DEFAULT_PREVIEW_VARIABLES, **variables}
-
-    def replace_placeholder(match: re.Match[str]) -> str:
-        key = match.group(1)
-        value = merged_variables.get(key, "")
-        if key.endswith("_html") or key in {"content", "body", "html"}:
-            return value
-        return escape(value)
-
-    return PLACEHOLDER_RE.sub(replace_placeholder, html_template)
-
-
 @email_templates_router.get("", response_model=list[EmailTemplateSummary])
 def list_email_templates(request: Request, db: DbSession) -> list[EmailTemplateSummary]:
     require_authenticated_user(request, db)
@@ -469,38 +442,6 @@ def delete_email_template(
     db.delete(email_template)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@email_templates_router.post(
-    "/{email_template_id}/preview",
-    response_model=EmailTemplatePreviewResponse,
-)
-def preview_email_template(
-    email_template_id: int,
-    request: Request,
-    db: DbSession,
-    payload: EmailTemplatePreviewRequest | None = None,
-) -> EmailTemplatePreviewResponse:
-    require_authenticated_user(request, db)
-    email_template = get_email_template_or_404(db, email_template_id)
-    return EmailTemplatePreviewResponse(
-        html=render_template_preview(
-            email_template.html_template,
-            payload.variables if payload is not None else {},
-        )
-    )
-
-
-@email_templates_router.post("/preview-live", response_model=EmailTemplatePreviewResponse)
-def preview_live(
-    request: Request,
-    db: DbSession,
-    payload: dict,
-) -> EmailTemplatePreviewResponse:
-    require_authenticated_user(request, db)
-    html_template = payload.get("html_template", "")
-    variables = payload.get("variables", {})
-    return EmailTemplatePreviewResponse(html=render_template_preview(html_template, variables))
 
 
 @email_templates_router.post(

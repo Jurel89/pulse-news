@@ -4,6 +4,8 @@ import { emptyProviderInput, toProviderInput } from "./provider-types";
 import { api } from "../../lib/api";
 import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 import type { ProviderTestResponse } from "../../lib/api";
+import { ConnectChatGPTModal } from "../api-keys/ConnectChatGPTModal";
+import type { ApiKeySummary } from "../api-keys/api-key-types";
 
 type ProvidersPageProps = {
   providers: ProviderSummary[];
@@ -222,12 +224,13 @@ export function ProviderEditor({
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
-  const [apiKeys, setApiKeys] = useState<Array<{ id: number; name: string; provider_type: string; is_active: boolean }>>([]);
+  const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
   const [apiKeysLoading, setApiKeysLoading] = useState(false);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
+  const [showChatGPTModal, setShowChatGPTModal] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -267,10 +270,14 @@ export function ProviderEditor({
   );
 
   const matchingApiKeys = useMemo(() => {
-    return apiKeys.filter(key => 
+    return apiKeys.filter(key =>
       key.provider_type === form.provider_type && key.is_active
     );
   }, [apiKeys, form.provider_type]);
+
+  const hasMatchingOAuthKey = useMemo(() => {
+    return matchingApiKeys.some(key => key.auth_type === "oauth");
+  }, [matchingApiKeys]);
 
   const hasMatchingApiKey = matchingApiKeys.length > 0;
 
@@ -299,11 +306,17 @@ export function ProviderEditor({
     const preset = presets.find((entry) => entry.key === presetKey);
     if (!preset) return;
 
+    let defaultModel = preset.recommended_models[0] ?? "";
+    if (preset.key === "openai_chatgpt") {
+      const nonCodex = preset.recommended_models.find((m) => !m.includes("codex"));
+      if (nonCodex) defaultModel = nonCodex;
+    }
+
     setForm((current) => ({
       ...current,
       name: preset.name,
       provider_type: preset.key,
-      default_model: preset.recommended_models[0] ?? current.default_model,
+      default_model: defaultModel,
       configuration: JSON.stringify({ base_url: preset.base_url }, null, 2)
     }));
   }
@@ -435,12 +448,27 @@ export function ProviderEditor({
               )}
             </label>
 
-            {!hasMatchingApiKey && form.provider_type && !apiKeysLoading && (
-              <div className="form-error">
-                <strong>Warning:</strong> No active API key found for {form.provider_type}. 
-                You must <a href="#" onClick={(e) => { e.preventDefault(); onCancel(); }}>configure an API key</a> before using this provider.
-              </div>
-            )}
+            {selectedPreset?.auth_mode === "oauth"
+              ? !hasMatchingOAuthKey && form.provider_type && !apiKeysLoading && (
+                <div className="form-info">
+                  <strong>ChatGPT Subscription</strong> uses OAuth instead of an API key.
+                  {" "}
+                  <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); setShowChatGPTModal(true); }}
+                  >
+                    Connect ChatGPT Subscription
+                  </a>
+                  {" "}to enable this provider.
+                </div>
+              )
+              : !hasMatchingApiKey && form.provider_type && !apiKeysLoading && (
+                <div className="form-error">
+                  <strong>Warning:</strong> No active API key found for {form.provider_type}.
+                  You must <a href="#" onClick={(e) => { e.preventDefault(); onCancel(); }}>configure an API key</a> before using this provider.
+                </div>
+              )
+            }
           </>
         ) : null}
 
@@ -528,6 +556,20 @@ export function ProviderEditor({
           {busy ? "Saving..." : initialProvider ? "Save Provider" : "Create Provider"}
         </button>
 
+        {initialProvider && selectedPreset?.auth_mode === "oauth" && !hasMatchingOAuthKey && !apiKeysLoading && (
+          <div className="form-info">
+            <strong>ChatGPT Subscription</strong> uses OAuth instead of an API key.
+            {" "}
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); setShowChatGPTModal(true); }}
+            >
+              Connect ChatGPT Subscription
+            </a>
+            {" "}to restore this provider.
+          </div>
+        )}
+
         {initialProvider ? (
           <>
             <hr className="form-divider" />
@@ -555,7 +597,7 @@ export function ProviderEditor({
                       <dd>{testResult.default_model ?? "None set"}</dd>
                     </div>
                     <div>
-                      <dt>API Key Configured</dt>
+                      <dt>{testResult.provider_type === "openai_chatgpt" ? "OAuth Connected" : "API Key Configured"}</dt>
                       <dd>{testResult.has_active_api_key ? "Yes" : "No"}</dd>
                     </div>
                   </dl>
@@ -587,6 +629,16 @@ export function ProviderEditor({
           </>
         ) : null}
       </form>
+
+      {showChatGPTModal && (
+        <ConnectChatGPTModal
+          onConnected={() => {
+            setShowChatGPTModal(false);
+            api.apiKeys.list().then(setApiKeys).catch(() => {});
+          }}
+          onCancel={() => setShowChatGPTModal(false)}
+        />
+      )}
     </section>
   );
 }

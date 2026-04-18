@@ -218,10 +218,7 @@ export function EmailTemplateEditor({
     initialTemplate ? toEmailTemplateInput(initialTemplate) : emptyEmailTemplateInput
   );
   const [busy, setBusy] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [presets, setPresets] = useState<TemplatePreset[]>([]);
-  const [presetsLoading, setPresetsLoading] = useState(false);
   const [selectedPresetKey, setSelectedPresetKey] = useState<string | null>(null);
 
   const title = useMemo(
@@ -233,17 +230,12 @@ export function EmailTemplateEditor({
     let isActive = true;
 
     async function loadPresets() {
-      setPresetsLoading(true);
       try {
         const nextPresets = await api.emailTemplates.listPresets();
         if (!isActive) return;
         setPresets(nextPresets);
       } catch {
         setPresets([]);
-      } finally {
-        if (isActive) {
-          setPresetsLoading(false);
-        }
       }
     }
 
@@ -253,22 +245,6 @@ export function EmailTemplateEditor({
       isActive = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (initialTemplate) {
-      handlePreview();
-    }
-  }, [initialTemplate?.id]);
-
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (form.html_template) {
-        handleLivePreview();
-      }
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [form.html_template]);
 
   function updateField<K extends keyof EmailTemplateInput>(key: K, value: EmailTemplateInput[K]) {
     setForm((current) => ({
@@ -297,36 +273,6 @@ export function EmailTemplateEditor({
       await onSave(form, initialTemplate?.id);
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function handlePreview() {
-    if (!initialTemplate) return;
-    setPreviewLoading(true);
-    try {
-      const result = await api.emailTemplates.preview(initialTemplate.id);
-      setPreviewHtml(result.html);
-    } catch {
-      setPreviewHtml("<p style='color: red;'>Failed to load preview</p>");
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
-
-  async function handleLivePreview() {
-    if (!form.html_template) {
-      setPreviewHtml(null);
-      return;
-    }
-    
-    setPreviewLoading(true);
-    try {
-      const result = await api.emailTemplates.previewLive(form.html_template);
-      setPreviewHtml(result.html);
-    } catch {
-      setPreviewHtml("<p style='color: red;'>Failed to render preview. Check your HTML.</p>");
-    } finally {
-      setPreviewLoading(false);
     }
   }
 
@@ -361,84 +307,64 @@ export function EmailTemplateEditor({
         </div>
       )}
 
-      <div className="template-editor-layout">
-        <form className="editor-form" onSubmit={handleSubmit}>
-          <label>
-            <span>Name</span>
-            <input
-              onChange={(event) => updateField("name", event.target.value)}
-              required
-              value={form.name}
-            />
-          </label>
+      <form className="editor-form" onSubmit={handleSubmit}>
+        <label>
+          <span>Name</span>
+          <input
+            onChange={(event) => updateField("name", event.target.value)}
+            required
+            value={form.name}
+          />
+        </label>
 
-          <label>
-            <span>Key</span>
-            <input
-              onChange={(event) => updateField("key", event.target.value)}
-              required
-              pattern="^[a-z0-9][a-z0-9_-]*$"
-              title="Must start with letter/number, contain only lowercase letters, numbers, hyphens, or underscores"
-              value={form.key}
-            />
-          </label>
+        <label>
+          <span>Key</span>
+          <input
+            onChange={(event) => updateField("key", event.target.value)}
+            required
+            pattern="^[a-z0-9][a-z0-9_-]*$"
+            title="Must start with letter/number, contain only lowercase letters, numbers, hyphens, or underscores"
+            value={form.key}
+          />
+        </label>
 
-          <label>
-            <span>Description</span>
-            <textarea
-              onChange={(event) => updateField("description", event.target.value)}
-              rows={2}
-              value={form.description}
-            />
-          </label>
+        <label>
+          <span>Description</span>
+          <textarea
+            onChange={(event) => updateField("description", event.target.value)}
+            rows={2}
+            value={form.description}
+          />
+        </label>
 
-          <label>
-            <span>HTML Template</span>
-            <textarea
-              onChange={(event) => updateField("html_template", event.target.value)}
-              required
-              rows={20}
-              value={form.html_template}
-              placeholder={'<!DOCTYPE html>\n<html>\n<head>\n  <meta charset="UTF-8">\n  <title>{{subject}}</title>\n</head>\n<body>\n  <h1>{{headline}}</h1>\n  <div>{{body_html}}</div>\n</body>\n</html>'}
-            />
-          </label>
+        <label>
+          <span>HTML Template</span>
+          <textarea
+            onChange={(event) => updateField("html_template", event.target.value)}
+            required
+            rows={20}
+            value={form.html_template}
+            placeholder={'<!DOCTYPE html>\n<html>\n<head>\n  <meta charset="UTF-8">\n  <title>{{subject}}</title>\n</head>\n<body>\n  <h1>{{headline}}</h1>\n  <div>{{body_html}}</div>\n</body>\n</html>'}
+          />
+        </label>
 
-          <label className="checkbox-row">
-            <input
-              checked={form.is_default}
-              onChange={(event) => updateField("is_default", event.target.checked)}
-              type="checkbox"
-            />
-            <span>Set as default template</span>
-          </label>
+        <p className="template-variables-hint">
+          Available variables: subject, preheader, headline, newsletter_name, body_html, content
+        </p>
 
-          <button className="primary-button" disabled={busy} type="submit">
-            {busy ? "Saving..." : initialTemplate ? "Save Template" : "Create Template"}
-          </button>
-        </form>
+        <label className="checkbox-row">
+          <input
+            checked={form.is_default}
+            onChange={(event) => updateField("is_default", event.target.checked)}
+            type="checkbox"
+          />
+          <span>Set as default template</span>
+        </label>
 
-        <div className="live-preview-panel">
-          <div className="live-preview-header">
-            <h3>Live Preview</h3>
-            {previewLoading && <span>Rendering...</span>}
-          </div>
-          {previewHtml ? (
-            <iframe
-              className="live-preview-frame"
-              srcDoc={previewHtml}
-              sandbox=""
-              title="Template Preview"
-            />
-          ) : (
-            <div className="live-preview-placeholder">
-              <p>Start typing HTML to see a live preview</p>
-              <p className="template-variables-hint">
-                Available variables: subject, preheader, headline, newsletter_name, body_html, content
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
+        <button className="primary-button" disabled={busy} type="submit">
+          {busy ? "Saving..." : initialTemplate ? "Save Template" : "Create Template"}
+        </button>
+      </form>
     </section>
   );
 }

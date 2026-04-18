@@ -32,7 +32,12 @@ def get_scheduler() -> BackgroundScheduler:
 
 
 def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
-    from app.api.newsletters import SEND_ALLOWED_STATUSES, execute_newsletter_send
+    from app.ai_generation import generate_newsletter_content
+    from app.api.newsletters import (
+        SEND_ALLOWED_STATUSES,
+        _generation_meta_from_generated,
+        execute_newsletter_send,
+    )
 
     session = get_session_maker()()
     try:
@@ -54,11 +59,25 @@ def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
                 SEND_ALLOWED_STATUSES,
             )
             return
+        generated = generate_newsletter_content(newsletter, db_session=session)
+        if generated.status == "error":
+            logger.error(
+                "Scheduled send blocked for newsletter %s: generation failed: %s",
+                newsletter.id,
+                generated.message,
+            )
+            return
+        newsletter.subject = generated.subject
+        newsletter.preheader = generated.preheader
+        newsletter.body_text = generated.body_text
+        session.add(newsletter)
+        session.commit()
         execute_newsletter_send(
             session,
             newsletter,
             trigger_mode="scheduled-send",
             fire_scope=datetime.now(UTC).replace(second=0, microsecond=0).isoformat(),
+            generation_meta=_generation_meta_from_generated(newsletter, generated),
         )
     finally:
         session.close()
