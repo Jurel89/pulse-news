@@ -531,14 +531,28 @@ function RunContentTabs({ detail, activeTab, onChangeTab }: RunContentTabsProps)
       <div style={{ marginTop: "var(--sp-2)" }}>
         {activeTab === "html" ? (
           renderedHtml ? (
-            <iframe
-              title="Rendered HTML"
-              // Sandbox without allow-scripts/allow-same-origin — the stored
-              // HTML is operator/AI content that we never want to execute.
-              sandbox=""
-              srcDoc={renderedHtml}
-              style={{ width: "100%", minHeight: 480, border: "1px solid var(--border-subtle)", borderRadius: "6px", background: "#fff" }}
-            />
+            (() => {
+              // Strip meta-refresh tags before passing to the iframe — belt-and-braces
+              // defence against top-level navigation in browsers that allow meta-refresh
+              // even with sandbox="" (e.g. some Chromium versions before the csp attribute
+              // was honoured universally).
+              const safeHtml = renderedHtml ? renderedHtml.replace(/<meta[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "") : renderedHtml;
+              return (
+                <iframe
+                  title="Rendered HTML"
+                  // Sandbox without allow-scripts/allow-same-origin — the stored
+                  // HTML is operator/AI content that we never want to execute.
+                  sandbox=""
+                  // csp enforces a Content-Security-Policy inside the srcdoc document
+                  // (Chrome 61+, Firefox 70+). default-src 'none' blocks meta-refresh
+                  // initiated navigations and any network fetch the sandboxed doc might
+                  // attempt. Style/image/font sources are kept for cosmetic rendering.
+                  csp="default-src 'none'; style-src 'unsafe-inline' 'self'; img-src data: https:; font-src data: https:;"
+                  srcDoc={safeHtml}
+                  style={{ width: "100%", minHeight: 480, border: "1px solid var(--border-subtle)", borderRadius: "6px", background: "#fff" }}
+                />
+              );
+            })()
           ) : (
             <p className="cell-secondary">
               No rendered HTML was captured for this run. Older runs created before the run-content capture
