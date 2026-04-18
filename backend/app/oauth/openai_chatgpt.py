@@ -405,7 +405,15 @@ def _build_bundle_from_token_response(
     # from now() to avoid drift.
     try:
         if "expires_at" in data:
-            expires_at = datetime.fromtimestamp(int(data["expires_at"]), tz=UTC)
+            raw_expires = data["expires_at"]
+            try:
+                expires_at_ts = int(raw_expires)
+                expires_at = datetime.fromtimestamp(expires_at_ts, tz=UTC)
+            except ValueError:
+                expires_at_dt = datetime.fromisoformat(raw_expires)
+                if expires_at_dt.tzinfo is None:
+                    expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
+                expires_at = expires_at_dt
         else:
             expires_in = int(data.get("expires_in", 3600))
             expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)

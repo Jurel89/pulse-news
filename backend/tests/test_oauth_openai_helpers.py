@@ -458,6 +458,35 @@ def test_refresh_invalid_expires_at():
     assert "invalid expiry" in str(exc_info.value).lower()
 
 
+def test_refresh_with_iso_expires_at():
+    """Token responses may return expires_at as an ISO 8601 string."""
+    payload = {
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_abc",
+            "chatgpt_plan_type": "plus",
+        }
+    }
+    new_access = _make_jwt(payload)
+    future_dt = datetime.now(UTC) + timedelta(hours=1)
+    token_response = {
+        "access_token": new_access,
+        "refresh_token": "new_refresh",
+        "expires_at": future_dt.isoformat(),
+    }
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, json=token_response))
+        MockClient.return_value = mock_instance
+
+        bundle = refresh("old_refresh_token")
+
+    assert bundle.access_token == new_access
+    assert abs(bundle.expires_at.timestamp() - future_dt.timestamp()) < 2
+
+
 # ---------------------------------------------------------------------------
 # exchange_code
 # ---------------------------------------------------------------------------

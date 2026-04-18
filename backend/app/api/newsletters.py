@@ -898,12 +898,6 @@ def run_newsletter(
     newsletter.preheader = generated.preheader
     newsletter.body_text = generated.body_text
     db.add(newsletter)
-
-    if newsletter.api_key_id:
-        api_key_obj = db.scalar(select(ApiKey).where(ApiKey.id == newsletter.api_key_id))
-        if api_key_obj:
-            api_key_obj.last_used_at = utc_now()
-
     db.commit()
 
     response, _run = execute_newsletter_send(

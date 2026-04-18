@@ -69,7 +69,9 @@ export function ChatGPTConnectionCard({ apiKey, onDisconnected, onRefreshed }: P
           <h3>{apiKey.name}</h3>
           <p>ChatGPT subscription via OAuth</p>
         </div>
-        <span className="status-chip status-active">Connected</span>
+        <span className={`status-chip ${apiKey.is_active ? "status-active" : "status-inactive"}`}>
+          {apiKey.is_active ? "Connected" : "Inactive"}
+        </span>
       </div>
 
       <dl className="newsletter-meta">
