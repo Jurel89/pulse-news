@@ -850,7 +850,7 @@ def test_provider_test_succeeds_when_expired_but_refreshable(auth_client):
         id_token=None,
     )
 
-    with patch("app.api.providers._oauth.refresh", return_value=new_bundle):
+    with patch("app.oauth.openai_chatgpt.refresh", return_value=new_bundle):
         resp = auth_client.post(f"/api/providers/{provider_id}/test")
 
     assert resp.status_code == 200
