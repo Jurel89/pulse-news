@@ -146,11 +146,18 @@ def device_code_start() -> DeviceCodeInit:
     except json.JSONDecodeError as exc:
         raise OpenAIOAuthError(f"Device-code init returned invalid JSON: {exc}") from exc
     try:
+        interval = int(data.get("interval", 5))
+        if "expires_in" in data:
+            expires_in = int(data["expires_in"])
+        elif "expires_at" in data:
+            expires_in = int(data["expires_at"]) - int(datetime.now(UTC).timestamp())
+        else:
+            expires_in = 900
         return DeviceCodeInit(
             device_auth_id=data["device_auth_id"],
             user_code=data["user_code"],
-            interval=int(data.get("interval", 5)),
-            expires_in=int(data.get("expires_in", 900)),
+            interval=interval,
+            expires_in=expires_in,
             verification_uri=data.get("verification_uri", "https://auth.openai.com/codex/device"),
         )
     except (KeyError, TypeError, ValueError) as exc:

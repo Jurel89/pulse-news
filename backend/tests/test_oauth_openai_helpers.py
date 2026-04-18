@@ -178,6 +178,34 @@ def test_device_code_start_invalid_json(monkeypatch):
     assert "invalid JSON" in str(exc_info.value)
 
 
+def test_device_code_start_with_expires_at_and_no_verification_uri():
+    """Live OpenAI returns expires_at (not expires_in) and omits verification_uri."""
+    future_ts = int((datetime.now(UTC) + timedelta(minutes=15)).timestamp())
+    response_data = {
+        "device_auth_id": "dev_456",
+        "user_code": "EFGH-5678",
+        "interval": "5",
+        "expires_at": future_ts,
+        # expires_in intentionally omitted
+        # verification_uri intentionally omitted
+    }
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, json=response_data))
+        MockClient.return_value = mock_instance
+
+        result = device_code_start()
+
+    assert result.device_auth_id == "dev_456"
+    assert result.user_code == "EFGH-5678"
+    assert result.interval == 5
+    assert result.verification_uri == "https://auth.openai.com/codex/device"
+    assert abs(result.expires_in - 900) < 5
+
+
 # ---------------------------------------------------------------------------
 # device_code_poll
 # ---------------------------------------------------------------------------
