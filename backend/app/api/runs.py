@@ -10,9 +10,9 @@ from app.auth import require_authenticated_user
 from app.deps import DbSession
 from app.models import NewsletterRun, NewsletterRunEvent
 from app.schemas import (
+    NewsletterRunDetail,
     NewsletterRunEventSummary,
     NewsletterRunSummary,
-    NewsletterSummary,
     OperationalEventListResponse,
     OperationalEventSummary,
     RecipientSendOutcomeResponse,
@@ -251,31 +251,13 @@ def list_run_operational_events(
 def get_run_detail(run_id: int, request: Request, db: DbSession) -> RunDetailResponse:
     require_authenticated_user(request, db)
     run = get_run_or_404(db, run_id)
-    newsletter_snapshot = NewsletterSummary(
-        id=run.newsletter_id,
-        name=run.snapshot_newsletter_name or "",
-        slug=run.snapshot_newsletter_slug or "",
-        description=None,
-        prompt=run.snapshot_prompt or "",
-        subject=run.rendered_subject or run.snapshot_subject,
-        preheader=run.rendered_preheader or run.snapshot_preheader,
-        body_text=run.rendered_plain_text or run.snapshot_body_text,
-        provider_name=run.provider_name,
-        model_name=run.model_name,
-        template_key=run.template_key,
-        audience_name="",
-        delivery_topic=run.snapshot_delivery_topic or "",
-        timezone="UTC",
-        schedule_cron=None,
-        schedule_enabled=False,
-        status=run.snapshot_status_at_run or "",
-        notes=None,
-        created_at=run.created_at,
-        updated_at=run.updated_at,
-    )
+    # The run row is the authoritative source of what was actually sent.
+    # Don't fabricate a NewsletterSummary from partial fields — older code
+    # filled `timezone="UTC"`, empty audience_name, etc. which would be
+    # misread as a faithful historical record.
     return RunDetailResponse(
-        run=NewsletterRunSummary.model_validate(run),
-        newsletter_snapshot=newsletter_snapshot,
+        run=NewsletterRunDetail.model_validate(run),
+        newsletter_snapshot=None,
         recipient_emails=json.loads(run.snapshot_recipient_emails or "[]"),
         recipient_outcomes=[
             RecipientSendOutcomeResponse(**outcome)
