@@ -1,52 +1,13 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
+import type { NewsletterRunSummary as RunSummary, NewsletterRunDetailView, RunDetailResponse } from "../../lib/api";
 import type { NewsletterSummary } from "../newsletters/newsletter-types";
 import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 
-type RunSummary = {
-  id: number;
-  newsletter_id: number;
-  run_type: string | null;
-  snapshot_newsletter_name: string | null;
-  trigger_mode: string;
-  run_status: string;
-  provider_name: string;
-  model_name: string;
-  template_key: string;
-  recipient_count: number;
-  snapshot_subject: string;
-  snapshot_preheader: string | null;
-  snapshot_body_text: string;
-  snapshot_recipient_emails: string;
-  delivery_outcomes: string;
-  result_mode: string | null;
-  result_message: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
+type RunDetail = RunDetailResponse;
 
-type RunDetail = {
-  run: RunSummary;
-  newsletter_snapshot: NewsletterSummary | null;
-  recipient_emails: string[];
-  recipient_outcomes: Array<{
-    email: string;
-    status: string;
-    provider_id: string | null;
-    detail: string;
-  }>;
-  events: Array<{
-    id: number;
-    event_type: string;
-    event_status: string;
-    message: string;
-    provider_id: string | null;
-    created_at: string;
-  }>;
-};
+type ContentTab = "html" | "plain" | "prompt";
 
 type RunDashboardPageProps = {
   newsletters: NewsletterSummary[];
@@ -89,6 +50,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   const [runDetails, setRunDetails] = useState<Map<number, RunDetail>>(new Map());
+  const [contentTab, setContentTab] = useState<ContentTab>("html");
   const [newsletterId, setNewsletterId] = useState("");
   const [runType, setRunType] = useState("");
   const [runStatus, setRunStatus] = useState("");
@@ -422,6 +384,11 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
 
                               <hr className="form-divider" />
 
+                              <h5>Sent Content</h5>
+                              <RunContentTabs detail={expandedDetail} activeTab={contentTab} onChangeTab={setContentTab} />
+
+                              <hr className="form-divider" />
+
                               <h5>Recipient Outcomes</h5>
                               <div className="newsletter-list compact">
                                 {expandedDetail.recipient_outcomes.length > 0 ? (
@@ -493,5 +460,95 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
         </div>
       )}
     </section>
+  );
+}
+
+type RunContentTabsProps = {
+  detail: RunDetail;
+  activeTab: ContentTab;
+  onChangeTab: (tab: ContentTab) => void;
+};
+
+function RunContentTabs({ detail, activeTab, onChangeTab }: RunContentTabsProps) {
+  const run = detail.run as NewsletterRunDetailView;
+  const renderedHtml = run.rendered_html;
+  const renderedPlain = run.rendered_plain_text ?? run.snapshot_body_text;
+  const promptSnapshot = run.snapshot_prompt ?? "";
+  const renderedSubject = run.rendered_subject ?? run.snapshot_subject;
+  const renderedPreheader = run.rendered_preheader ?? run.snapshot_preheader ?? "";
+
+  return (
+    <div className="run-content-panel">
+      <div className="newsletter-meta">
+        <div>
+          <dt>Subject</dt>
+          <dd>{renderedSubject || "—"}</dd>
+        </div>
+        <div>
+          <dt>Preheader</dt>
+          <dd>{renderedPreheader || "—"}</dd>
+        </div>
+      </div>
+
+      <div className="nav-pills" role="tablist" aria-label="Sent content views" style={{ marginTop: "var(--sp-2)" }}>
+        <button
+          aria-selected={activeTab === "html"}
+          className={activeTab === "html" ? "nav-pill active" : "nav-pill"}
+          onClick={() => onChangeTab("html")}
+          role="tab"
+          type="button"
+        >
+          HTML
+        </button>
+        <button
+          aria-selected={activeTab === "plain"}
+          className={activeTab === "plain" ? "nav-pill active" : "nav-pill"}
+          onClick={() => onChangeTab("plain")}
+          role="tab"
+          type="button"
+        >
+          Plain Text
+        </button>
+        <button
+          aria-selected={activeTab === "prompt"}
+          className={activeTab === "prompt" ? "nav-pill active" : "nav-pill"}
+          onClick={() => onChangeTab("prompt")}
+          role="tab"
+          type="button"
+        >
+          Prompt Snapshot
+        </button>
+      </div>
+
+      <div style={{ marginTop: "var(--sp-2)" }}>
+        {activeTab === "html" ? (
+          renderedHtml ? (
+            <iframe
+              title="Rendered HTML"
+              // Sandbox without allow-scripts/allow-same-origin — the stored
+              // HTML is operator/AI content that we never want to execute.
+              sandbox=""
+              srcDoc={renderedHtml}
+              style={{ width: "100%", minHeight: 480, border: "1px solid var(--border-subtle)", borderRadius: "6px", background: "#fff" }}
+            />
+          ) : (
+            <p className="cell-secondary">
+              No rendered HTML was captured for this run. Older runs created before the run-content capture
+              landed will not have this field.
+            </p>
+          )
+        ) : null}
+        {activeTab === "plain" ? (
+          <div className="plain-preview">
+            <pre>{renderedPlain || "No plain-text output recorded."}</pre>
+          </div>
+        ) : null}
+        {activeTab === "prompt" ? (
+          <div className="plain-preview">
+            <pre>{promptSnapshot || "No prompt snapshot recorded for this run."}</pre>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
