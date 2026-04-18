@@ -628,13 +628,15 @@ def test_oauth_delete_blocks_last_connection_when_provider_enabled(auth_client):
     api_key_id = poll_resp.json()["api_key_id"]
 
     # Create an enabled ChatGPT provider that depends on this connection
+    from app.database import get_session_maker
+
     provider = Provider(
         name="ChatGPT Provider",
         provider_type="openai_chatgpt",
         is_enabled=True,
         default_model="gpt-5.4",
     )
-    db = auth_client.app.state._db_session_factory()
+    db = get_session_maker()()
     db.add(provider)
     db.commit()
     db.close()
