@@ -117,6 +117,51 @@ def _disable_legacy_chatgpt_manual_keys(session: Session) -> None:
         logger.info(f"Disabled {len(legacy)} legacy ChatGPT manual key(s)")
 
 
+_VALID_CHATGPT_MODELS = frozenset(["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])
+_DEFAULT_CHATGPT_MODEL = "gpt-5.4"
+
+
+def _repair_legacy_chatgpt_models(session: Session) -> None:
+    from app.models import Newsletter, Provider
+
+    repaired_providers = 0
+    providers = session.scalars(
+        select(Provider).where(Provider.provider_type == "openai_chatgpt")
+    ).all()
+    for provider in providers:
+        if provider.default_model and provider.default_model not in _VALID_CHATGPT_MODELS:
+            old_model = provider.default_model
+            provider.default_model = _DEFAULT_CHATGPT_MODEL
+            session.add(provider)
+            repaired_providers += 1
+            logger.warning(
+                f"Repaired provider '{provider.name}' (id={provider.id}) model "
+                f"from '{old_model}' to '{_DEFAULT_CHATGPT_MODEL}'"
+            )
+
+    repaired_newsletters = 0
+    newsletters = session.scalars(
+        select(Newsletter).where(Newsletter.provider_name == "openai_chatgpt")
+    ).all()
+    for newsletter in newsletters:
+        if newsletter.model_name and newsletter.model_name not in _VALID_CHATGPT_MODELS:
+            old_model = newsletter.model_name
+            newsletter.model_name = _DEFAULT_CHATGPT_MODEL
+            session.add(newsletter)
+            repaired_newsletters += 1
+            logger.warning(
+                f"Repaired newsletter '{newsletter.name}' (id={newsletter.id}) model "
+                f"from '{old_model}' to '{_DEFAULT_CHATGPT_MODEL}'"
+            )
+
+    if repaired_providers or repaired_newsletters:
+        session.commit()
+        logger.info(
+            f"Repaired {repaired_providers} provider(s) and "
+            f"{repaired_newsletters} newsletter(s) with legacy ChatGPT models"
+        )
+
+
 def init_database() -> None:
     get_settings()
 
@@ -125,5 +170,6 @@ def init_database() -> None:
 
     with get_session_maker()() as session:
         _disable_legacy_chatgpt_manual_keys(session)
+        _repair_legacy_chatgpt_models(session)
         _repair_invalid_provider_state(session)
         _ensure_system_settings_row(session)

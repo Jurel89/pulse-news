@@ -77,8 +77,23 @@ test('chatgpt subscription preset shows oauth prompt and non-codex default model
   await ensureAuthenticated(page);
 
   // Clean up any pre-existing ChatGPT OAuth connection so the test starts
-  // from a known empty state even on a reused database.
+  // from a known empty state even on a reused database.  Disable any
+  // enabled ChatGPT providers first so the OAuth delete isn't blocked by 409.
   await page.evaluate(async () => {
+    const providersResp = await fetch('/api/providers', { credentials: 'include' });
+    const providers = await providersResp.json();
+    const chatgptProviders = providers.filter(
+      (p: any) => p.provider_type === 'openai_chatgpt' && p.is_enabled
+    );
+    for (const provider of chatgptProviders) {
+      await fetch(`/api/providers/${provider.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ...provider, is_enabled: false }),
+      });
+    }
+
     const resp = await fetch('/api/api-keys', { credentials: 'include' });
     const keys = await resp.json();
     const oauthKey = keys.find((k: any) => k.provider_type === 'openai_chatgpt' && k.auth_type === 'oauth');
