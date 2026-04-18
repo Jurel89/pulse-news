@@ -139,13 +139,16 @@ def device_code_start() -> DeviceCodeInit:
         data = response.json()
     except json.JSONDecodeError as exc:
         raise OpenAIOAuthError(f"Device-code init returned invalid JSON: {exc}") from exc
-    return DeviceCodeInit(
-        device_auth_id=data["device_auth_id"],
-        user_code=data["user_code"],
-        interval=int(data.get("interval", 5)),
-        expires_in=int(data.get("expires_in", 900)),
-        verification_uri=data.get("verification_uri", "https://auth.openai.com/codex/device"),
-    )
+    try:
+        return DeviceCodeInit(
+            device_auth_id=data["device_auth_id"],
+            user_code=data["user_code"],
+            interval=int(data.get("interval", 5)),
+            expires_in=int(data.get("expires_in", 900)),
+            verification_uri=data.get("verification_uri", "https://auth.openai.com/codex/device"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OpenAIOAuthError(f"Device-code init response malformed: {exc}") from exc
 
 
 def device_code_poll(device_auth_id: str, user_code: str) -> tuple[TokenBundle | None, int | None]:
@@ -361,18 +364,24 @@ def _build_bundle_from_token_response(
     *,
     fallback_refresh_token: str | None = None,
 ) -> TokenBundle:
-    access_token = data["access_token"]
+    try:
+        access_token = data["access_token"]
+    except KeyError as exc:
+        raise OpenAIOAuthError(f"Token response missing required field: {exc}") from exc
     # OAuth refresh responses may omit refresh_token — in that case, keep the
     # one the caller already has so we don't blow away a still-valid token.
     refresh_token_value = data.get("refresh_token") or fallback_refresh_token or ""
 
     # Always use the upstream expires_at / expires_in value — never derive
     # from now() to avoid drift.
-    if "expires_at" in data:
-        expires_at = datetime.fromtimestamp(int(data["expires_at"]), tz=UTC)
-    else:
-        expires_in = int(data.get("expires_in", 3600))
-        expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+    try:
+        if "expires_at" in data:
+            expires_at = datetime.fromtimestamp(int(data["expires_at"]), tz=UTC)
+        else:
+            expires_in = int(data.get("expires_in", 3600))
+            expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+    except (TypeError, ValueError) as exc:
+        raise OpenAIOAuthError(f"Token response has invalid expiry: {exc}") from exc
 
     account_id: str | None = None
     plan_type: str | None = None

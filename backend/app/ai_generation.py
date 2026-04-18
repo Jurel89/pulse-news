@@ -402,10 +402,12 @@ def _generate_via_openai_chatgpt(
         api_key_row: ApiKey | None = None
         if newsletter.api_key_id is not None:
             api_key_row = session.scalar(select(ApiKey).where(ApiKey.id == newsletter.api_key_id))
-            # Pinned key must be an OAuth row; otherwise ignore and fall through
-            # to the active OAuth connection so a mis-pinned non-OAuth key can't
-            # break generation.
-            if api_key_row is not None and getattr(api_key_row, "auth_type", "api_key") != "oauth":
+            # Pinned key must be an active OAuth row; otherwise ignore and fall
+            # through to the active OAuth connection so a mis-pinned or inactive
+            # key can't break generation.
+            if api_key_row is not None and (
+                getattr(api_key_row, "auth_type", "api_key") != "oauth" or not api_key_row.is_active
+            ):
                 api_key_row = None
         if api_key_row is None:
             api_key_row = session.scalar(

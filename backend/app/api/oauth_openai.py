@@ -120,8 +120,7 @@ def _materialize_oauth_connection(db: DbSession, bundle: TokenBundle) -> ApiKey:
         existing.oauth_plan_type = bundle.plan_type
         existing.is_active = True
         db.add(existing)
-        db.commit()
-        db.refresh(existing)
+        db.flush()
         return existing
 
     api_key = ApiKey(
@@ -137,8 +136,7 @@ def _materialize_oauth_connection(db: DbSession, bundle: TokenBundle) -> ApiKey:
         is_active=True,
     )
     db.add(api_key)
-    db.commit()
-    db.refresh(api_key)
+    db.flush()
     return api_key
 
 

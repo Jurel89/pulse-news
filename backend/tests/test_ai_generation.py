@@ -912,6 +912,67 @@ def test_generate_newsletter_content_fails_closed_for_inactive_pinned_key(
     completion_mock.assert_not_called()
 
 
+def test_chatgpt_oauth_falls_back_to_active_when_pinned_is_inactive(
+    client: TestClient,
+    monkeypatch,
+):
+    import app.ai_generation
+    from app.database import get_session_maker
+    from app.models import ApiKey
+
+    session = get_session_maker()()
+
+    inactive_pinned = ApiKey(
+        name="Inactive ChatGPT OAuth",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value="sentinel-inactive",
+        is_active=False,
+        oauth_access_token="enc-old-token",
+        oauth_refresh_token="enc-old-refresh",
+    )
+    active_fallback = ApiKey(
+        name="Active ChatGPT OAuth",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value="sentinel-active",
+        is_active=True,
+        oauth_access_token="enc-active-token",
+        oauth_refresh_token="enc-active-refresh",
+    )
+    session.add_all([inactive_pinned, active_fallback])
+    session.commit()
+    session.refresh(inactive_pinned)
+    session.refresh(active_fallback)
+    pinned_id = inactive_pinned.id
+    session.close()
+
+    chatgpt_generate_mock = Mock(
+        return_value={
+            "subject": "Fallback Subject",
+            "preheader": "Fallback Preheader",
+            "body_markdown": "Fallback Body",
+        }
+    )
+    monkeypatch.setattr(
+        app.ai_generation.generation.openai_chatgpt,
+        "generate",
+        chatgpt_generate_mock,
+    )
+
+    newsletter = build_newsletter(
+        provider_name="openai_chatgpt",
+        api_key_id=pinned_id,
+    )
+    result = app.ai_generation.generate_newsletter_content(newsletter)
+
+    assert result.status == "generated"
+    assert result.subject == "Fallback Subject"
+    chatgpt_generate_mock.assert_called_once()
+    used_api_key = chatgpt_generate_mock.call_args.kwargs["api_key_row"]
+    assert used_api_key.id == active_fallback.id
+
+
 def test_kimi_provider_uses_coding_api_base_url(client: TestClient, monkeypatch):
     import app.ai_generation
     from app.models import Provider

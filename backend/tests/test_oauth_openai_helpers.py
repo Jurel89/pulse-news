@@ -320,3 +320,147 @@ def test_refresh_preserves_prior_refresh_token_when_upstream_omits_it():
         bundle = refresh("prior_refresh_token_value")
 
     assert bundle.refresh_token == "prior_refresh_token_value"
+
+
+# ---------------------------------------------------------------------------
+# Authorization-code exchange branch in device_code_poll
+# ---------------------------------------------------------------------------
+
+
+def test_device_code_poll_with_authorization_code_exchanges():
+    """When poll returns authorization_code + code_verifier, exchange for tokens."""
+    payload = {
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_xyz",
+            "chatgpt_plan_type": "plus",
+        }
+    }
+    access_token = _make_jwt(payload)
+    token_response = {
+        "access_token": access_token,
+        "refresh_token": "refresh_xyz",
+        "expires_in": 3600,
+    }
+
+    # First call (poll) returns authorization_code; second call (exchange) returns tokens.
+    responses = [
+        httpx.Response(
+            200,
+            json={
+                "authorization_code": "auth_code_123",
+                "code_verifier": "verifier_456",
+            },
+        ),
+        httpx.Response(200, json=token_response),
+    ]
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(side_effect=responses)
+        MockClient.return_value = mock_instance
+
+        result = device_code_poll("dev_123", "ABCD-1234")
+
+    assert result[0] is not None
+    assert result[0].access_token == access_token
+    assert result[0].refresh_token == "refresh_xyz"
+    assert result[0].account_id == "acct_xyz"
+
+
+# ---------------------------------------------------------------------------
+# Malformed success payloads
+# ---------------------------------------------------------------------------
+
+
+def test_device_code_start_missing_required_field():
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(
+            return_value=httpx.Response(200, json={"user_code": "ABCD-1234"})
+            # missing device_auth_id
+        )
+        MockClient.return_value = mock_instance
+
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            device_code_start()
+
+    assert "malformed" in str(exc_info.value).lower()
+
+
+def test_refresh_missing_access_token():
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(
+            return_value=httpx.Response(200, json={"expires_in": 3600})
+            # missing access_token
+        )
+        MockClient.return_value = mock_instance
+
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            refresh("old_refresh")
+
+    assert "missing required field" in str(exc_info.value).lower()
+
+
+def test_refresh_invalid_expires_at():
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "access_token": _make_jwt({}),
+                    "expires_at": "not-a-number",
+                },
+            )
+        )
+        MockClient.return_value = mock_instance
+
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            refresh("old_refresh")
+
+    assert "invalid expiry" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# exchange_code
+# ---------------------------------------------------------------------------
+
+
+def test_exchange_code_returns_bundle():
+    payload = {
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_abc",
+            "chatgpt_plan_type": "plus",
+        }
+    }
+    access_token = _make_jwt(payload)
+    token_response = {
+        "access_token": access_token,
+        "refresh_token": "refresh_abc",
+        "expires_in": 3600,
+    }
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, json=token_response))
+        MockClient.return_value = mock_instance
+
+        from app.oauth.openai_chatgpt import exchange_code
+
+        bundle = exchange_code("auth_code", "verifier", "http://localhost/callback")
+
+    assert bundle.access_token == access_token
+    assert bundle.refresh_token == "refresh_abc"
+    assert bundle.account_id == "acct_abc"
+    assert bundle.plan_type == "plus"
