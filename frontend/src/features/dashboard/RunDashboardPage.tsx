@@ -145,6 +145,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
   const stats = {
     totalRuns: runs.length,
     deliveryRuns: runs.filter((r) => r.run_type === "delivery").length,
+    generationRuns: runs.filter((r) => r.run_type === "generation").length,
     totalRecipients: runs.reduce((sum, r) => sum + r.recipient_count, 0)
   };
 
@@ -178,6 +179,10 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
           <strong>{stats.deliveryRuns}</strong>
         </article>
         <article className="info-card">
+          <span className="status-label">Generation Runs</span>
+          <strong>{stats.generationRuns}</strong>
+        </article>
+        <article className="info-card">
           <span className="status-label">Total Recipients</span>
           <strong>{stats.totalRecipients.toLocaleString()}</strong>
         </article>
@@ -209,6 +214,7 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
           >
             <option value="">Any type</option>
             <option value="delivery">Delivery</option>
+            <option value="generation">Generation</option>
           </select>
         </div>
 
@@ -221,6 +227,8 @@ export function RunDashboardPage({ newsletters, initialRunId = null }: RunDashbo
           >
             <option value="">Any status</option>
             <option value="pending">Pending</option>
+            <option value="generating">Generating</option>
+            <option value="generated">Generated</option>
             <option value="sending">Sending</option>
             <option value="sent">Sent</option>
             <option value="partial">Partial</option>
