@@ -13,6 +13,7 @@ from app.ai_generation import (
 from app.auth import require_authenticated_user
 from app.deps import DbSession
 from app.models import ApiKey, AuditEvent, Provider
+from app.oauth.openai_chatgpt import CHATGPT_SUPPORTED_MODELS
 from app.schemas import (
     ProviderCreateRequest,
     ProviderDetail,
@@ -26,16 +27,16 @@ providers_router = APIRouter(prefix="/providers", tags=["providers"])
 
 PROVIDER_MODEL_CATALOG: dict[str, list[str]] = {}
 
-OPENAI_CHATGPT_RECOMMENDED_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"]
+OPENAI_CHATGPT_RECOMMENDED_MODELS = list(CHATGPT_SUPPORTED_MODELS)
 
 
 def _validate_chatgpt_model(model_name: str | None) -> None:
-    if model_name and model_name not in OPENAI_CHATGPT_RECOMMENDED_MODELS:
+    if model_name and model_name not in CHATGPT_SUPPORTED_MODELS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Model '{model_name}' is not supported for ChatGPT subscription. "
-                f"Supported models: {', '.join(OPENAI_CHATGPT_RECOMMENDED_MODELS)}."
+                f"Supported models: {', '.join(sorted(CHATGPT_SUPPORTED_MODELS))}."
             ),
         )
 

@@ -34,6 +34,12 @@ CLIENT_ID = os.environ.get(
     "PULSE_NEWS_OPENAI_CHATGPT_CLIENT_ID",
     "app_EMoamEEZ73f0CkXaXp7hrann",
 )
+
+# Supported models for ChatGPT subscription generation.
+# Used for validation at provider/newsletter save time and runtime.
+CHATGPT_SUPPORTED_MODELS = frozenset(["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])
+CHATGPT_DEFAULT_MODEL = "gpt-5.4"
+
 AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 TOKEN_URL = "https://auth.openai.com/oauth/token"
 LOOPBACK_REDIRECT_URI = "http://localhost:1455/auth/callback"

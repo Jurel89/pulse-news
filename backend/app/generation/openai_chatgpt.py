@@ -21,19 +21,12 @@ from datetime import UTC, datetime
 
 import httpx
 
+from app.oauth.openai_chatgpt import CHATGPT_DEFAULT_MODEL, CHATGPT_SUPPORTED_MODELS
+
 logger = logging.getLogger(__name__)
 
-# Models known to work on this backend.  Requests with any other model ID
-# are silently normalised to the safe default so we avoid 400 errors.
-_SUPPORTED_MODELS = frozenset(
-    [
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex",
-        "gpt-5.2",
-    ]
-)
-_DEFAULT_MODEL = "gpt-5.4"
+_SUPPORTED_MODELS = CHATGPT_SUPPORTED_MODELS
+_DEFAULT_MODEL = CHATGPT_DEFAULT_MODEL
 _RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 _HTTP_TIMEOUT = httpx.Timeout(120.0)  # SSE streams can be slow to complete
 

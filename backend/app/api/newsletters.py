@@ -30,6 +30,7 @@ from app.models import (
     Provider,
     utc_now,
 )
+from app.oauth.openai_chatgpt import CHATGPT_SUPPORTED_MODELS
 from app.schemas import (
     NewsletterCreateRequest,
     NewsletterDetail,
@@ -714,6 +715,16 @@ def _validate_newsletter_entities(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Resend API key must have provider_type 'resend'.",
+            )
+
+    if provider and provider.provider_type == "openai_chatgpt" and payload.model_name:
+        if payload.model_name not in CHATGPT_SUPPORTED_MODELS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Model '{payload.model_name}' is not supported for ChatGPT subscription. "
+                    f"Supported models: {', '.join(sorted(CHATGPT_SUPPORTED_MODELS))}."
+                ),
             )
 
     _ensure_template_exists(db, payload.template_key)

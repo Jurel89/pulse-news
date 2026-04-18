@@ -117,26 +117,23 @@ def _disable_legacy_chatgpt_manual_keys(session: Session) -> None:
         logger.info(f"Disabled {len(legacy)} legacy ChatGPT manual key(s)")
 
 
-_VALID_CHATGPT_MODELS = frozenset(["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])
-_DEFAULT_CHATGPT_MODEL = "gpt-5.4"
-
-
 def _repair_legacy_chatgpt_models(session: Session) -> None:
     from app.models import Newsletter, Provider
+    from app.oauth.openai_chatgpt import CHATGPT_DEFAULT_MODEL, CHATGPT_SUPPORTED_MODELS
 
     repaired_providers = 0
     providers = session.scalars(
         select(Provider).where(Provider.provider_type == "openai_chatgpt")
     ).all()
     for provider in providers:
-        if provider.default_model and provider.default_model not in _VALID_CHATGPT_MODELS:
+        if provider.default_model and provider.default_model not in CHATGPT_SUPPORTED_MODELS:
             old_model = provider.default_model
-            provider.default_model = _DEFAULT_CHATGPT_MODEL
+            provider.default_model = CHATGPT_DEFAULT_MODEL
             session.add(provider)
             repaired_providers += 1
             logger.warning(
                 f"Repaired provider '{provider.name}' (id={provider.id}) model "
-                f"from '{old_model}' to '{_DEFAULT_CHATGPT_MODEL}'"
+                f"from '{old_model}' to '{CHATGPT_DEFAULT_MODEL}'"
             )
 
     repaired_newsletters = 0
@@ -144,14 +141,14 @@ def _repair_legacy_chatgpt_models(session: Session) -> None:
         select(Newsletter).where(Newsletter.provider_name == "openai_chatgpt")
     ).all()
     for newsletter in newsletters:
-        if newsletter.model_name and newsletter.model_name not in _VALID_CHATGPT_MODELS:
+        if newsletter.model_name and newsletter.model_name not in CHATGPT_SUPPORTED_MODELS:
             old_model = newsletter.model_name
-            newsletter.model_name = _DEFAULT_CHATGPT_MODEL
+            newsletter.model_name = CHATGPT_DEFAULT_MODEL
             session.add(newsletter)
             repaired_newsletters += 1
             logger.warning(
                 f"Repaired newsletter '{newsletter.name}' (id={newsletter.id}) model "
-                f"from '{old_model}' to '{_DEFAULT_CHATGPT_MODEL}'"
+                f"from '{old_model}' to '{CHATGPT_DEFAULT_MODEL}'"
             )
 
     if repaired_providers or repaired_newsletters:

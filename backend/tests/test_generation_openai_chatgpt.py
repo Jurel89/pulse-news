@@ -26,7 +26,6 @@ from app.generation.openai_chatgpt import (
 def test_normalize_model_known_passes_through():
     assert _normalize_model("gpt-5.4") == "gpt-5.4"
     assert _normalize_model("gpt-5.4-mini") == "gpt-5.4-mini"
-    assert _normalize_model("gpt-5.3-codex") == "gpt-5.3-codex"
     assert _normalize_model("gpt-5.2") == "gpt-5.2"
 
 
