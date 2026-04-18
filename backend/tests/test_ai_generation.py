@@ -955,7 +955,7 @@ def test_chatgpt_oauth_falls_back_to_active_when_pinned_is_inactive(
         }
     )
     monkeypatch.setattr(
-        app.ai_generation.generation.openai_chatgpt,
+        app.generation.openai_chatgpt,
         "generate",
         chatgpt_generate_mock,
     )
