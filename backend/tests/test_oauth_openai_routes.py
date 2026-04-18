@@ -855,4 +855,4 @@ def test_provider_test_succeeds_when_expired_but_refreshable(auth_client):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "success"
+    assert data["status"] == "ok"
