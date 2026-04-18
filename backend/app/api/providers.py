@@ -158,6 +158,30 @@ def _uses_oauth_connection(provider_type: str) -> bool:
     return provider_type == "openai_chatgpt"
 
 
+def _validate_chatgpt_oauth_token(api_key: ApiKey) -> bool:
+    """Check that the stored OAuth token can be decrypted and is not expired."""
+    from app.crypto import decrypt_secret
+
+    try:
+        access_token = decrypt_secret(api_key.oauth_access_token)
+    except Exception:
+        return False
+    if not access_token:
+        return False
+
+    expires_at = api_key.oauth_expires_at
+    if expires_at is not None:
+        from datetime import UTC
+        from datetime import datetime as _dt
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if _dt.now(UTC) >= expires_at:
+            return False
+
+    return True
+
+
 def _missing_provider_credential_detail(provider_type: str) -> str:
     if _uses_oauth_connection(provider_type):
         return (
@@ -452,19 +476,26 @@ def test_provider(provider_id: int, request: Request, db: DbSession) -> Provider
             has_active_api_key=False,
         )
 
-    # openai_chatgpt uses OAuth — skip LiteLLM test, just confirm the token is present.
+    # openai_chatgpt uses OAuth — validate token health instead of a LiteLLM ping.
     if provider.provider_type == "openai_chatgpt":
-        has_token = (
-            active_key is not None
-            and getattr(active_key, "auth_type", "api_key") == "oauth"
-            and active_key.oauth_access_token is not None
+        oauth_active = (
+            active_key is not None and getattr(active_key, "auth_type", "api_key") == "oauth"
         )
+        if not oauth_active:
+            return ProviderTestResponse(
+                status="warning",
+                message="ChatGPT OAuth connection required.",
+                provider_type=provider.provider_type,
+                default_model=provider.default_model,
+                has_active_api_key=False,
+            )
+        token_ok = _validate_chatgpt_oauth_token(active_key)
         return ProviderTestResponse(
-            status="ok" if has_token else "warning",
+            status="ok" if token_ok else "warning",
             message=(
-                "ChatGPT OAuth connection is active. Token present."
-                if has_token
-                else "ChatGPT OAuth connection found but access token is missing. Re-connect."
+                "ChatGPT OAuth connection is healthy."
+                if token_ok
+                else "ChatGPT OAuth token is expired or invalid. Re-connect."
             ),
             provider_type=provider.provider_type,
             default_model=provider.default_model,

@@ -210,10 +210,19 @@ def poll_device_code(
         bundle: TokenBundle | None = device_code_poll(payload.device_auth_id, user_code)
     except OpenAIOAuthError as exc:
         logger.warning("Device-code poll error for %s: %s", payload.device_auth_id, exc)
-        _pending_device_auth.pop(payload.device_auth_id, None)
+        # Keep the session alive on transient network failures so the client
+        # can retry the poll. Only clear the session for hard auth failures
+        # that carry a real HTTP status code from OpenAI.
+        if exc.status_code is not None:
+            _pending_device_auth.pop(payload.device_auth_id, None)
+        detail_msg = str(exc)
+        if exc.status_code is None:
+            status_code = status.HTTP_502_BAD_GATEWAY
+        else:
+            status_code = status.HTTP_400_BAD_REQUEST
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Device-code authorization failed: {exc}",
+            status_code=status_code,
+            detail=f"Device-code authorization failed: {detail_msg}",
         ) from exc
 
     if bundle is None:

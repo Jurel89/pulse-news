@@ -419,6 +419,7 @@ def test_device_code_poll_403_authorization_unknown_is_pending():
     mock_response = MagicMock()
     mock_response.status_code = 403
     mock_response.text = '{"error":"deviceauth_authorization_unknown"}'
+    mock_response.json.return_value = {"error": "deviceauth_authorization_unknown"}
 
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -466,6 +467,7 @@ def test_device_code_poll_404_authorization_unknown_is_pending():
     mock_response = MagicMock()
     mock_response.status_code = 404
     mock_response.text = '{"error":"deviceauth_authorization_unknown"}'
+    mock_response.json.return_value = {"error": "deviceauth_authorization_unknown"}
 
     mock_client = MagicMock()
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -476,6 +478,94 @@ def test_device_code_poll_404_authorization_unknown_is_pending():
         result = device_code_poll("dev_auth_123", "USER-CODE")
 
     assert result is None
+
+
+def test_device_code_poll_slow_down_is_pending():
+    """RFC 8628 slow_down must be treated as retryable pending."""
+    from unittest.mock import MagicMock, patch
+
+    from app.oauth.openai_chatgpt import device_code_poll
+
+    mock_response = MagicMock()
+    mock_response.status_code = 400
+    mock_response.text = '{"error":"slow_down","interval":10}'
+    mock_response.json.return_value = {"error": "slow_down", "interval": 10}
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = mock_response
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
+        result = device_code_poll("dev_auth_123", "USER-CODE")
+
+    assert result is None
+
+
+def test_device_code_poll_nested_error_is_pending():
+    """OpenAI sometimes returns nested error.code shapes that must be retryable."""
+    from unittest.mock import MagicMock, patch
+
+    from app.oauth.openai_chatgpt import device_code_poll
+
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = '{"error":{"code":"deviceauth_authorization_unknown"}}'
+    mock_response.json.return_value = {"error": {"code": "deviceauth_authorization_unknown"}}
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = mock_response
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
+        result = device_code_poll("dev_auth_123", "USER-CODE")
+
+    assert result is None
+
+
+def test_device_code_poll_message_only_is_pending():
+    """OpenAI sometimes returns a plain-text message instead of structured error."""
+    from unittest.mock import MagicMock, patch
+
+    from app.oauth.openai_chatgpt import device_code_poll
+
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = '"Device authorization is unknown"'
+    mock_response.json.return_value = "Device authorization is unknown"
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = mock_response
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
+        result = device_code_poll("dev_auth_123", "USER-CODE")
+
+    assert result is None
+
+
+def test_device_code_poll_network_error_is_oauth_error():
+    """Network / timeout failures must be wrapped in OpenAIOAuthError."""
+    from unittest.mock import MagicMock, patch
+
+    import httpx
+    import pytest
+
+    from app.oauth.openai_chatgpt import OpenAIOAuthError, device_code_poll
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.post.side_effect = httpx.ConnectTimeout("Connection timed out")
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            device_code_poll("dev_auth_123", "USER-CODE")
+
+    assert "network error" in str(exc_info.value).lower()
+    assert exc_info.value.status_code is None
 
 
 def test_oauth_delete_removes_connection(auth_client):

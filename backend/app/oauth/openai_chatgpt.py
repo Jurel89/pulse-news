@@ -122,11 +122,14 @@ def build_authorize_url(state: str, challenge: str, redirect_uri: str) -> str:
 
 def device_code_start() -> DeviceCodeInit:
     """Initiate a device-code flow.  Returns the user-code to display."""
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.post(
-            DEVICE_USERCODE_URL,
-            json={"client_id": CLIENT_ID, "scope": SCOPE},
-        )
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+            response = client.post(
+                DEVICE_USERCODE_URL,
+                json={"client_id": CLIENT_ID, "scope": SCOPE},
+            )
+    except httpx.HTTPError as exc:
+        raise OpenAIOAuthError(f"Device-code init network error: {exc}") from exc
     if response.status_code not in (200, 201):
         raise OpenAIOAuthError(
             f"Device-code init failed ({response.status_code}): {response.text[:200]}",
@@ -150,35 +153,95 @@ def device_code_poll(device_auth_id: str, user_code: str) -> TokenBundle | None:
     On success, exchanges the returned authorization_code and returns a
     TokenBundle.
     """
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.post(
-            DEVICE_TOKEN_URL,
-            json={
-                "client_id": CLIENT_ID,
-                "device_auth_id": device_auth_id,
-                "user_code": user_code,
-            },
-        )
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+            response = client.post(
+                DEVICE_TOKEN_URL,
+                json={
+                    "client_id": CLIENT_ID,
+                    "device_auth_id": device_auth_id,
+                    "user_code": user_code,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise OpenAIOAuthError(f"Device-code poll network error: {exc}") from exc
 
     if response.status_code == 202:
-        # Still pending — caller should poll again after interval.
         return None
 
-    if response.status_code not in (200, 201):
-        body = response.text[:200]
-        # Retryable "still waiting" states — OpenAI returns these while the
-        # user has not yet completed device authorization. OpenCode treats
-        # both 403 and 404 as pending, so we match that behaviour.
-        if response.status_code == 400 and "authorization_pending" in body:
-            return None
-        if response.status_code == 403 and "deviceauth_authorization_unknown" in body:
-            return None
-        if response.status_code == 404 and "deviceauth_authorization_unknown" in body:
-            return None
-        raise OpenAIOAuthError(
-            f"Device-code poll failed ({response.status_code}): {body}",
-            status_code=response.status_code,
+    if response.status_code in (200, 201):
+        data = response.json()
+        authorization_code = data.get("authorization_code") or data.get("code")
+        server_verifier = data.get("code_verifier") or data.get("verifier") or ""
+        if not authorization_code:
+            if "access_token" in data:
+                return _build_bundle_from_token_response(data)
+            raise OpenAIOAuthError(
+                f"Device-code poll succeeded but no authorization_code in response: {data}"
+            )
+        return _exchange_code_internal(
+            code=authorization_code,
+            verifier=server_verifier,
+            redirect_uri=DEVICE_CODE_REDIRECT_URI,
         )
+
+    is_pending, retry_after = _parse_poll_error(response)
+    if is_pending:
+        return None
+
+    body = response.text[:200]
+    raise OpenAIOAuthError(
+        f"Device-code poll failed ({response.status_code}): {body}",
+        status_code=response.status_code,
+    )
+
+
+def _parse_poll_error(response: httpx.Response) -> tuple[bool, int | None]:
+    """Return (is_pending, retry_after_seconds) from a non-2xx poll response.
+
+    OpenAI returns various retryable states while the user has not yet
+    completed device authorization. We check the JSON error payload for:
+
+    - error: "authorization_pending" | "slow_down" | "deviceauth_authorization_unknown"
+    - error.code: same values (nested shape)
+    - error_description / error.message: "Device authorization is unknown"
+
+    All of these mean "keep polling".
+    """
+    raw = response.text[:500]
+    retry_after: int | None = None
+    try:
+        data = response.json()
+    except Exception:
+        data = {}
+
+    error_str = ""
+    error_code = ""
+    error_msg = ""
+    error_desc = ""
+
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, str):
+            error_str = err
+        elif isinstance(err, dict):
+            error_code = err.get("code") or ""
+            error_msg = err.get("message") or ""
+        error_desc = data.get("error_description") or ""
+        raw_interval = data.get("interval")
+        if isinstance(raw_interval, int):
+            retry_after = raw_interval
+
+    pending_codes = {"authorization_pending", "slow_down", "deviceauth_authorization_unknown"}
+    for candidate in (error_str, error_code):
+        if candidate in pending_codes:
+            return True, retry_after
+
+    for text in (error_msg, error_desc, raw):
+        if "device authorization is unknown" in text.lower():
+            return True, retry_after
+
+    return False, retry_after
 
     data = response.json()
     # Device-code endpoint returns an authorization_code + server-generated verifier.
@@ -206,17 +269,20 @@ def exchange_code(code: str, verifier: str, redirect_uri: str) -> TokenBundle:
 
 
 def _exchange_code_internal(code: str, verifier: str, redirect_uri: str) -> TokenBundle:
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.post(
-            TOKEN_URL,
-            data={
-                "client_id": CLIENT_ID,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "code_verifier": verifier,
-            },
-        )
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+            response = client.post(
+                TOKEN_URL,
+                data={
+                    "client_id": CLIENT_ID,
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": verifier,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise OpenAIOAuthError(f"Token exchange network error: {exc}") from exc
     if response.status_code not in (200, 201):
         raise OpenAIOAuthError(
             f"Token exchange failed ({response.status_code}): {response.text[:200]}",
@@ -233,15 +299,18 @@ def refresh(refresh_token_value: str) -> TokenBundle:
     next refresh would send an empty token and the session would become
     unrecoverable.
     """
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.post(
-            TOKEN_URL,
-            data={
-                "client_id": CLIENT_ID,
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token_value,
-            },
-        )
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+            response = client.post(
+                TOKEN_URL,
+                data={
+                    "client_id": CLIENT_ID,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token_value,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise OpenAIOAuthError(f"Token refresh network error: {exc}") from exc
     if response.status_code not in (200, 201):
         raise OpenAIOAuthError(
             f"Token refresh failed ({response.status_code}): {response.text[:200]}",
