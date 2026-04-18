@@ -77,13 +77,13 @@ def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
         masked_key=masked,
         from_email=api_key.from_email,
         is_active=api_key.is_active,
+        auth_type=api_key.auth_type,
+        oauth_plan_type=api_key.oauth_plan_type,
+        oauth_account_id=api_key.oauth_account_id,
+        oauth_expires_at=api_key.oauth_expires_at,
         last_used_at=api_key.last_used_at,
         created_at=api_key.created_at,
         updated_at=api_key.updated_at,
-        auth_type=auth_type,
-        oauth_plan_type=getattr(api_key, "oauth_plan_type", None),
-        oauth_account_id=getattr(api_key, "oauth_account_id", None),
-        oauth_expires_at=getattr(api_key, "oauth_expires_at", None),
     )
 
 

@@ -5,6 +5,7 @@ import { api } from "../../lib/api";
 import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 import type { ProviderTestResponse } from "../../lib/api";
 import { ConnectChatGPTModal } from "../api-keys/ConnectChatGPTModal";
+import type { ApiKeySummary } from "../api-keys/api-key-types";
 
 type ProvidersPageProps = {
   providers: ProviderSummary[];
@@ -223,7 +224,7 @@ export function ProviderEditor({
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState<string | null>(null);
-  const [apiKeys, setApiKeys] = useState<Array<{ id: number; name: string; provider_type: string; is_active: boolean }>>([]);
+  const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
   const [apiKeysLoading, setApiKeysLoading] = useState(false);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(false);
@@ -269,10 +270,14 @@ export function ProviderEditor({
   );
 
   const matchingApiKeys = useMemo(() => {
-    return apiKeys.filter(key => 
+    return apiKeys.filter(key =>
       key.provider_type === form.provider_type && key.is_active
     );
   }, [apiKeys, form.provider_type]);
+
+  const hasMatchingOAuthKey = useMemo(() => {
+    return matchingApiKeys.some(key => key.auth_type === "oauth");
+  }, [matchingApiKeys]);
 
   const hasMatchingApiKey = matchingApiKeys.length > 0;
 
@@ -452,8 +457,8 @@ export function ProviderEditor({
               )}
             </label>
 
-            {!hasMatchingApiKey && form.provider_type && !apiKeysLoading && (
-              selectedPreset?.auth_mode === "oauth" ? (
+            {selectedPreset?.auth_mode === "oauth"
+              ? !hasMatchingOAuthKey && form.provider_type && !apiKeysLoading && (
                 <div className="form-info">
                   <strong>ChatGPT Subscription</strong> uses OAuth instead of an API key.
                   {" "}
@@ -465,13 +470,14 @@ export function ProviderEditor({
                   </a>
                   {" "}to enable this provider.
                 </div>
-              ) : (
+              )
+              : !hasMatchingApiKey && form.provider_type && !apiKeysLoading && (
                 <div className="form-error">
                   <strong>Warning:</strong> No active API key found for {form.provider_type}.
                   You must <a href="#" onClick={(e) => { e.preventDefault(); onCancel(); }}>configure an API key</a> before using this provider.
                 </div>
               )
-            )}
+            }
           </>
         ) : null}
 

@@ -443,13 +443,13 @@ class ApiKeySummary(BaseModel):
     masked_key: str
     from_email: str | None = None
     is_active: bool
-    last_used_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
     auth_type: str = "api_key"
     oauth_plan_type: str | None = None
     oauth_account_id: str | None = None
     oauth_expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -473,7 +473,10 @@ class ApiKeyCreateRequest(BaseModel):
     @field_validator("provider_type")
     @classmethod
     def validate_provider_type(cls, value: str) -> str:
-        return _validate_supported_provider_name(value, field_name="provider_type")
+        value = _validate_supported_provider_name(value, field_name="provider_type")
+        if value == "openai_chatgpt":
+            raise ValueError("openai_chatgpt uses OAuth and cannot be created as a manual API key.")
+        return value
 
     @field_validator("key_value")
     @classmethod
@@ -501,7 +504,10 @@ class ApiKeyUpdateRequest(BaseModel):
     @field_validator("provider_type")
     @classmethod
     def validate_provider_type(cls, value: str) -> str:
-        return _validate_supported_provider_name(value, field_name="provider_type")
+        value = _validate_supported_provider_name(value, field_name="provider_type")
+        if value == "openai_chatgpt":
+            raise ValueError("openai_chatgpt uses OAuth and cannot be created as a manual API key.")
+        return value
 
     @field_validator("key_value")
     @classmethod

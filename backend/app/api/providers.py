@@ -164,10 +164,7 @@ def _missing_provider_credential_detail(provider_type: str) -> str:
             f"No active OAuth connection found for provider type '{provider_type}'. "
             "Connect a ChatGPT account first."
         )
-    return (
-        f"No active API key found for provider type '{provider_type}'. "
-        "Create an API key first."
-    )
+    return f"No active API key found for provider type '{provider_type}'. Create an API key first."
 
 
 def get_provider_models(provider: Provider, *, db: DbSession | None = None) -> list[str]:

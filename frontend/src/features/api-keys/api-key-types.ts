@@ -6,14 +6,14 @@ export type ApiKeySummary = {
   provider_type: string;
   masked_key: string;
   is_active: boolean;
-  last_used_at: string | null;
-  created_at: string;
-  updated_at: string;
-  from_email: string | null;
   auth_type: string;
   oauth_plan_type: string | null;
   oauth_account_id: string | null;
   oauth_expires_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+  from_email: string | null;
 };
 
 export type ApiKeyDetail = ApiKeySummary;

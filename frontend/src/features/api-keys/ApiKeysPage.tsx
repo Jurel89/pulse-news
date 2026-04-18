@@ -260,7 +260,9 @@ export function ApiKeyEditor({
 
   const providerOptions = useMemo(
     () => [
-      ...getProviderTypeOptionsFromPresets(presets),
+      ...getProviderTypeOptionsFromPresets(presets).filter(
+        (preset) => preset.value !== "openai_chatgpt"
+      ),
       { value: "resend", label: "Resend" }
     ],
     [presets]
