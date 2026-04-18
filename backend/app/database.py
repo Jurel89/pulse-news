@@ -159,6 +159,32 @@ def _repair_legacy_chatgpt_models(session: Session) -> None:
         )
 
 
+def _disable_broken_chatgpt_oauth_rows(session: Session) -> None:
+    from app.models import ApiKey
+
+    broken = session.scalars(
+        select(ApiKey).where(
+            ApiKey.provider_type == "openai_chatgpt",
+            ApiKey.auth_type == "oauth",
+            ApiKey.is_active.is_(True),
+        )
+    ).all()
+    disabled_count = 0
+    for key in broken:
+        has_refresh = bool(key.oauth_refresh_token and key.oauth_refresh_token.strip())
+        if not has_refresh:
+            key.is_active = False
+            session.add(key)
+            disabled_count += 1
+            logger.warning(
+                f"Disabled broken ChatGPT OAuth connection '{key.name}' (id={key.id}) "
+                f"because it has no refresh token and cannot be refreshed."
+            )
+    if disabled_count:
+        session.commit()
+        logger.info(f"Disabled {disabled_count} broken ChatGPT OAuth connection(s)")
+
+
 def init_database() -> None:
     get_settings()
 
@@ -167,6 +193,7 @@ def init_database() -> None:
 
     with get_session_maker()() as session:
         _disable_legacy_chatgpt_manual_keys(session)
+        _disable_broken_chatgpt_oauth_rows(session)
         _repair_legacy_chatgpt_models(session)
         _repair_invalid_provider_state(session)
         _ensure_system_settings_row(session)

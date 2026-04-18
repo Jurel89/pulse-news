@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from app.crypto import decrypt_secret
@@ -425,9 +426,12 @@ def _generate_via_openai_chatgpt(
                 "Connect a ChatGPT account via Settings > API Keys.",
             )
 
-        model = _resolved_model_name(newsletter).strip() or "gpt-5.4"
+        # Record usage on the actually-resolved key so last_used_at is accurate
+        # even when we fall back from an inactive pinned key.
+        api_key_row.last_used_at = datetime.now(UTC)
+        session.add(api_key_row)
 
-        from datetime import UTC, datetime
+        model = _resolved_model_name(newsletter).strip() or "gpt-5.4"
 
         today = datetime.now(UTC).date()
         iso_week = today.isocalendar()
@@ -587,8 +591,6 @@ def generate_newsletter_content(newsletter: Newsletter, *, db_session=None) -> G
     # instead of defaulting to its training cutoff. Without this, Kimi
     # confidently produces e.g. Week 25 / June 2025 content even with the
     # web_search tool available.
-    from datetime import UTC, datetime
-
     today = datetime.now(UTC).date()
     iso_week = today.isocalendar()
     current_date_line = (
