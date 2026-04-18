@@ -165,18 +165,26 @@ type ApiRequestInit = Omit<RequestInit, "body"> & {
   jsonBody?: unknown;
 };
 
+const TRANSPORT_ERROR_MESSAGE = "[502] Network request failed.";
+
 async function request<T>(path: string, init?: ApiRequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.jsonBody !== undefined) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`/api${path}`, {
-    ...init,
-    headers,
-    credentials: "include",
-    body: init?.jsonBody !== undefined ? JSON.stringify(init.jsonBody) : undefined
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`/api${path}`, {
+      ...init,
+      headers,
+      credentials: "include",
+      body: init?.jsonBody !== undefined ? JSON.stringify(init.jsonBody) : undefined
+    });
+  } catch {
+    throw new Error(TRANSPORT_ERROR_MESSAGE);
+  }
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: "Request failed." }));
