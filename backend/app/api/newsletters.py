@@ -603,11 +603,24 @@ def _ensure_template_exists(db: DbSession, template_key: str) -> None:
 
 
 def _get_active_api_key_for_provider(db: DbSession, provider_type: str) -> ApiKey | None:
-    return db.scalar(
-        select(ApiKey).where(
-            ApiKey.provider_type == provider_type,
-            ApiKey.is_active.is_(True),
+    query = select(ApiKey).where(
+        ApiKey.provider_type == provider_type,
+        ApiKey.is_active.is_(True),
+    )
+    if provider_type == "openai_chatgpt":
+        query = query.where(ApiKey.auth_type == "oauth")
+    return db.scalar(query)
+
+
+def _missing_provider_credential_detail(provider: Provider) -> str:
+    if provider.provider_type == "openai_chatgpt":
+        return (
+            f"Provider '{provider.name}' has no active OAuth connection configured. "
+            f"Connect a ChatGPT account for provider type '{provider.provider_type}' first."
         )
+    return (
+        f"Provider '{provider.name}' has no active API key configured. "
+        f"Create an API key for provider type '{provider.provider_type}' first."
     )
 
 
@@ -637,11 +650,7 @@ def _validate_newsletter_entities(
         if active_key is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Provider '{provider.name}' has no active API key configured. "
-                    f"Create an API key for provider type "
-                    f"'{provider.provider_type}' first."
-                ),
+                detail=_missing_provider_credential_detail(provider),
             )
 
     elif payload.provider_name:
@@ -664,11 +673,7 @@ def _validate_newsletter_entities(
         if active_key is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Provider '{provider.name}' has no active API key configured. "
-                    f"Create an API key for provider type "
-                    f"'{provider.provider_type}' first."
-                ),
+                detail=_missing_provider_credential_detail(provider),
             )
 
     api_key: ApiKey | None = None

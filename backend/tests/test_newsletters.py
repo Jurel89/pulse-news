@@ -320,6 +320,50 @@ def test_run_hard_stops_when_generation_fails(client: TestClient, monkeypatch):
     assert any(e["status"] == "failed" for e in events)
 
 
+def test_newsletter_validation_requires_chatgpt_oauth_connection(client: TestClient):
+    from app.database import get_session_maker
+    from app.models import Provider
+
+    bootstrap_operator(client)
+
+    session = get_session_maker()()
+    provider = Provider(
+        name="ChatGPT Subscription",
+        provider_type="openai_chatgpt",
+        is_enabled=True,
+        default_model="gpt-5.4",
+    )
+    session.add(provider)
+    session.commit()
+    session.refresh(provider)
+    provider_id = provider.id
+    session.close()
+
+    response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "ChatGPT Newsletter",
+            "description": "Needs an OAuth-backed provider",
+            "prompt": "Summarize the top AI product launches this week.",
+            "provider_id": provider_id,
+            "provider_name": "openai_chatgpt",
+            "model_name": "gpt-5.4",
+            "template_key": "signal",
+            "audience_name": "operators",
+            "delivery_topic": "chatgpt-newsletter",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "recipient_import_text": "reader@example.com",
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "OAuth connection" in detail
+    assert "API key" not in detail
+
+
 def test_schedule_pause_and_resume_flow(client: TestClient):
     bootstrap_operator(client)
     create_test_provider(client, "openai")

@@ -423,7 +423,7 @@ def _generate_via_openai_chatgpt(
                 "Connect a ChatGPT account via Settings > API Keys.",
             )
 
-        model = _resolved_model_name(newsletter).strip() or "gpt-5.1"
+        model = _resolved_model_name(newsletter).strip() or "gpt-5.4"
 
         from datetime import UTC, datetime
 
@@ -745,6 +745,9 @@ def discover_models_for_provider(
     api_key: str | None = None,
     configuration: str | None = None,
 ) -> list[str]:
+    if provider_type == "openai_chatgpt":
+        return []
+
     if api_key:
         try:
             from litellm import get_valid_models

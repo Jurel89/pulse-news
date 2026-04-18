@@ -26,6 +26,8 @@ providers_router = APIRouter(prefix="/providers", tags=["providers"])
 
 PROVIDER_MODEL_CATALOG: dict[str, list[str]] = {}
 
+OPENAI_CHATGPT_RECOMMENDED_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex"]
+
 RECOMMENDED_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o-mini", "gpt-4o", "o4-mini"],
     "anthropic": ["claude-3-5-sonnet-latest", "claude-3-7-sonnet-latest"],
@@ -38,15 +40,7 @@ RECOMMENDED_MODELS: dict[str, list[str]] = {
     ],
     "zai": ["glm-5.1", "glm-5-turbo"],
     "kimi": ["kimi-k2.5", "kimi-k2-turbo-preview"],
-    "openai_chatgpt": [
-        "gpt-5.1-codex",
-        "gpt-5.1",
-        "gpt-5.2-codex",
-        "gpt-5.2",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex-mini",
-        "codex-mini-latest",
-    ],
+    "openai_chatgpt": OPENAI_CHATGPT_RECOMMENDED_MODELS,
 }
 
 PROVIDER_PRESETS = [
@@ -107,15 +101,7 @@ PROVIDER_PRESETS = [
         "name": "OpenAI ChatGPT (Subscription)",
         "adapter": "openai_chatgpt",
         "base_url": "https://chatgpt.com/backend-api",
-        "recommended_models": [
-            "gpt-5.1-codex",
-            "gpt-5.1",
-            "gpt-5.2-codex",
-            "gpt-5.2",
-            "gpt-5.1-codex-max",
-            "gpt-5.1-codex-mini",
-            "codex-mini-latest",
-        ],
+        "recommended_models": OPENAI_CHATGPT_RECOMMENDED_MODELS,
         "supports_discovery": False,
         # Signals to the frontend that this provider uses OAuth rather than an API key.
         "auth_mode": "oauth",
@@ -168,9 +154,25 @@ def _safe_decrypt(key_value: str) -> str | None:
         return None
 
 
+def _uses_oauth_connection(provider_type: str) -> bool:
+    return provider_type == "openai_chatgpt"
+
+
+def _missing_provider_credential_detail(provider_type: str) -> str:
+    if _uses_oauth_connection(provider_type):
+        return (
+            f"No active OAuth connection found for provider type '{provider_type}'. "
+            "Connect a ChatGPT account first."
+        )
+    return (
+        f"No active API key found for provider type '{provider_type}'. "
+        "Create an API key first."
+    )
+
+
 def get_provider_models(provider: Provider, *, db: DbSession | None = None) -> list[str]:
     api_key: str | None = None
-    if db is not None:
+    if db is not None and not _uses_oauth_connection(provider.provider_type):
         active_key = _get_active_api_key(db, provider.provider_type)
         if active_key:
             api_key = _safe_decrypt(active_key.key_value)
@@ -229,10 +231,7 @@ def create_provider(
     if active_key is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"No active API key found for provider type "
-                f"'{payload.provider_type}'. Create an API key first."
-            ),
+            detail=_missing_provider_credential_detail(payload.provider_type),
         )
 
     provider = Provider(
@@ -272,7 +271,7 @@ def list_preset_models(
     require_authenticated_user(request, db)
     active_key = _get_active_api_key(db, provider_type)
     api_key: str | None = None
-    if active_key:
+    if active_key and not _uses_oauth_connection(provider_type):
         api_key = _safe_decrypt(active_key.key_value)
     models = discover_models_for_provider(provider_type, api_key=api_key)
     recommended = RECOMMENDED_MODELS.get(provider_type, [])
@@ -290,7 +289,7 @@ def list_preset_models(
     verified_model: str | None = None
     verification_message: str | None = None
     model_to_verify = recommended[0] if recommended else None
-    if model_to_verify:
+    if model_to_verify and not _uses_oauth_connection(provider_type):
         active_key = _get_active_api_key(db, provider_type)
         if active_key:
             api_key = _safe_decrypt(active_key.key_value)
@@ -331,10 +330,7 @@ def update_provider(
     if active_key is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"No active API key found for provider type "
-                f"'{effective_provider_type}'. Create an API key first."
-            ),
+            detail=_missing_provider_credential_detail(effective_provider_type),
         )
 
     provider.name = payload.name or provider.name
@@ -405,7 +401,7 @@ def list_provider_models(
     model_to_verify = (
         provider.default_model or (RECOMMENDED_MODELS.get(provider.provider_type, [None])[0])
     )
-    if model_to_verify:
+    if model_to_verify and not _uses_oauth_connection(provider.provider_type):
         active_key = _get_active_api_key(db, provider.provider_type)
         if active_key:
             api_key = _safe_decrypt(active_key.key_value)

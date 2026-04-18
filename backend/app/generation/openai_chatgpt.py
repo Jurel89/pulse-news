@@ -27,16 +27,13 @@ logger = logging.getLogger(__name__)
 # are silently normalised to the safe default so we avoid 400 errors.
 _SUPPORTED_MODELS = frozenset(
     [
-        "gpt-5.2-codex",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
         "gpt-5.2",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-mini",
-        "gpt-5.1",
-        "codex-mini-latest",
     ]
 )
-_DEFAULT_MODEL = "gpt-5.1"
+_DEFAULT_MODEL = "gpt-5.4"
 _RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 _HTTP_TIMEOUT = httpx.Timeout(120.0)  # SSE streams can be slow to complete
 

@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
+CHATGPT_SUBSCRIPTION_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex"]
+
 # ---------------------------------------------------------------------------
 # Helpers shared with existing tests
 # ---------------------------------------------------------------------------
@@ -70,6 +72,72 @@ def _make_token_bundle(plan="plus", account_id="acct_test_1234"):
         plan_type=plan,
         id_token=None,
     )
+
+
+def _create_openai_provider(
+    auth_client,
+    *,
+    provider_type: str = "openai",
+    default_model: str,
+) -> int:
+    key_resp = auth_client.post(
+        "/api/api-keys",
+        json={
+            "name": f"{provider_type} key",
+            "provider_type": provider_type,
+            "key_value": f"sk-test-{provider_type}-key-12345",
+            "is_active": True,
+        },
+    )
+    assert key_resp.status_code == 201
+
+    provider_resp = auth_client.post(
+        "/api/providers",
+        json={
+            "name": f"{provider_type} provider",
+            "provider_type": provider_type,
+            "is_enabled": True,
+            "default_model": default_model,
+        },
+    )
+    assert provider_resp.status_code == 201
+    return provider_resp.json()["id"]
+
+
+def _connect_chatgpt_oauth(
+    auth_client,
+    *,
+    device_auth_id: str = "dev_chatgpt_models",
+    user_code: str = "CHAT-5555",
+    plan: str = "plus",
+    account_id: str = "acct_test_1234",
+) -> int:
+    from app.oauth.openai_chatgpt import DeviceCodeInit
+
+    fake_init = DeviceCodeInit(
+        device_auth_id=device_auth_id,
+        user_code=user_code,
+        interval=5,
+        expires_in=900,
+        verification_uri="https://auth.openai.com/codex/device",
+    )
+
+    with patch("app.api.oauth_openai.device_code_start", return_value=fake_init):
+        start_resp = auth_client.post("/api/oauth/openai/device/start")
+
+    assert start_resp.status_code == 201
+
+    bundle = _make_token_bundle(plan=plan, account_id=account_id)
+
+    with patch("app.api.oauth_openai.device_code_poll", return_value=bundle):
+        poll_resp = auth_client.post(
+            "/api/oauth/openai/device/poll",
+            json={"device_auth_id": device_auth_id},
+        )
+
+    assert poll_resp.status_code == 200
+    assert poll_resp.json()["status"] == "complete"
+    return poll_resp.json()["api_key_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +222,114 @@ def test_device_poll_complete_creates_api_key(auth_client):
     data = resp.json()
     assert data["status"] == "complete"
     assert data["api_key_id"] is not None
+
+
+def test_create_provider_requires_chatgpt_oauth_connection(auth_client):
+    response = auth_client.post(
+        "/api/providers",
+        json={
+            "name": "ChatGPT Subscription",
+            "provider_type": "openai_chatgpt",
+            "is_enabled": True,
+            "default_model": "gpt-5.4",
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "OAuth connection" in detail
+    assert "API key" not in detail
+
+
+def test_update_provider_to_chatgpt_requires_oauth_connection(auth_client):
+    provider_id = _create_openai_provider(
+        auth_client,
+        provider_type="openai",
+        default_model="gpt-4o-mini",
+    )
+
+    response = auth_client.put(
+        f"/api/providers/{provider_id}",
+        json={
+            "name": "ChatGPT Subscription",
+            "provider_type": "openai_chatgpt",
+            "is_enabled": True,
+            "default_model": "gpt-5.4",
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "OAuth connection" in detail
+    assert "API key" not in detail
+
+
+def test_preset_models_skip_oauth_sentinel_validation(auth_client):
+    _connect_chatgpt_oauth(auth_client)
+
+    def fail_on_oauth_sentinel(provider_type: str, *, api_key=None, configuration=None):
+        assert api_key != "oauth:v1"
+        return []
+
+    with (
+        patch("app.api.providers.discover_models_for_provider", side_effect=fail_on_oauth_sentinel),
+        patch(
+            "app.api.providers.validate_provider_model",
+            side_effect=AssertionError(
+                "ChatGPT OAuth providers should not use LiteLLM verification."
+            ),
+        ),
+    ):
+        response = auth_client.get("/api/providers/presets/openai_chatgpt/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["models"] == CHATGPT_SUBSCRIPTION_MODELS
+    assert payload["default_model"] == "gpt-5.4"
+    assert payload["verified_model"] is None
+    assert payload["verification_message"] is None
+
+
+def test_provider_models_skip_oauth_sentinel_validation(auth_client):
+    _connect_chatgpt_oauth(
+        auth_client,
+        device_auth_id="dev_provider_models",
+        user_code="MODL-6666",
+    )
+
+    provider_resp = auth_client.post(
+        "/api/providers",
+        json={
+            "name": "ChatGPT Subscription",
+            "provider_type": "openai_chatgpt",
+            "is_enabled": True,
+            "default_model": "gpt-5.4",
+        },
+    )
+    assert provider_resp.status_code == 201
+    provider_id = provider_resp.json()["id"]
+
+    def fail_on_oauth_sentinel(provider_type: str, *, api_key=None, configuration=None):
+        assert api_key != "oauth:v1"
+        return []
+
+    with (
+        patch("app.api.providers.discover_models_for_provider", side_effect=fail_on_oauth_sentinel),
+        patch(
+            "app.api.providers.validate_provider_model",
+            side_effect=AssertionError(
+                "ChatGPT OAuth providers should not use LiteLLM verification."
+            ),
+        ),
+    ):
+        response = auth_client.get(f"/api/providers/{provider_id}/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["models"] == CHATGPT_SUBSCRIPTION_MODELS
+    assert payload["default_model"] == "gpt-5.4"
+    assert payload["verified_model"] is None
+    assert payload["verification_message"] is None
 
 
 def test_oauth_status_connected(auth_client):

@@ -22,14 +22,15 @@ from app.generation.openai_chatgpt import (
 
 
 def test_normalize_model_known_passes_through():
-    assert _normalize_model("gpt-5.1-codex") == "gpt-5.1-codex"
+    assert _normalize_model("gpt-5.4") == "gpt-5.4"
+    assert _normalize_model("gpt-5.4-mini") == "gpt-5.4-mini"
+    assert _normalize_model("gpt-5.3-codex") == "gpt-5.3-codex"
     assert _normalize_model("gpt-5.2") == "gpt-5.2"
-    assert _normalize_model("codex-mini-latest") == "codex-mini-latest"
 
 
 def test_normalize_model_unknown_maps_to_default():
-    assert _normalize_model("gpt-4o") == "gpt-5.1"
-    assert _normalize_model("unknown-model") == "gpt-5.1"
+    assert _normalize_model("gpt-5.1") == "gpt-5.4"
+    assert _normalize_model("unknown-model") == "gpt-5.4"
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ def test_generate_correct_url_headers_body():
         generate(
             api_key_row=api_key_row,
             prompt="test prompt",
-            model="gpt-5.1-codex",
+            model="gpt-5.4",
             web_search=True,
             db_session=db_session,
         )
@@ -202,8 +203,8 @@ def test_generate_normalizes_unknown_model():
             db_session=db_session,
         )
 
-    assert captured_model["model"] == "gpt-5.1"
-    assert result.normalized_model == "gpt-5.1"
+    assert captured_model["model"] == "gpt-5.4"
+    assert result.normalized_model == "gpt-5.4"
 
 
 def test_generate_refreshes_near_expired_token():
@@ -237,7 +238,7 @@ def test_generate_refreshes_near_expired_token():
         generate(
             api_key_row=api_key_row,
             prompt="test",
-            model="gpt-5.1",
+            model="gpt-5.4",
             web_search=False,
             db_session=db_session,
         )

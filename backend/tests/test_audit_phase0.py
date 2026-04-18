@@ -5,6 +5,8 @@ from importlib import reload
 import pytest
 from fastapi.testclient import TestClient
 
+CHATGPT_SUBSCRIPTION_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex"]
+
 
 def create_test_api_key(client: TestClient, provider_type: str = "openai") -> int:
     response = client.post(
@@ -103,6 +105,7 @@ def test_provider_presets_endpoint_returns_presets(client: TestClient):
     assert "anthropic" in keys
     assert "zai" in keys
     assert "kimi" in keys
+    assert "openai_chatgpt" in keys
     for preset in presets:
         assert "key" in preset
         assert "name" in preset
@@ -111,6 +114,11 @@ def test_provider_presets_endpoint_returns_presets(client: TestClient):
 
     kimi_preset = next(p for p in presets if p["key"] == "kimi")
     assert kimi_preset["base_url"] == "https://api.kimi.com/coding/v1"
+
+    openai_chatgpt_preset = next(p for p in presets if p["key"] == "openai_chatgpt")
+    assert openai_chatgpt_preset["auth_mode"] == "oauth"
+    assert openai_chatgpt_preset["supports_discovery"] is False
+    assert openai_chatgpt_preset["recommended_models"] == CHATGPT_SUBSCRIPTION_MODELS
 
 
 def test_provider_toggle_preserves_configuration(client: TestClient):
