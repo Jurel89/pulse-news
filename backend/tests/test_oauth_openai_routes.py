@@ -802,3 +802,57 @@ def test_provider_test_rejects_expired_oauth_token(auth_client):
     data = resp.json()
     assert data["status"] == "warning"
     assert "expired" in data["message"].lower() or "invalid" in data["message"].lower()
+
+
+def test_provider_test_succeeds_when_expired_but_refreshable(auth_client):
+    """Test Connection must succeed when the access token is expired but refresh works."""
+    from datetime import UTC
+    from datetime import datetime as _dt
+    from unittest.mock import patch
+
+    from app.crypto import encrypt_secret
+    from app.database import get_session_maker
+    from app.models import ApiKey, Provider
+    from app.oauth.openai_chatgpt import TokenBundle
+
+    session = get_session_maker()()
+    provider = Provider(
+        name="ChatGPT Subscription",
+        provider_type="openai_chatgpt",
+        is_enabled=True,
+        default_model="gpt-5.4",
+    )
+    session.add(provider)
+    session.commit()
+    session.refresh(provider)
+    provider_id = provider.id
+
+    expired_key = ApiKey(
+        name="ChatGPT Plus",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value=encrypt_secret("oauth:v1"),
+        oauth_access_token=encrypt_secret("expired_token"),
+        oauth_refresh_token=encrypt_secret("valid_refresh"),
+        oauth_expires_at=_dt.now(UTC) - timedelta(hours=1),
+        is_active=True,
+    )
+    session.add(expired_key)
+    session.commit()
+    session.close()
+
+    new_bundle = TokenBundle(
+        access_token="new_access",
+        refresh_token="new_refresh",
+        expires_at=_dt.now(UTC) + timedelta(hours=1),
+        account_id="acct_test",
+        plan_type="plus",
+        id_token=None,
+    )
+
+    with patch("app.api.providers._oauth.refresh", return_value=new_bundle):
+        resp = auth_client.post(f"/api/providers/{provider_id}/test")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"

@@ -172,8 +172,17 @@ def _uses_oauth_connection(provider_type: str) -> bool:
 
 
 def _validate_chatgpt_oauth_token(api_key: ApiKey) -> bool:
-    """Check that the stored OAuth token can be decrypted and is not expired."""
+    """Check that the stored OAuth token is usable.
+
+    If the access token is expired but a refresh token exists, attempt a
+    refresh — matching the runtime behavior that auto-refreshes before
+    generation.  Only report failure if the token is truly unrecoverable.
+    """
+    from datetime import UTC
+    from datetime import datetime as _dt
+
     from app.crypto import decrypt_secret
+    from app.oauth import openai_chatgpt as _oauth
 
     try:
         access_token = decrypt_secret(api_key.oauth_access_token)
@@ -183,14 +192,21 @@ def _validate_chatgpt_oauth_token(api_key: ApiKey) -> bool:
         return False
 
     expires_at = api_key.oauth_expires_at
+    is_expired = False
     if expires_at is not None:
-        from datetime import UTC
-        from datetime import datetime as _dt
-
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=UTC)
-        if _dt.now(UTC) >= expires_at:
-            return False
+        is_expired = _dt.now(UTC) >= expires_at
+
+    if is_expired:
+        try:
+            raw_refresh = decrypt_secret(api_key.oauth_refresh_token)
+            if raw_refresh:
+                _oauth.refresh(raw_refresh)
+                return True
+        except Exception:
+            pass
+        return False
 
     return True
 
