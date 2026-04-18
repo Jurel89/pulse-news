@@ -50,6 +50,7 @@ SCOPE = "openid profile email offline_access"
 ORIGINATOR = "codex_cli_rs"
 
 _HTTP_TIMEOUT = httpx.Timeout(30.0)
+OAUTH_REFRESH_WINDOW = timedelta(seconds=300)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +345,24 @@ def refresh(refresh_token_value: str) -> TokenBundle:
     except json.JSONDecodeError as exc:
         raise OpenAIOAuthError(f"Token refresh returned invalid JSON: {exc}") from exc
     return _build_bundle_from_token_response(data, fallback_refresh_token=refresh_token_value)
+
+
+def should_refresh_token(expires_at: datetime | None, *, now: datetime | None = None) -> bool:
+    """Return True when the OAuth access token should be refreshed.
+
+    Tokens are refreshed proactively when they are missing an expiry timestamp or
+    the stored expiry is within the configured refresh window. SQLite can return
+    naive datetimes, so treat them as UTC.
+    """
+
+    if expires_at is None:
+        return True
+
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+
+    current_time = now or datetime.now(UTC)
+    return current_time >= (expires_at - OAUTH_REFRESH_WINDOW)
 
 
 # ---------------------------------------------------------------------------

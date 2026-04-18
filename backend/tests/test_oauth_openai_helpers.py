@@ -25,6 +25,7 @@ from app.oauth.openai_chatgpt import (
     generate_pkce,
     parse_jwt_payload,
     refresh,
+    should_refresh_token,
 )
 
 # ---------------------------------------------------------------------------
@@ -317,6 +318,27 @@ def test_refresh_returns_new_expiry():
     assert bundle.refresh_token == "new_refresh"
     # Expiry should be derived from the upstream expires_at, not now().
     assert abs(bundle.expires_at.timestamp() - future_ts) < 2
+
+
+def test_should_refresh_token_when_within_refresh_window():
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    expires_at = now + timedelta(seconds=299)
+
+    assert should_refresh_token(expires_at, now=now) is True
+
+
+def test_should_refresh_token_when_naive_datetime_within_refresh_window():
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    expires_at = datetime(2026, 1, 1, 12, 4, 59)
+
+    assert should_refresh_token(expires_at, now=now) is True
+
+
+def test_should_not_refresh_token_when_outside_refresh_window():
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    expires_at = now + timedelta(minutes=10)
+
+    assert should_refresh_token(expires_at, now=now) is False
 
 
 def test_refresh_preserves_prior_refresh_token_when_upstream_omits_it():
