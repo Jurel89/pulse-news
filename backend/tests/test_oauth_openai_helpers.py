@@ -464,3 +464,61 @@ def test_exchange_code_returns_bundle():
     assert bundle.refresh_token == "refresh_abc"
     assert bundle.account_id == "acct_abc"
     assert bundle.plan_type == "plus"
+
+
+def test_device_code_poll_missing_refresh_token_raises_error():
+    """Initial materialization must include a refresh_token."""
+    payload = {
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_abc",
+            "chatgpt_plan_type": "plus",
+        }
+    }
+    access_token = _make_jwt(payload)
+    token_response = {
+        "access_token": access_token,
+        # refresh_token intentionally omitted
+        "expires_in": 3600,
+    }
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, json=token_response))
+        MockClient.return_value = mock_instance
+
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            device_code_poll("dev_123", "ABCD-1234")
+
+    assert "missing refresh_token" in str(exc_info.value).lower()
+
+
+def test_exchange_code_missing_refresh_token_raises_error():
+    """Initial exchange must include a refresh_token."""
+    payload = {
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_abc",
+            "chatgpt_plan_type": "plus",
+        }
+    }
+    access_token = _make_jwt(payload)
+    token_response = {
+        "access_token": access_token,
+        # refresh_token intentionally omitted
+        "expires_in": 3600,
+    }
+
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, json=token_response))
+        MockClient.return_value = mock_instance
+
+        from app.oauth.openai_chatgpt import exchange_code
+
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            exchange_code("auth_code", "verifier", "http://localhost/callback")
+
+    assert "missing refresh_token" in str(exc_info.value).lower()

@@ -376,7 +376,13 @@ def _build_bundle_from_token_response(
         raise OpenAIOAuthError(f"Token response missing required field: {exc}") from exc
     # OAuth refresh responses may omit refresh_token — in that case, keep the
     # one the caller already has so we don't blow away a still-valid token.
-    refresh_token_value = data.get("refresh_token") or fallback_refresh_token or ""
+    # Initial materialization (exchange_code, device_code) must have a refresh_token.
+    refresh_token_value = data.get("refresh_token") or fallback_refresh_token
+    if refresh_token_value is None:
+        raise OpenAIOAuthError(
+            "Token response missing refresh_token. "
+            "Initial OAuth exchange must include a refresh token."
+        )
 
     # Always use the upstream expires_at / expires_in value — never derive
     # from now() to avoid drift.
