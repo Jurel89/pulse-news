@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-CHATGPT_SUBSCRIPTION_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex"]
+CHATGPT_SUBSCRIPTION_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"]
 
 # ---------------------------------------------------------------------------
 # Helpers shared with existing tests

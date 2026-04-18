@@ -59,12 +59,10 @@ class ChatGPTGenerationError(Exception):
 def _normalize_model(model: str) -> str:
     if model in _SUPPORTED_MODELS:
         return model
-    logger.warning(
-        "Model '%s' is not in the supported ChatGPT backend model list; normalising to '%s'.",
-        model,
-        _DEFAULT_MODEL,
+    raise ChatGPTGenerationError(
+        f"Model '{model}' is not supported for ChatGPT subscription. "
+        f"Supported models: {', '.join(sorted(_SUPPORTED_MODELS))}."
     )
-    return _DEFAULT_MODEL
 
 
 def _build_request_body(

@@ -26,7 +26,19 @@ providers_router = APIRouter(prefix="/providers", tags=["providers"])
 
 PROVIDER_MODEL_CATALOG: dict[str, list[str]] = {}
 
-OPENAI_CHATGPT_RECOMMENDED_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex"]
+OPENAI_CHATGPT_RECOMMENDED_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"]
+
+
+def _validate_chatgpt_model(model_name: str | None) -> None:
+    if model_name and model_name not in OPENAI_CHATGPT_RECOMMENDED_MODELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Model '{model_name}' is not supported for ChatGPT subscription. "
+                f"Supported models: {', '.join(OPENAI_CHATGPT_RECOMMENDED_MODELS)}."
+            ),
+        )
+
 
 RECOMMENDED_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o-mini", "gpt-4o", "o4-mini"],
@@ -255,6 +267,9 @@ def create_provider(
             detail=_missing_provider_credential_detail(payload.provider_type),
         )
 
+    if payload.provider_type == "openai_chatgpt":
+        _validate_chatgpt_model(payload.default_model)
+
     provider = Provider(
         name=payload.name,
         provider_type=payload.provider_type,
@@ -352,6 +367,11 @@ def update_provider(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_missing_provider_credential_detail(effective_provider_type),
+        )
+
+    if effective_provider_type == "openai_chatgpt":
+        _validate_chatgpt_model(
+            payload.default_model if payload.default_model is not None else provider.default_model
         )
 
     provider.name = payload.name or provider.name

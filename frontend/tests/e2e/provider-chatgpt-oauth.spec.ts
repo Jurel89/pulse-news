@@ -76,6 +76,17 @@ async function ensureAuthenticated(page: Page): Promise<void> {
 test('chatgpt subscription preset shows oauth prompt and non-codex default model', async ({ page }) => {
   await ensureAuthenticated(page);
 
+  // Clean up any pre-existing ChatGPT OAuth connection so the test starts
+  // from a known empty state even on a reused database.
+  await page.evaluate(async () => {
+    const resp = await fetch('/api/api-keys', { credentials: 'include' });
+    const keys = await resp.json();
+    const oauthKey = keys.find((k: any) => k.provider_type === 'openai_chatgpt' && k.auth_type === 'oauth');
+    if (oauthKey) {
+      await fetch(`/api/oauth/openai/${oauthKey.id}`, { method: 'DELETE', credentials: 'include' });
+    }
+  });
+
   await page.getByRole('button', { name: 'Providers' }).click();
   await page.waitForLoadState('networkidle');
 

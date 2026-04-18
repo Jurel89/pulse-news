@@ -78,15 +78,13 @@ export function ApiKeysPage({
           <h2 className="section-title">Manage credentials for AI providers and Resend.</h2>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {!hasOAuthConnection && (
-            <button
-              className="secondary-button"
-              onClick={() => setShowChatGPTModal(true)}
-              type="button"
-            >
-              Connect ChatGPT
-            </button>
-          )}
+          <button
+            className="secondary-button"
+            onClick={() => setShowChatGPTModal(true)}
+            type="button"
+          >
+            {hasOAuthConnection ? "Reconnect ChatGPT" : "Connect ChatGPT"}
+          </button>
           <button className="primary-button" onClick={onCreate} type="button">
             New API Key
           </button>

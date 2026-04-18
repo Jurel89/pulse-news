@@ -9,6 +9,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.generation.openai_chatgpt import (
     _build_request_body,
     _normalize_model,
@@ -28,9 +30,13 @@ def test_normalize_model_known_passes_through():
     assert _normalize_model("gpt-5.2") == "gpt-5.2"
 
 
-def test_normalize_model_unknown_maps_to_default():
-    assert _normalize_model("gpt-5.1") == "gpt-5.4"
-    assert _normalize_model("unknown-model") == "gpt-5.4"
+def test_normalize_model_unknown_raises_error():
+    from app.generation.openai_chatgpt import ChatGPTGenerationError
+
+    with pytest.raises(ChatGPTGenerationError):
+        _normalize_model("gpt-5.1")
+    with pytest.raises(ChatGPTGenerationError):
+        _normalize_model("unknown-model")
 
 
 # ---------------------------------------------------------------------------
@@ -179,23 +185,14 @@ def test_generate_correct_url_headers_body():
     assert any(t.get("type") == "web_search" for t in captured["json"].get("tools", []))
 
 
-def test_generate_normalizes_unknown_model():
+def test_generate_rejects_unknown_model():
+    from app.generation.openai_chatgpt import ChatGPTGenerationError
+
     api_key_row = _make_api_key_row()
     db_session = MagicMock()
-    captured_model = {}
 
-    def fake_stream(method, url, headers=None, json=None):
-        captured_model["model"] = json["model"]
-        return _mock_streaming_context(['{"subject":"S","preheader":"P","body_markdown":"B"}'])
-
-    with patch("app.generation.openai_chatgpt.httpx.Client") as MockClient:
-        mock_client_instance = MagicMock()
-        mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
-        mock_client_instance.__exit__ = MagicMock(return_value=False)
-        mock_client_instance.stream = fake_stream
-        MockClient.return_value = mock_client_instance
-
-        result = generate(
+    with pytest.raises(ChatGPTGenerationError) as exc_info:
+        generate(
             api_key_row=api_key_row,
             prompt="test",
             model="gpt-4-turbo",  # unknown model
@@ -203,8 +200,7 @@ def test_generate_normalizes_unknown_model():
             db_session=db_session,
         )
 
-    assert captured_model["model"] == "gpt-5.4"
-    assert result.normalized_model == "gpt-5.4"
+    assert "not supported" in str(exc_info.value).lower()
 
 
 def test_generate_refreshes_near_expired_token():

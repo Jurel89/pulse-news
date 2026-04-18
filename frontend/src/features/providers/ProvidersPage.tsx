@@ -284,19 +284,10 @@ export function ProviderEditor({
   const availableModels = useMemo(() => {
     const recommended = selectedPreset?.recommended_models ?? [];
     const merged = Array.from(new Set([...recommended, ...discoveredModels]));
-    let result = merged;
-    if (selectedPreset?.key === "openai_chatgpt") {
-      result = [...merged].sort((a, b) => {
-        const aIsCodex = a.includes("codex");
-        const bIsCodex = b.includes("codex");
-        if (aIsCodex === bIsCodex) return 0;
-        return aIsCodex ? 1 : -1;
-      });
-    }
     if (!form.default_model) {
-      return result;
+      return merged;
     }
-    return Array.from(new Set([form.default_model, ...result]));
+    return Array.from(new Set([form.default_model, ...merged]));
   }, [form.default_model, selectedPreset, discoveredModels]);
 
   const title = useMemo(

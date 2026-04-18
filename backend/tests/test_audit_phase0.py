@@ -5,7 +5,7 @@ from importlib import reload
 import pytest
 from fastapi.testclient import TestClient
 
-CHATGPT_SUBSCRIPTION_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex"]
+CHATGPT_SUBSCRIPTION_MODELS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"]
 
 
 def create_test_api_key(client: TestClient, provider_type: str = "openai") -> int:
