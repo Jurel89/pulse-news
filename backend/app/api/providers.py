@@ -176,12 +176,13 @@ def _validate_chatgpt_oauth_token(api_key: ApiKey) -> bool:
 
     If the access token is expired but a refresh token exists, attempt a
     refresh — matching the runtime behavior that auto-refreshes before
-    generation.  Only report failure if the token is truly unrecoverable.
+    generation.  The refreshed tokens are persisted back to the ApiKey row.
+    Only report failure if the token is truly unrecoverable.
     """
     from datetime import UTC
     from datetime import datetime as _dt
 
-    from app.crypto import decrypt_secret
+    from app.crypto import decrypt_secret, encrypt_secret
     from app.oauth import openai_chatgpt as _oauth
 
     try:
@@ -202,7 +203,10 @@ def _validate_chatgpt_oauth_token(api_key: ApiKey) -> bool:
         try:
             raw_refresh = decrypt_secret(api_key.oauth_refresh_token)
             if raw_refresh:
-                _oauth.refresh(raw_refresh)
+                bundle = _oauth.refresh(raw_refresh)
+                api_key.oauth_access_token = encrypt_secret(bundle.access_token)
+                api_key.oauth_refresh_token = encrypt_secret(bundle.refresh_token)
+                api_key.oauth_expires_at = bundle.expires_at
                 return True
         except Exception:
             pass

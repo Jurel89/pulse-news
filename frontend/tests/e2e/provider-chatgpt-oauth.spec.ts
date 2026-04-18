@@ -124,6 +124,21 @@ test('chatgpt subscription preset shows oauth prompt and non-codex default model
   await expect(oauthPrompt).toBeVisible();
   await expect(oauthPrompt).toContainText('uses OAuth');
 
+  // Mock the device-start API so the test doesn't depend on live OpenAI.
+  await page.route('/api/oauth/openai/device/start', async (route) => {
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        device_auth_id: 'dev_e2e_123',
+        user_code: 'E2E-TEST',
+        verification_uri: 'https://auth.openai.com/codex/device',
+        interval: 5,
+        expires_in: 900,
+      }),
+    });
+  });
+
   // Clicking the connect link should open the device-auth modal
   await oauthPrompt.locator('a').click();
   const modal = page.locator('.modal-panel');
