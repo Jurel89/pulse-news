@@ -5,7 +5,7 @@ from sqlalchemy import select
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
 
 from app.database import get_session_maker
-from app.models import NewsletterRecipient, utc_now
+from app.models import AuditEvent, NewsletterRecipient, utc_now
 
 public_router = APIRouter(prefix="/public", tags=["public"])
 
@@ -27,6 +27,16 @@ def _perform_unsubscribe(token: str) -> dict[str, str]:
         recipient.unsubscribed_at = utc_now()
         recipient.suppression_reason = "user_unsubscribed"
         session.add(recipient)
+        session.add(
+            AuditEvent(
+                actor_email=None,
+                action="recipient.unsubscribed",
+                entity_type="newsletter_recipient",
+                entity_id=str(recipient.id),
+                summary=f"Recipient {recipient.email} unsubscribed via public link",
+                payload_json=f'{{"newsletter_id": {recipient.newsletter_id}}}',
+            )
+        )
         session.commit()
         return {"status": "unsubscribed"}
     finally:

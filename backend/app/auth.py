@@ -53,6 +53,7 @@ def claim_bootstrap(session: Session) -> None:
 def mark_bootstrap_complete(session: Session, user_id: int) -> None:
     settings = get_or_create_system_settings(session)
     settings.initialized = True
+    settings.operator_user_id = user_id
     session.add(settings)
     session.flush()
 
@@ -71,6 +72,11 @@ def clear_authenticated_session(request: Request) -> None:
     request.session.pop("email", None)
 
 
+def _session_is_consistent(user: User | None, user_id: int) -> bool:
+    """Return True only when the fetched user row matches the session's stored user_id."""
+    return user is not None and user.id == user_id
+
+
 def get_authenticated_user(request: Request, db: Session | None = None) -> User | None:
     user_id = request.session.get("user_id")
     email = request.session.get("email")
@@ -81,10 +87,18 @@ def get_authenticated_user(request: Request, db: Session | None = None) -> User 
 
         session = get_session_maker()()
         try:
-            return get_user_by_email(session, email)
+            user = get_user_by_email(session, email)
+            if not _session_is_consistent(user, user_id):
+                clear_authenticated_session(request)
+                return None
+            return user
         finally:
             session.close()
-    return get_user_by_email(db, email)
+    user = get_user_by_email(db, email)
+    if not _session_is_consistent(user, user_id):
+        clear_authenticated_session(request)
+        return None
+    return user
 
 
 def require_authenticated_user(request: Request, db: Session) -> User:

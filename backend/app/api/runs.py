@@ -117,7 +117,7 @@ def list_run_operational_events(
     date_from: date | None = None,
     date_to: date | None = None,
     limit: int = 100,
-    include_runs: bool = False,
+    include_runs: bool = True,
 ) -> OperationalEventListResponse:
     require_authenticated_user(request, db)
 
