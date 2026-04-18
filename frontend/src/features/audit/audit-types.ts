@@ -48,4 +48,5 @@ export type OperationalEventListParams = {
   search?: string;
   date_from?: string;
   date_to?: string;
+  include_runs?: string;
 };
