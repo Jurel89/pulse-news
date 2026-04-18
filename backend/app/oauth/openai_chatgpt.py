@@ -150,7 +150,17 @@ def device_code_start() -> DeviceCodeInit:
         if "expires_in" in data:
             expires_in = int(data["expires_in"])
         elif "expires_at" in data:
-            expires_in = int(data["expires_at"]) - int(datetime.now(UTC).timestamp())
+            raw_expires = data["expires_at"]
+            try:
+                # OpenAI may return expires_at as a Unix timestamp integer.
+                expires_at_ts = int(raw_expires)
+            except ValueError:
+                # Or as an ISO 8601 datetime string (observed in live responses).
+                expires_at_dt = datetime.fromisoformat(raw_expires)
+                if expires_at_dt.tzinfo is None:
+                    expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
+                expires_at_ts = int(expires_at_dt.timestamp())
+            expires_in = max(0, expires_at_ts - int(datetime.now(UTC).timestamp()))
         else:
             expires_in = 900
         return DeviceCodeInit(

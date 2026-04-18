@@ -178,14 +178,14 @@ def test_device_code_start_invalid_json(monkeypatch):
     assert "invalid JSON" in str(exc_info.value)
 
 
-def test_device_code_start_with_expires_at_and_no_verification_uri():
-    """Live OpenAI returns expires_at (not expires_in) and omits verification_uri."""
-    future_ts = int((datetime.now(UTC) + timedelta(minutes=15)).timestamp())
+def test_device_code_start_with_expires_at_iso_and_no_verification_uri():
+    """Live OpenAI returns expires_at as ISO 8601 string and omits verification_uri."""
+    future_dt = datetime.now(UTC) + timedelta(minutes=15)
     response_data = {
         "device_auth_id": "dev_456",
         "user_code": "EFGH-5678",
         "interval": "5",
-        "expires_at": future_ts,
+        "expires_at": future_dt.isoformat(),
         # expires_in intentionally omitted
         # verification_uri intentionally omitted
     }
