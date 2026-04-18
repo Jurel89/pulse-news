@@ -101,6 +101,7 @@ export type FormOptionApiKey = {
   provider_type: string;
   masked_key: string;
   from_email: string | null;
+  auth_type?: string;
 };
 
 export type FormOptions = {

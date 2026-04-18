@@ -42,15 +42,15 @@ const fieldHelpText: Record<string, string> = {
   prompt: "Instructions for the AI. It will generate the subject, preheader, and body automatically.",
   audience_name: "Used for audience segmentation in analytics",
   delivery_topic: "Topic name for webhook filtering and delivery tracking",
-  provider_name: "AI provider for content generation (requires matching API key)",
-  api_key_id: "Optional active AI API key to pin for this newsletter's generation requests",
+  provider_name: "AI provider for content generation",
+  api_key_id: "Optional pinned credential for this newsletter's generation requests",
   resend_api_key_id: "Resend API key used for email delivery. Make sure the key has a Sender Email configured in Settings > API Keys.",
   from_email: "Sender email address. If not set, falls back to the Resend API key sender or the environment default.",
   model_name: "Specific AI model to use for generating content",
   template_key: "Email template design that determines the visual layout",
   timezone: "Timezone for interpreting the schedule cron expression",
   schedule_enabled: "Enable automatic recurring sends based on the cron schedule. Requires a valid cron expression.",
-  schedule_cron: "Cron expression for recurring sends (e.g., 0 9 * * 1 for Mondays at 9am)",
+  schedule_cron: "Cron expression for recurring sends (e.g. 0 9 * * 1 for Mondays at 9am)",
   notes: "Internal notes, runbooks, or editorial context.",
   recipient_import_text: "Paste one email per line or separate addresses with commas or semicolons."
 };
@@ -86,9 +86,13 @@ function getAvailableTemplates(formOptions: FormOptions | null) {
 }
 
 function getAvailableApiKeys(providerName: string, formOptions: FormOptions | null) {
-  return (formOptions?.api_keys ?? []).filter(
+  const keys = (formOptions?.api_keys ?? []).filter(
     (apiKey) => apiKey.provider_type === providerName
   );
+  if (providerName === "openai_chatgpt") {
+    return keys.filter((k) => k.auth_type === "oauth");
+  }
+  return keys;
 }
 
 function getAvailableResendApiKeys(formOptions: FormOptions | null) {
@@ -394,13 +398,17 @@ export function NewsletterEditorPage({
 
           <div className="form-grid">
             <label>
-              <FieldLabel label="AI API Key" helpText={fieldHelpText.api_key_id} />
+              <FieldLabel label={form.provider_name === "openai_chatgpt" ? "OAuth Connection" : "AI API Key"} helpText={fieldHelpText.api_key_id} />
               <select
                 onChange={(event) => updateField("api_key_id", event.target.value ? Number(event.target.value) : null)}
                 value={form.api_key_id === null ? "" : String(form.api_key_id)}
               >
                 <option value="">
-                  {availableApiKeys.length > 0 ? "No pinned key selected (fail closed)" : "No matching API keys available"}
+                  {availableApiKeys.length > 0
+                    ? "No pinned credential selected (fail closed)"
+                    : form.provider_name === "openai_chatgpt"
+                      ? "No OAuth connection available — connect in Settings > API Keys"
+                      : "No matching API keys available"}
                 </option>
                 {missingApiKeyOption ? (
                   <option disabled value={String(missingApiKeyOption.id)}>

@@ -575,6 +575,7 @@ def get_form_options(request: Request, db: DbSession) -> dict:
             "provider_type": k.provider_type,
             "masked_key": mask_api_key(k.key_value),
             "from_email": k.from_email,
+            "auth_type": getattr(k, "auth_type", "api_key"),
         }
         for k in api_keys
     ]

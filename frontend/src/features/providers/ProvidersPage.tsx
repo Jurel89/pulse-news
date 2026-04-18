@@ -565,6 +565,20 @@ export function ProviderEditor({
           {busy ? "Saving..." : initialProvider ? "Save Provider" : "Create Provider"}
         </button>
 
+        {initialProvider && selectedPreset?.auth_mode === "oauth" && !hasMatchingOAuthKey && !apiKeysLoading && (
+          <div className="form-info">
+            <strong>ChatGPT Subscription</strong> uses OAuth instead of an API key.
+            {" "}
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); setShowChatGPTModal(true); }}
+            >
+              Connect ChatGPT Subscription
+            </a>
+            {" "}to restore this provider.
+          </div>
+        )}
+
         {initialProvider ? (
           <>
             <hr className="form-divider" />
@@ -592,7 +606,7 @@ export function ProviderEditor({
                       <dd>{testResult.default_model ?? "None set"}</dd>
                     </div>
                     <div>
-                      <dt>API Key Configured</dt>
+                      <dt>{testResult.provider_type === "openai_chatgpt" ? "OAuth Connected" : "API Key Configured"}</dt>
                       <dd>{testResult.has_active_api_key ? "Yes" : "No"}</dd>
                     </div>
                   </dl>

@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.api_keys import create_audit_event, get_api_key_or_404
 from app.auth import require_authenticated_user
@@ -329,6 +329,20 @@ def get_oauth_status(
     )
 
 
+def _count_chatgpt_providers(db: DbSession) -> int:
+    from app.models import Provider
+
+    return (
+        db.scalar(
+            select(func.count(Provider.id)).where(
+                Provider.provider_type == "openai_chatgpt",
+                Provider.is_enabled.is_(True),
+            )
+        )
+        or 0
+    )
+
+
 @oauth_openai_router.delete(
     "/{api_key_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -347,6 +361,29 @@ def delete_oauth_connection(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This API key is not an OAuth connection.",
         )
+
+    enabled_chatgpt_providers = _count_chatgpt_providers(db)
+    if enabled_chatgpt_providers > 0:
+        remaining_oauth = (
+            db.scalar(
+                select(func.count(ApiKey.id)).where(
+                    ApiKey.provider_type == "openai_chatgpt",
+                    ApiKey.auth_type == "oauth",
+                    ApiKey.is_active.is_(True),
+                    ApiKey.id != api_key_id,
+                )
+            )
+            or 0
+        )
+        if remaining_oauth == 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Cannot disconnect the only active ChatGPT OAuth connection "
+                    f"while {enabled_chatgpt_providers} enabled provider(s) depend on it. "
+                    "Disable the provider(s) first or connect a replacement."
+                ),
+            )
 
     for newsletter in api_key.newsletters:
         newsletter.api_key_id = None

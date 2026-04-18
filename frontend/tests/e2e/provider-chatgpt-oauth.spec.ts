@@ -93,10 +93,17 @@ test('chatgpt subscription preset shows oauth prompt and non-codex default model
   // No API-key warning should appear for an OAuth-backed preset
   await expect(page.locator('.form-error')).not.toBeVisible();
 
-  // OAuth connect prompt should appear
+  // OAuth connect prompt should appear with a clickable link
   const oauthPrompt = page.locator('.form-info');
   await expect(oauthPrompt).toBeVisible();
   await expect(oauthPrompt).toContainText('uses OAuth');
+
+  // Clicking the connect link should open the device-auth modal
+  await oauthPrompt.locator('a').click();
+  const modal = page.locator('.modal-panel');
+  await expect(modal).toBeVisible();
+  // The modal title should reference ChatGPT / device connection
+  await expect(modal).toContainText('ChatGPT');
 
   // The default model should not be a codex model
   const defaultModelInput = page.locator('input[list="provider-model-options"]');
