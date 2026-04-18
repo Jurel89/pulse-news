@@ -90,15 +90,13 @@ def serialize_api_key_detail(api_key: ApiKey) -> ApiKeyDetail:
 def _count_active_keys_for_provider(db: DbSession, provider_type: str) -> int:
     from sqlalchemy import func
 
-    return (
-        db.scalar(
-            select(func.count(ApiKey.id)).where(
-                ApiKey.provider_type == provider_type,
-                ApiKey.is_active.is_(True),
-            )
-        )
-        or 0
-    )
+    where_clause = [
+        ApiKey.provider_type == provider_type,
+        ApiKey.is_active.is_(True),
+    ]
+    if provider_type == "openai_chatgpt":
+        where_clause.append(ApiKey.auth_type == "oauth")
+    return db.scalar(select(func.count(ApiKey.id)).where(*where_clause)) or 0
 
 
 def _has_enabled_providers_for_type(db: DbSession, provider_type: str) -> bool:
