@@ -537,19 +537,24 @@ function RunContentTabs({ detail, activeTab, onChangeTab }: RunContentTabsProps)
               // even with sandbox="" (e.g. some Chromium versions before the csp attribute
               // was honoured universally).
               const safeHtml = renderedHtml ? renderedHtml.replace(/<meta[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "") : renderedHtml;
+              // csp enforces a Content-Security-Policy inside the srcdoc document
+              // (Chrome 61+, Firefox 70+). default-src 'none' blocks meta-refresh
+              // initiated navigations and any network fetch the sandboxed doc might
+              // attempt. Style/image/font sources are kept for cosmetic rendering.
+              // The csp attribute is not yet in React's type definitions, so we pass
+              // it via a spread cast to avoid a TS2322 error while keeping runtime
+              // behaviour identical.
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const cspAttr = { csp: "default-src 'none'; style-src 'unsafe-inline' 'self'; img-src data: https:; font-src data: https:;" } as any;
               return (
                 <iframe
                   title="Rendered HTML"
                   // Sandbox without allow-scripts/allow-same-origin — the stored
                   // HTML is operator/AI content that we never want to execute.
                   sandbox=""
-                  // csp enforces a Content-Security-Policy inside the srcdoc document
-                  // (Chrome 61+, Firefox 70+). default-src 'none' blocks meta-refresh
-                  // initiated navigations and any network fetch the sandboxed doc might
-                  // attempt. Style/image/font sources are kept for cosmetic rendering.
-                  csp="default-src 'none'; style-src 'unsafe-inline' 'self'; img-src data: https:; font-src data: https:;"
                   srcDoc={safeHtml}
                   style={{ width: "100%", minHeight: 480, border: "1px solid var(--border-subtle)", borderRadius: "6px", background: "#fff" }}
+                  {...cspAttr}
                 />
               );
             })()
