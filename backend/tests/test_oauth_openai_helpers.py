@@ -164,6 +164,20 @@ def test_device_code_start_failure(monkeypatch):
             device_code_start()
 
 
+def test_device_code_start_invalid_json(monkeypatch):
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, text="not valid json"))
+        MockClient.return_value = mock_instance
+
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            device_code_start()
+
+    assert "invalid JSON" in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # device_code_poll
 # ---------------------------------------------------------------------------
@@ -226,6 +240,20 @@ def test_device_code_poll_complete_returns_bundle():
     assert result[0].refresh_token == "refresh_abc"
     assert result[0].account_id == "acct_abc"
     assert result[0].plan_type == "plus"
+
+
+def test_device_code_poll_success_invalid_json():
+    with patch("app.oauth.openai_chatgpt.httpx.Client") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.__enter__ = MagicMock(return_value=mock_instance)
+        mock_instance.__exit__ = MagicMock(return_value=False)
+        mock_instance.post = MagicMock(return_value=httpx.Response(200, text="not valid json"))
+        MockClient.return_value = mock_instance
+
+        with pytest.raises(OpenAIOAuthError) as exc_info:
+            device_code_poll("dev_123", "ABCD-1234")
+
+    assert "invalid JSON" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

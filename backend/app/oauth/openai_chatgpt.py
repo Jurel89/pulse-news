@@ -135,7 +135,10 @@ def device_code_start() -> DeviceCodeInit:
             f"Device-code init failed ({response.status_code}): {response.text[:200]}",
             status_code=response.status_code,
         )
-    data = response.json()
+    try:
+        data = response.json()
+    except json.JSONDecodeError as exc:
+        raise OpenAIOAuthError(f"Device-code init returned invalid JSON: {exc}") from exc
     return DeviceCodeInit(
         device_auth_id=data["device_auth_id"],
         user_code=data["user_code"],
@@ -252,25 +255,6 @@ def _parse_poll_error(response: httpx.Response) -> tuple[bool, int | None]:
 
     return False, retry_after
 
-    data = response.json()
-    # Device-code endpoint returns an authorization_code + server-generated verifier.
-    authorization_code = data.get("authorization_code") or data.get("code")
-    server_verifier = data.get("code_verifier") or data.get("verifier") or ""
-
-    if not authorization_code:
-        # Some implementations return tokens directly without a code exchange.
-        if "access_token" in data:
-            return _build_bundle_from_token_response(data)
-        raise OpenAIOAuthError(
-            f"Device-code poll succeeded but no authorization_code in response: {data}"
-        )
-
-    return _exchange_code_internal(
-        code=authorization_code,
-        verifier=server_verifier,
-        redirect_uri=DEVICE_CODE_REDIRECT_URI,
-    )
-
 
 def exchange_code(code: str, verifier: str, redirect_uri: str) -> TokenBundle:
     """Exchange a loopback authorization code for tokens (PKCE)."""
@@ -297,7 +281,11 @@ def _exchange_code_internal(code: str, verifier: str, redirect_uri: str) -> Toke
             f"Token exchange failed ({response.status_code}): {response.text[:200]}",
             status_code=response.status_code,
         )
-    return _build_bundle_from_token_response(response.json())
+    try:
+        data = response.json()
+    except json.JSONDecodeError as exc:
+        raise OpenAIOAuthError(f"Token exchange returned invalid JSON: {exc}") from exc
+    return _build_bundle_from_token_response(data)
 
 
 def refresh(refresh_token_value: str) -> TokenBundle:
@@ -325,9 +313,11 @@ def refresh(refresh_token_value: str) -> TokenBundle:
             f"Token refresh failed ({response.status_code}): {response.text[:200]}",
             status_code=response.status_code,
         )
-    return _build_bundle_from_token_response(
-        response.json(), fallback_refresh_token=refresh_token_value
-    )
+    try:
+        data = response.json()
+    except json.JSONDecodeError as exc:
+        raise OpenAIOAuthError(f"Token refresh returned invalid JSON: {exc}") from exc
+    return _build_bundle_from_token_response(data, fallback_refresh_token=refresh_token_value)
 
 
 # ---------------------------------------------------------------------------
