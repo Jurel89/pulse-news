@@ -4,6 +4,7 @@ import { emptyProviderInput, toProviderInput } from "./provider-types";
 import { api } from "../../lib/api";
 import { ActionDropdown, type ActionItem } from "../../components/ui/ActionDropdown";
 import type { ProviderTestResponse } from "../../lib/api";
+import { ConnectChatGPTModal } from "../api-keys/ConnectChatGPTModal";
 
 type ProvidersPageProps = {
   providers: ProviderSummary[];
@@ -228,6 +229,7 @@ export function ProviderEditor({
   const [discoverLoading, setDiscoverLoading] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null);
+  const [showChatGPTModal, setShowChatGPTModal] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -277,10 +279,19 @@ export function ProviderEditor({
   const availableModels = useMemo(() => {
     const recommended = selectedPreset?.recommended_models ?? [];
     const merged = Array.from(new Set([...recommended, ...discoveredModels]));
-    if (!form.default_model) {
-      return merged;
+    let result = merged;
+    if (selectedPreset?.key === "openai_chatgpt") {
+      result = [...merged].sort((a, b) => {
+        const aIsCodex = a.includes("codex");
+        const bIsCodex = b.includes("codex");
+        if (aIsCodex === bIsCodex) return 0;
+        return aIsCodex ? 1 : -1;
+      });
     }
-    return Array.from(new Set([form.default_model, ...merged]));
+    if (!form.default_model) {
+      return result;
+    }
+    return Array.from(new Set([form.default_model, ...result]));
   }, [form.default_model, selectedPreset, discoveredModels]);
 
   const title = useMemo(
@@ -299,11 +310,17 @@ export function ProviderEditor({
     const preset = presets.find((entry) => entry.key === presetKey);
     if (!preset) return;
 
+    let defaultModel = preset.recommended_models[0] ?? "";
+    if (preset.key === "openai_chatgpt") {
+      const nonCodex = preset.recommended_models.find((m) => !m.includes("codex"));
+      if (nonCodex) defaultModel = nonCodex;
+    }
+
     setForm((current) => ({
       ...current,
       name: preset.name,
       provider_type: preset.key,
-      default_model: preset.recommended_models[0] ?? current.default_model,
+      default_model: defaultModel,
       configuration: JSON.stringify({ base_url: preset.base_url }, null, 2)
     }));
   }
@@ -436,10 +453,24 @@ export function ProviderEditor({
             </label>
 
             {!hasMatchingApiKey && form.provider_type && !apiKeysLoading && (
-              <div className="form-error">
-                <strong>Warning:</strong> No active API key found for {form.provider_type}. 
-                You must <a href="#" onClick={(e) => { e.preventDefault(); onCancel(); }}>configure an API key</a> before using this provider.
-              </div>
+              selectedPreset?.auth_mode === "oauth" ? (
+                <div className="form-info">
+                  <strong>ChatGPT Subscription</strong> uses OAuth instead of an API key.
+                  {" "}
+                  <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); setShowChatGPTModal(true); }}
+                  >
+                    Connect ChatGPT Subscription
+                  </a>
+                  {" "}to enable this provider.
+                </div>
+              ) : (
+                <div className="form-error">
+                  <strong>Warning:</strong> No active API key found for {form.provider_type}.
+                  You must <a href="#" onClick={(e) => { e.preventDefault(); onCancel(); }}>configure an API key</a> before using this provider.
+                </div>
+              )
             )}
           </>
         ) : null}
@@ -587,6 +618,16 @@ export function ProviderEditor({
           </>
         ) : null}
       </form>
+
+      {showChatGPTModal && (
+        <ConnectChatGPTModal
+          onConnected={() => {
+            setShowChatGPTModal(false);
+            api.apiKeys.list().then(setApiKeys).catch(() => {});
+          }}
+          onCancel={() => setShowChatGPTModal(false)}
+        />
+      )}
     </section>
   );
 }

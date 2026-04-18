@@ -434,7 +434,7 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 }
 
 /* ===== Feedback ===== */
-.form-error, .form-notice {
+.form-error, .form-notice, .form-info {
   margin: 0;
   font-size: var(--font-sm);
   padding: var(--sp-3) var(--sp-4);
@@ -449,6 +449,11 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
 .form-notice {
   color: var(--color-success);
   background: var(--color-success-light);
+}
+
+.form-info {
+  color: var(--color-primary-text);
+  background: var(--color-primary-light);
 }
 
 /* ===== Settings ===== */

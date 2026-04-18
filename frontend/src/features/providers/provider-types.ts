@@ -30,6 +30,7 @@ export type ProviderPreset = {
   base_url: string | null;
   recommended_models: string[];
   supports_discovery: boolean;
+  auth_mode?: "api_key" | "oauth";
 };
 
 export type ProviderTypeOption = {
