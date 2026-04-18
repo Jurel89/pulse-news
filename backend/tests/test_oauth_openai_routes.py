@@ -601,6 +601,49 @@ def test_oauth_delete_removes_connection(auth_client):
     assert status_resp.status_code == 404
 
 
+def test_oauth_delete_blocks_last_connection_when_provider_enabled(auth_client):
+    """Deleting the only active OAuth connection must fail when a provider depends on it."""
+    from app.models import Provider
+    from app.oauth.openai_chatgpt import DeviceCodeInit
+
+    fake_init = DeviceCodeInit(
+        device_auth_id="dev_conflict",
+        user_code="CONF-1234",
+        interval=5,
+        expires_in=900,
+        verification_uri="https://auth.openai.com/codex/device",
+    )
+
+    with patch("app.api.oauth_openai.device_code_start", return_value=fake_init):
+        auth_client.post("/api/oauth/openai/device/start")
+
+    bundle = _make_token_bundle()
+
+    with patch("app.api.oauth_openai.device_code_poll", return_value=(bundle, None)):
+        poll_resp = auth_client.post(
+            "/api/oauth/openai/device/poll",
+            json={"device_auth_id": "dev_conflict"},
+        )
+
+    api_key_id = poll_resp.json()["api_key_id"]
+
+    # Create an enabled ChatGPT provider that depends on this connection
+    provider = Provider(
+        name="ChatGPT Provider",
+        provider_type="openai_chatgpt",
+        is_enabled=True,
+        default_model="gpt-5.4",
+    )
+    db = auth_client.app.state._db_session_factory()
+    db.add(provider)
+    db.commit()
+    db.close()
+
+    resp = auth_client.delete(f"/api/oauth/openai/{api_key_id}")
+    assert resp.status_code == 409
+    assert "Cannot disconnect" in resp.text
+
+
 def test_device_poll_returns_502_on_network_error(auth_client):
     """A network failure during poll must return 502 and preserve the session."""
     from app.oauth.openai_chatgpt import DeviceCodeInit, OpenAIOAuthError

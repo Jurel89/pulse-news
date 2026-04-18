@@ -26,15 +26,18 @@ export function ChatGPTConnectionCard({ apiKey, onDisconnected, onRefreshed }: P
   const [refreshing, setRefreshing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [expiresInSeconds, setExpiresInSeconds] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleRefresh() {
     setRefreshing(true);
+    setError(null);
     try {
       const result = await api.oauthOpenai.refresh(apiKey.id);
       setExpiresInSeconds(result.expires_in_seconds);
       onRefreshed();
-    } catch {
-      // Surface via toast or silent — parent will reload list
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Refresh failed";
+      setError(message);
     } finally {
       setRefreshing(false);
     }
@@ -42,9 +45,13 @@ export function ChatGPTConnectionCard({ apiKey, onDisconnected, onRefreshed }: P
 
   async function handleDisconnect() {
     setDisconnecting(true);
+    setError(null);
     try {
       await api.oauthOpenai.delete(apiKey.id);
       onDisconnected();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Disconnect failed";
+      setError(message);
     } finally {
       setDisconnecting(false);
     }
@@ -88,6 +95,19 @@ export function ChatGPTConnectionCard({ apiKey, onDisconnected, onRefreshed }: P
           </dd>
         </div>
       </dl>
+
+      {error && (
+        <div className="error-banner" style={{ marginBottom: 12 }}>
+          <span>{error}</span>
+          <button
+            className="error-banner-dismiss"
+            onClick={() => setError(null)}
+            type="button"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div className="card-actions">
         <button
