@@ -523,6 +523,11 @@ body { margin: 0; min-width: 320px; min-height: 100vh; }
   color: var(--color-text-muted);
 }
 
+.status-inactive {
+  background: var(--color-danger-light);
+  color: var(--color-danger-text);
+}
+
 .newsletter-meta {
   display: grid;
   gap: var(--sp-3);
