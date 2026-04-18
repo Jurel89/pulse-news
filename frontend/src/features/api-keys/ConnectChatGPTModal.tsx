@@ -16,6 +16,7 @@ export function ConnectChatGPTModal({ onConnected, onCancel }: Props) {
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
   const deadlineRef = useRef<number | null>(null);
+  const currentAuthIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     activeRef.current = true;
@@ -33,6 +34,7 @@ export function ConnectChatGPTModal({ onConnected, onCancel }: Props) {
       const data = await api.oauthOpenai.deviceStart();
       if (!activeRef.current) return;
       setInit(data);
+      currentAuthIdRef.current = data.device_auth_id;
       deadlineRef.current = Date.now() + data.expires_in * 1000;
       setPhase("awaiting_user");
       schedulePoll(data, data.interval * 1000);
@@ -64,11 +66,21 @@ export function ConnectChatGPTModal({ onConnected, onCancel }: Props) {
         onConnected(result.api_key_id);
         return;
       }
-      // Still pending — schedule next poll.
+      // Still pending — schedule next poll using server-provided interval.
       setPhase("awaiting_user");
-      schedulePoll(data, data.interval * 1000);
+      const nextDelay = result.retry_after != null
+        ? result.retry_after * 1000
+        : data.interval * 1000;
+      schedulePoll(data, nextDelay);
     } catch (err: unknown) {
       if (!activeRef.current) return;
+      const isTransient = err instanceof Error && err.message.startsWith("[502]");
+      if (isTransient) {
+        // Transient network blip — retry the same session.
+        setPhase("awaiting_user");
+        schedulePoll(data, data.interval * 1000);
+        return;
+      }
       setErrorMsg(err instanceof Error ? err.message : "Polling failed.");
       setPhase("error");
     }

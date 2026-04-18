@@ -143,8 +143,9 @@ export type DeviceStartResponse = {
 };
 
 export type DevicePollResponse = {
-  status: "pending" | "complete";
-  api_key_id: number | null;
+  status: string;
+  api_key_id?: number;
+  retry_after?: number;
 };
 
 export type OAuthStatusResponse = {
@@ -179,7 +180,8 @@ async function request<T>(path: string, init?: ApiRequestInit): Promise<T> {
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: "Request failed." }));
-    throw new Error(payload.detail ?? "Request failed.");
+    const detail = payload.detail ?? "Request failed.";
+    throw new Error(`[${response.status}] ${detail}`);
   }
 
   if (response.status === 204) {

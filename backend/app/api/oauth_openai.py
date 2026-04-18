@@ -72,6 +72,7 @@ class DevicePollRequest(BaseModel):
 class DevicePollResponse(BaseModel):
     status: str  # "pending" | "complete"
     api_key_id: int | None = None
+    retry_after: int | None = None
 
 
 class OAuthStatusResponse(BaseModel):
@@ -207,26 +208,24 @@ def poll_device_code(
     user_code = pending["user_code"]
 
     try:
-        bundle: TokenBundle | None = device_code_poll(payload.device_auth_id, user_code)
+        bundle, retry_after = device_code_poll(payload.device_auth_id, user_code)
     except OpenAIOAuthError as exc:
         logger.warning("Device-code poll error for %s: %s", payload.device_auth_id, exc)
-        # Keep the session alive on transient network failures so the client
-        # can retry the poll. Only clear the session for hard auth failures
-        # that carry a real HTTP status code from OpenAI.
-        if exc.status_code is not None:
+        # Treat server-side (5xx) and transport (no status) errors as transient
+        # so the client can retry the same session. Client-side (4xx) errors are
+        # hard auth failures — clear the session.
+        is_transient = exc.status_code is None or exc.status_code >= 500
+        if not is_transient:
             _pending_device_auth.pop(payload.device_auth_id, None)
         detail_msg = str(exc)
-        if exc.status_code is None:
-            status_code = status.HTTP_502_BAD_GATEWAY
-        else:
-            status_code = status.HTTP_400_BAD_REQUEST
+        status_code = status.HTTP_502_BAD_GATEWAY if is_transient else status.HTTP_400_BAD_REQUEST
         raise HTTPException(
             status_code=status_code,
             detail=f"Device-code authorization failed: {detail_msg}",
         ) from exc
 
     if bundle is None:
-        return DevicePollResponse(status="pending")
+        return DevicePollResponse(status="pending", retry_after=retry_after)
 
     _pending_device_auth.pop(payload.device_auth_id, None)
     api_key = _materialize_oauth_connection(db, bundle)

@@ -129,7 +129,7 @@ def _connect_chatgpt_oauth(
 
     bundle = _make_token_bundle(plan=plan, account_id=account_id)
 
-    with patch("app.api.oauth_openai.device_code_poll", return_value=bundle):
+    with patch("app.api.oauth_openai.device_code_poll", return_value=(bundle, None)):
         poll_resp = auth_client.post(
             "/api/oauth/openai/device/poll",
             json={"device_auth_id": device_auth_id},
@@ -186,7 +186,7 @@ def test_device_poll_pending(auth_client):
     with patch("app.api.oauth_openai.device_code_start", return_value=fake_init):
         auth_client.post("/api/oauth/openai/device/start")
 
-    with patch("app.api.oauth_openai.device_code_poll", return_value=None):
+    with patch("app.api.oauth_openai.device_code_poll", return_value=(None, None)):
         resp = auth_client.post(
             "/api/oauth/openai/device/poll",
             json={"device_auth_id": "dev_pending"},
@@ -212,7 +212,7 @@ def test_device_poll_complete_creates_api_key(auth_client):
 
     bundle = _make_token_bundle()
 
-    with patch("app.api.oauth_openai.device_code_poll", return_value=bundle):
+    with patch("app.api.oauth_openai.device_code_poll", return_value=(bundle, None)):
         resp = auth_client.post(
             "/api/oauth/openai/device/poll",
             json={"device_auth_id": "dev_complete"},
@@ -348,7 +348,7 @@ def test_oauth_status_connected(auth_client):
 
     bundle = _make_token_bundle(plan="pro", account_id="acct_status_test")
 
-    with patch("app.api.oauth_openai.device_code_poll", return_value=bundle):
+    with patch("app.api.oauth_openai.device_code_poll", return_value=(bundle, None)):
         poll_resp = auth_client.post(
             "/api/oauth/openai/device/poll",
             json={"device_auth_id": "dev_status"},
@@ -381,7 +381,7 @@ def test_oauth_refresh_updates_token(auth_client):
 
     bundle = _make_token_bundle()
 
-    with patch("app.api.oauth_openai.device_code_poll", return_value=bundle):
+    with patch("app.api.oauth_openai.device_code_poll", return_value=(bundle, None)):
         poll_resp = auth_client.post(
             "/api/oauth/openai/device/poll",
             json={"device_auth_id": "dev_refresh"},
@@ -429,7 +429,7 @@ def test_device_code_poll_403_authorization_unknown_is_pending():
     with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
         result = device_code_poll("dev_auth_123", "USER-CODE")
 
-    assert result is None
+    assert result == (None, None)
 
 
 def test_device_code_poll_403_other_is_fatal():
@@ -477,7 +477,7 @@ def test_device_code_poll_404_authorization_unknown_is_pending():
     with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
         result = device_code_poll("dev_auth_123", "USER-CODE")
 
-    assert result is None
+    assert result == (None, None)
 
 
 def test_device_code_poll_slow_down_is_pending():
@@ -499,7 +499,8 @@ def test_device_code_poll_slow_down_is_pending():
     with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
         result = device_code_poll("dev_auth_123", "USER-CODE")
 
-    assert result is None
+    assert result[0] is None
+    assert result[1] == 10
 
 
 def test_device_code_poll_nested_error_is_pending():
@@ -521,7 +522,7 @@ def test_device_code_poll_nested_error_is_pending():
     with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
         result = device_code_poll("dev_auth_123", "USER-CODE")
 
-    assert result is None
+    assert result[0] is None
 
 
 def test_device_code_poll_message_only_is_pending():
@@ -543,7 +544,7 @@ def test_device_code_poll_message_only_is_pending():
     with patch("app.oauth.openai_chatgpt.httpx.Client", return_value=mock_client):
         result = device_code_poll("dev_auth_123", "USER-CODE")
 
-    assert result is None
+    assert result[0] is None
 
 
 def test_device_code_poll_network_error_is_oauth_error():
@@ -584,7 +585,7 @@ def test_oauth_delete_removes_connection(auth_client):
 
     bundle = _make_token_bundle()
 
-    with patch("app.api.oauth_openai.device_code_poll", return_value=bundle):
+    with patch("app.api.oauth_openai.device_code_poll", return_value=(bundle, None)):
         poll_resp = auth_client.post(
             "/api/oauth/openai/device/poll",
             json={"device_auth_id": "dev_delete"},
@@ -598,3 +599,161 @@ def test_oauth_delete_removes_connection(auth_client):
     # Confirm it's gone
     status_resp = auth_client.get(f"/api/oauth/openai/{api_key_id}/status")
     assert status_resp.status_code == 404
+
+
+def test_device_poll_returns_502_on_network_error(auth_client):
+    """A network failure during poll must return 502 and preserve the session."""
+    from app.oauth.openai_chatgpt import DeviceCodeInit, OpenAIOAuthError
+
+    fake_init = DeviceCodeInit(
+        device_auth_id="dev_net",
+        user_code="NETW-1234",
+        interval=5,
+        expires_in=900,
+        verification_uri="https://auth.openai.com/codex/device",
+    )
+
+    with patch("app.api.oauth_openai.device_code_start", return_value=fake_init):
+        auth_client.post("/api/oauth/openai/device/start")
+
+    with patch(
+        "app.api.oauth_openai.device_code_poll",
+        side_effect=OpenAIOAuthError("Connection timed out"),
+    ):
+        poll_resp = auth_client.post(
+            "/api/oauth/openai/device/poll",
+            json={"device_auth_id": "dev_net"},
+        )
+
+    assert poll_resp.status_code == 502
+    detail = poll_resp.json()["detail"]
+    assert "Connection timed out" in detail
+
+    # Session must still be valid so the client can retry.
+    with patch(
+        "app.api.oauth_openai.device_code_poll",
+        side_effect=OpenAIOAuthError("Connection timed out"),
+    ):
+        retry_resp = auth_client.post(
+            "/api/oauth/openai/device/poll",
+            json={"device_auth_id": "dev_net"},
+        )
+    assert retry_resp.status_code == 502
+
+
+def test_device_poll_returns_502_on_upstream_502_error(auth_client):
+    """An upstream 502 from OpenAI must be treated as transient (session kept)."""
+    from app.oauth.openai_chatgpt import DeviceCodeInit, OpenAIOAuthError
+
+    fake_init = DeviceCodeInit(
+        device_auth_id="dev_502",
+        user_code="FIFT-1234",
+        interval=5,
+        expires_in=900,
+        verification_uri="https://auth.openai.com/codex/device",
+    )
+
+    with patch("app.api.oauth_openai.device_code_start", return_value=fake_init):
+        auth_client.post("/api/oauth/openai/device/start")
+
+    with patch(
+        "app.api.oauth_openai.device_code_poll",
+        side_effect=OpenAIOAuthError("Upstream unavailable", status_code=502),
+    ):
+        poll_resp = auth_client.post(
+            "/api/oauth/openai/device/poll",
+            json={"device_auth_id": "dev_502"},
+        )
+
+    assert poll_resp.status_code == 502
+    detail = poll_resp.json()["detail"]
+    assert "Upstream unavailable" in detail
+
+    # Session must still be valid so the client can retry.
+    with patch(
+        "app.api.oauth_openai.device_code_poll",
+        side_effect=OpenAIOAuthError("Upstream unavailable", status_code=502),
+    ):
+        retry_resp = auth_client.post(
+            "/api/oauth/openai/device/poll",
+            json={"device_auth_id": "dev_502"},
+        )
+    assert retry_resp.status_code == 502
+
+
+def test_device_poll_returns_400_on_hard_auth_failure(auth_client):
+    """A hard auth failure during poll must return 400 and clear the session."""
+    from app.oauth.openai_chatgpt import DeviceCodeInit, OpenAIOAuthError
+
+    fake_init = DeviceCodeInit(
+        device_auth_id="dev_hard",
+        user_code="HARD-1234",
+        interval=5,
+        expires_in=900,
+        verification_uri="https://auth.openai.com/codex/device",
+    )
+
+    with patch("app.api.oauth_openai.device_code_start", return_value=fake_init):
+        auth_client.post("/api/oauth/openai/device/start")
+
+    with patch(
+        "app.api.oauth_openai.device_code_poll",
+        side_effect=OpenAIOAuthError("Access denied", status_code=400),
+    ):
+        poll_resp = auth_client.post(
+            "/api/oauth/openai/device/poll",
+            json={"device_auth_id": "dev_hard"},
+        )
+
+    assert poll_resp.status_code == 400
+    detail = poll_resp.json()["detail"]
+    assert "Access denied" in detail
+
+    # Session must be cleared so retrying the same id fails.
+    retry_resp = auth_client.post(
+        "/api/oauth/openai/device/poll",
+        json={"device_auth_id": "dev_hard"},
+    )
+    assert retry_resp.status_code == 404
+
+
+def test_provider_test_rejects_expired_oauth_token(auth_client):
+    """Test Connection for ChatGPT must fail when the OAuth token is expired."""
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    from app.crypto import encrypt_secret
+    from app.database import get_session_maker
+    from app.models import ApiKey, Provider
+
+    session = get_session_maker()()
+    provider = Provider(
+        name="ChatGPT Subscription",
+        provider_type="openai_chatgpt",
+        is_enabled=True,
+        default_model="gpt-5.4",
+    )
+    session.add(provider)
+    session.commit()
+    session.refresh(provider)
+    provider_id = provider.id
+
+    expired_key = ApiKey(
+        name="ChatGPT Plus",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value=encrypt_secret("oauth:v1"),
+        oauth_access_token=encrypt_secret("valid_token"),
+        oauth_refresh_token=encrypt_secret("valid_refresh"),
+        oauth_expires_at=_dt.now(UTC) - timedelta(hours=1),
+        is_active=True,
+    )
+    session.add(expired_key)
+    session.commit()
+    session.close()
+
+    resp = auth_client.post(f"/api/providers/{provider_id}/test")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "warning"
+    assert "expired" in data["message"].lower() or "invalid" in data["message"].lower()

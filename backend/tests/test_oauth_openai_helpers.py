@@ -179,7 +179,7 @@ def test_device_code_poll_pending_returns_none():
 
         result = device_code_poll("dev_123", "ABCD-1234")
 
-    assert result is None
+    assert result == (None, None)
 
 
 def test_device_code_poll_authorization_pending_in_body():
@@ -194,7 +194,7 @@ def test_device_code_poll_authorization_pending_in_body():
 
         result = device_code_poll("dev_123", "ABCD-1234")
 
-    assert result is None
+    assert result[0] is None
 
 
 def test_device_code_poll_complete_returns_bundle():
@@ -221,11 +221,11 @@ def test_device_code_poll_complete_returns_bundle():
 
         result = device_code_poll("dev_123", "ABCD-1234")
 
-    assert result is not None
-    assert result.access_token == access_token
-    assert result.refresh_token == "refresh_abc"
-    assert result.account_id == "acct_abc"
-    assert result.plan_type == "plus"
+    assert result[0] is not None
+    assert result[0].access_token == access_token
+    assert result[0].refresh_token == "refresh_abc"
+    assert result[0].account_id == "acct_abc"
+    assert result[0].plan_type == "plus"
 
 
 # ---------------------------------------------------------------------------

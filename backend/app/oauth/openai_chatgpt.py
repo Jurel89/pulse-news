@@ -145,13 +145,14 @@ def device_code_start() -> DeviceCodeInit:
     )
 
 
-def device_code_poll(device_auth_id: str, user_code: str) -> TokenBundle | None:
+def device_code_poll(device_auth_id: str, user_code: str) -> tuple[TokenBundle | None, int | None]:
     """Poll for device-code completion.
 
-    Returns None while authorization is still pending.
+    Returns (None, retry_after) while authorization is still pending.
+    retry_after is the seconds to wait before the next poll (from OpenAI's
+    slow_down or interval response).  None means "use the default interval".
     Raises OpenAIOAuthError on hard failures (expired, denied, network).
-    On success, exchanges the returned authorization_code and returns a
-    TokenBundle.
+    On success, returns (TokenBundle, None).
     """
     try:
         with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
@@ -167,27 +168,35 @@ def device_code_poll(device_auth_id: str, user_code: str) -> TokenBundle | None:
         raise OpenAIOAuthError(f"Device-code poll network error: {exc}") from exc
 
     if response.status_code == 202:
-        return None
+        return None, None
 
     if response.status_code in (200, 201):
-        data = response.json()
-        authorization_code = data.get("authorization_code") or data.get("code")
-        server_verifier = data.get("code_verifier") or data.get("verifier") or ""
-        if not authorization_code:
-            if "access_token" in data:
-                return _build_bundle_from_token_response(data)
-            raise OpenAIOAuthError(
-                f"Device-code poll succeeded but no authorization_code in response: {data}"
-            )
-        return _exchange_code_internal(
-            code=authorization_code,
-            verifier=server_verifier,
-            redirect_uri=DEVICE_CODE_REDIRECT_URI,
-        )
+        try:
+            data = response.json()
+        except json.JSONDecodeError as exc:
+            raise OpenAIOAuthError(f"Device-code poll returned invalid JSON: {exc}") from exc
+        try:
+            authorization_code = data.get("authorization_code") or data.get("code")
+            server_verifier = data.get("code_verifier") or data.get("verifier") or ""
+            if not authorization_code:
+                if "access_token" in data:
+                    return _build_bundle_from_token_response(data), None
+                raise OpenAIOAuthError(
+                    f"Device-code poll succeeded but no authorization_code in response: {data}"
+                )
+            return _exchange_code_internal(
+                code=authorization_code,
+                verifier=server_verifier,
+                redirect_uri=DEVICE_CODE_REDIRECT_URI,
+            ), None
+        except OpenAIOAuthError:
+            raise
+        except (TypeError, AttributeError) as exc:
+            raise OpenAIOAuthError(f"Device-code poll response malformed: {exc}") from exc
 
     is_pending, retry_after = _parse_poll_error(response)
     if is_pending:
-        return None
+        return None, retry_after
 
     body = response.text[:200]
     raise OpenAIOAuthError(
