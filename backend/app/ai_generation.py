@@ -452,7 +452,8 @@ def _generate_via_openai_chatgpt(
             [
                 current_date_line,
                 "",
-                "Return your response as strict JSON with this exact shape and no prose outside it:",
+                "Return your response as strict JSON with this exact shape "
+                "and no prose outside it:",
                 '{"subject":"...","preheader":"...","body_markdown":"..."}',
             ]
         )

@@ -336,9 +336,15 @@ def execute_newsletter_send(
 
     # Resolve effective content: prefer caller-supplied generated content so
     # the newsletter row is not required to be pre-mutated.
-    effective_subject = generated_subject if generated_subject is not None else newsletter.subject
-    effective_preheader = generated_preheader if generated_preheader is not None else newsletter.preheader
-    effective_body_text = generated_body_text if generated_body_text is not None else newsletter.body_text
+    effective_subject = (
+        generated_subject if generated_subject is not None else newsletter.subject
+    )
+    effective_preheader = (
+        generated_preheader if generated_preheader is not None else newsletter.preheader
+    )
+    effective_body_text = (
+        generated_body_text if generated_body_text is not None else newsletter.body_text
+    )
 
     attempt_key = idempotency_key or _build_newsletter_attempt_key(
         newsletter_id=newsletter.id,
@@ -886,7 +892,10 @@ def run_newsletter(
         action="newsletter.run_initiated",
         entity_type="newsletter",
         entity_id=str(newsletter.id),
-        summary=f"Manual run initiated for newsletter '{newsletter.name}' (trigger_mode=manual-run).",
+        summary=(
+            f"Manual run initiated for newsletter '{newsletter.name}' "
+            "(trigger_mode=manual-run)."
+        ),
     )
     db.commit()
 
@@ -1018,7 +1027,10 @@ def resume_newsletter_schedule(
         action="newsletter.schedule_resumed",
         entity_type="newsletter",
         entity_id=str(newsletter.id),
-        summary=f"Schedule resumed for newsletter '{newsletter.name}' (cron: {newsletter.schedule_cron}).",
+        summary=(
+            f"Schedule resumed for newsletter '{newsletter.name}' "
+            f"(cron: {newsletter.schedule_cron})."
+        ),
     )
     db.commit()
     db.refresh(newsletter)

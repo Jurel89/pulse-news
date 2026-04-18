@@ -312,7 +312,9 @@ def test_operational_events_endpoint_includes_runs_when_requested(
 
     sources = {item["source"] for item in items}
     assert "run" in sources, "include_runs=true response must include run-source entries"
-    assert "run_event" in sources, "include_runs=true response must include run_event-source entries"
+    assert (
+        "run_event" in sources
+    ), "include_runs=true response must include run_event-source entries"
     assert any(item["run_id"] == delivery_run["id"] for item in items)
 
     run_items = [
