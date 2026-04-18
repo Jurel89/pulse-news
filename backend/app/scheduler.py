@@ -118,16 +118,24 @@ def run_scheduled_newsletter(newsletter_id: int) -> None:  # pragma: no cover
         # reflects the last *successful* send (Audit Finding 6). Previously we
         # committed the mutation here, meaning a failed scheduled delivery
         # would silently overwrite the stored newsletter content.
-        send_response, _delivery_run = execute_newsletter_send(
-            session,
-            newsletter,
-            trigger_mode="scheduled-send",
-            fire_scope=datetime.now(UTC).replace(second=0, microsecond=0).isoformat(),
-            generation_meta=_generation_meta_from_generated(newsletter, generated),
-            generated_subject=generated.subject,
-            generated_preheader=generated.preheader,
-            generated_body_text=generated.body_text,
-        )
+        try:
+            send_response, _delivery_run = execute_newsletter_send(
+                session,
+                newsletter,
+                trigger_mode="scheduled-send",
+                fire_scope=datetime.now(UTC).replace(second=0, microsecond=0).isoformat(),
+                generation_meta=_generation_meta_from_generated(newsletter, generated),
+                generated_subject=generated.subject,
+                generated_preheader=generated.preheader,
+                generated_body_text=generated.body_text,
+            )
+        except Exception as exc:
+            logger.error(
+                "Scheduled delivery exception for newsletter %s: %s",
+                newsletter.id,
+                exc,
+            )
+            return
         if _delivery_run.run_status in ("sent", "partial"):
             newsletter.subject = generated.subject
             newsletter.preheader = generated.preheader
