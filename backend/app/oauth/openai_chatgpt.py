@@ -37,7 +37,7 @@ CLIENT_ID = os.environ.get(
 
 # Supported models for ChatGPT subscription generation.
 # Used for validation at provider/newsletter save time and runtime.
-CHATGPT_SUPPORTED_MODELS = frozenset(["gpt-5.4", "gpt-5.4-mini", "gpt-5.2"])
+CHATGPT_SUPPORTED_MODELS = ("gpt-5.4", "gpt-5.4-mini", "gpt-5.2")
 CHATGPT_DEFAULT_MODEL = "gpt-5.4"
 
 AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
