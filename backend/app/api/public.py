@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 from starlette.responses import HTMLResponse, PlainTextResponse, Response
@@ -22,6 +24,9 @@ def _perform_unsubscribe(token: str) -> dict[str, str]:
                 detail="Unsubscribe token not found.",
             )
 
+        if recipient.unsubscribed_at is not None:
+            return {"status": "already_unsubscribed"}
+
         recipient.is_active = False
         recipient.status = "unsubscribed"
         recipient.unsubscribed_at = utc_now()
@@ -34,7 +39,7 @@ def _perform_unsubscribe(token: str) -> dict[str, str]:
                 entity_type="newsletter_recipient",
                 entity_id=str(recipient.id),
                 summary=f"Recipient {recipient.email} unsubscribed via public link",
-                payload_json=f'{{"newsletter_id": {recipient.newsletter_id}}}',
+                payload_json=json.dumps({"newsletter_id": recipient.newsletter_id}),
             )
         )
         session.commit()
