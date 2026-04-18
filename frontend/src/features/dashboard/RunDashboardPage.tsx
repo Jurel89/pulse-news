@@ -567,6 +567,10 @@ function RunContentTabs({ detail, activeTab, onChangeTab }: RunContentTabsProps)
         ) : null}
         {activeTab === "prompt" ? (
           <div className="plain-preview">
+            <p className="cell-secondary">
+              Prompts are stored in plaintext. Avoid embedding API keys, passwords, or other secrets
+              in the prompt — anyone with operator access can read this snapshot.
+            </p>
             <pre>{promptSnapshot || "No prompt snapshot recorded for this run."}</pre>
           </div>
         ) : null}

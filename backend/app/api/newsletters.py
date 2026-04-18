@@ -379,7 +379,7 @@ def execute_newsletter_send(
     db.flush()
 
     try:
-        if not effective_body_text.strip():
+        if not (effective_body_text or "").strip():
             raise ValueError(
                 "Newsletter has no content to send. Add body text or run generation before sending."
             )
