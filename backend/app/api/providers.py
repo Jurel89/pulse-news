@@ -171,7 +171,7 @@ def _uses_oauth_connection(provider_type: str) -> bool:
     return provider_type == "openai_chatgpt"
 
 
-def _validate_chatgpt_oauth_token(api_key: ApiKey) -> bool:
+def _validate_chatgpt_oauth_token(api_key: ApiKey, db: DbSession) -> bool:
     """Check that the stored OAuth token is usable.
 
     If the access token is expired but a refresh token exists, attempt a
@@ -207,6 +207,7 @@ def _validate_chatgpt_oauth_token(api_key: ApiKey) -> bool:
                 api_key.oauth_access_token = encrypt_secret(bundle.access_token)
                 api_key.oauth_refresh_token = encrypt_secret(bundle.refresh_token)
                 api_key.oauth_expires_at = bundle.expires_at
+                db.commit()
                 return True
         except Exception:
             pass
@@ -530,7 +531,7 @@ def test_provider(provider_id: int, request: Request, db: DbSession) -> Provider
                 default_model=provider.default_model,
                 has_active_api_key=False,
             )
-        token_ok = _validate_chatgpt_oauth_token(active_key)
+        token_ok = _validate_chatgpt_oauth_token(active_key, db)
         return ProviderTestResponse(
             status="ok" if token_ok else "warning",
             message=(

@@ -139,6 +139,19 @@ test('chatgpt subscription preset shows oauth prompt and non-codex default model
     });
   });
 
+  // Also mock the device-poll API so the modal stays in a pending state
+  // instead of hitting the real backend with the fake device_auth_id.
+  await page.route('/api/oauth/openai/device/poll', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'pending',
+        retry_after: 5,
+      }),
+    });
+  });
+
   // Clicking the connect link should open the device-auth modal
   await oauthPrompt.locator('a').click();
   const modal = page.locator('.modal-panel');
