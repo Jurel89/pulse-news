@@ -771,7 +771,11 @@ def _generation_meta_from_generated(newsletter: Newsletter, generated) -> Genera
     input_tokens: int | None = None
     try:
         usage = json.loads(getattr(generated, "token_usage_json", None) or "{}")
-        raw = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        raw = None
+        if isinstance(usage, dict):
+            raw = usage.get("prompt_tokens")
+            if raw is None:
+                raw = usage.get("input_tokens")
         if isinstance(raw, int):
             input_tokens = raw
         elif isinstance(raw, str) and raw.isdigit():
