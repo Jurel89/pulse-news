@@ -179,9 +179,6 @@ def _validate_chatgpt_oauth_token(api_key: ApiKey, db: DbSession) -> bool:
     generation.  The refreshed tokens are persisted back to the ApiKey row.
     Only report failure if the token is truly unrecoverable.
     """
-    from datetime import UTC
-    from datetime import datetime as _dt
-
     from app.crypto import decrypt_secret, encrypt_secret
     from app.oauth import openai_chatgpt as _oauth
 
@@ -192,14 +189,7 @@ def _validate_chatgpt_oauth_token(api_key: ApiKey, db: DbSession) -> bool:
     if not access_token:
         return False
 
-    expires_at = api_key.oauth_expires_at
-    is_expired = False
-    if expires_at is not None:
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-        is_expired = _dt.now(UTC) >= expires_at
-
-    if is_expired:
+    if _oauth.should_refresh_token(api_key.oauth_expires_at):
         try:
             raw_refresh = decrypt_secret(api_key.oauth_refresh_token)
             if raw_refresh:
@@ -207,9 +197,14 @@ def _validate_chatgpt_oauth_token(api_key: ApiKey, db: DbSession) -> bool:
                 api_key.oauth_access_token = encrypt_secret(bundle.access_token)
                 api_key.oauth_refresh_token = encrypt_secret(bundle.refresh_token)
                 api_key.oauth_expires_at = bundle.expires_at
+                if bundle.account_id:
+                    api_key.oauth_account_id = bundle.account_id
+                if bundle.plan_type:
+                    api_key.oauth_plan_type = bundle.plan_type
                 db.commit()
                 return True
         except Exception:
+            db.rollback()
             pass
         return False
 

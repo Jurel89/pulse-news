@@ -245,6 +245,42 @@ def test_generate_content_and_run_flow(client: TestClient, monkeypatch):
     assert fetched_newsletter["recipients"][0]["email"] == "test@example.com"
 
 
+def test_generation_meta_uses_chatgpt_input_tokens(client: TestClient):
+    from app.ai_generation import GeneratedContent
+    from app.api.newsletters import _generation_meta_from_generated
+    from app.models import Newsletter
+
+    generated = GeneratedContent(
+        status="generated",
+        mode="openai_chatgpt",
+        message="ok",
+        subject="Subject",
+        preheader="Preheader",
+        body_text="Body",
+        token_usage_json='{"input_tokens": 321, "output_tokens": 45, "total_tokens": 366}',
+    )
+    newsletter = Newsletter(
+        name="ChatGPT Newsletter",
+        slug="chatgpt-newsletter",
+        description="desc",
+        prompt="prompt",
+        provider_name="openai_chatgpt",
+        model_name="gpt-5.4",
+        template_key="signal",
+        audience_name="ops",
+        delivery_topic="chatgpt",
+        timezone="UTC",
+        schedule_enabled=False,
+        status="active",
+    )
+
+    meta = _generation_meta_from_generated(newsletter, generated)
+
+    assert meta.provider == "openai_chatgpt"
+    assert meta.model == "gpt-5.4"
+    assert meta.input_tokens == 321
+
+
 def test_run_hard_stops_when_generation_fails(client: TestClient, monkeypatch):
     import app.ai_generation
     import app.email_delivery
