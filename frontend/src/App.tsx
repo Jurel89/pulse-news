@@ -254,7 +254,8 @@ export default function App() {
       setNotice(result.message);
       setEditingNewsletter(null);
       setShowEditor(false);
-      setActiveView("newsletters");
+      setSelectedRunId(result.run.id);
+      setActiveView("dashboard");
     });
   }
 
