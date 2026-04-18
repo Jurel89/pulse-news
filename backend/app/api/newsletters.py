@@ -896,6 +896,15 @@ def run_newsletter(
         generated = generate_newsletter_content(newsletter, db_session=db)
     except Exception as exc:
         _mark_generation_failed(db, generation_run, message=f"{type(exc).__name__}: {exc}")
+        create_audit_event(
+            db,
+            actor_email=user.email,
+            action="newsletter.run_failed",
+            entity_type="newsletter",
+            entity_id=str(newsletter.id),
+            summary=f"Generation failed for newsletter {newsletter.name}: {exc}",
+        )
+        db.commit()
         raise
 
     if generated.status == "error":
@@ -907,6 +916,15 @@ def run_newsletter(
                 getattr(generated, "tool_loop_trace_json", None)
             ),
         )
+        create_audit_event(
+            db,
+            actor_email=user.email,
+            action="newsletter.run_failed",
+            entity_type="newsletter",
+            entity_id=str(newsletter.id),
+            summary=f"Generation error for newsletter {newsletter.name}: {generated.message}",
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Generation failed: {generated.message}",
@@ -950,7 +968,16 @@ def run_newsletter(
         newsletter.preheader = generated.preheader
         newsletter.body_text = generated.body_text
         db.add(newsletter)
-        db.commit()
+
+    create_audit_event(
+        db,
+        actor_email=user.email,
+        action="newsletter.run_completed",
+        entity_type="newsletter",
+        entity_id=str(newsletter.id),
+        summary=f"Run completed for {newsletter.name} with status {_run.run_status}",
+    )
+    db.commit()
 
     return response
 

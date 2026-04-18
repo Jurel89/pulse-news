@@ -355,6 +355,21 @@ def test_run_hard_stops_when_generation_fails(client: TestClient, monkeypatch):
     events = events_response.json()["items"]
     assert any(e["status"] == "failed" for e in events)
 
+    # Both run_initiated and run_failed audit rows must exist on generation failure.
+    audit_initiated = client.get("/api/audit?action=newsletter.run_initiated")
+    assert audit_initiated.status_code == 200
+    assert any(
+        item["entity_id"] == str(newsletter_id)
+        for item in audit_initiated.json()["items"]
+    ), "newsletter.run_initiated audit row must exist"
+
+    audit_failed = client.get("/api/audit?action=newsletter.run_failed")
+    assert audit_failed.status_code == 200
+    assert any(
+        item["entity_id"] == str(newsletter_id)
+        for item in audit_failed.json()["items"]
+    ), "newsletter.run_failed audit row must exist"
+
 
 def test_newsletter_validation_requires_chatgpt_oauth_connection(client: TestClient):
     from app.database import get_session_maker
