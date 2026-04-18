@@ -568,17 +568,22 @@ def get_form_options(request: Request, db: DbSession) -> dict:
     api_keys = db.scalars(
         select(ApiKey).where(ApiKey.is_active.is_(True)).order_by(ApiKey.name)
     ).all()
-    api_key_options = [
-        {
-            "id": k.id,
-            "name": k.name,
-            "provider_type": k.provider_type,
-            "masked_key": mask_api_key(k.key_value),
-            "from_email": k.from_email,
-            "auth_type": getattr(k, "auth_type", "api_key"),
-        }
-        for k in api_keys
-    ]
+    api_key_options = []
+    for k in api_keys:
+        if getattr(k, "auth_type", "api_key") == "oauth":
+            masked = "OAuth Connection"
+        else:
+            masked = mask_api_key(k.key_value)
+        api_key_options.append(
+            {
+                "id": k.id,
+                "name": k.name,
+                "provider_type": k.provider_type,
+                "masked_key": masked,
+                "from_email": k.from_email,
+                "auth_type": getattr(k, "auth_type", "api_key"),
+            }
+        )
 
     return {
         "templates": template_options,
@@ -689,6 +694,12 @@ def _validate_newsletter_entities(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="API key provider_type does not match newsletter provider.",
+            )
+        auth_type = getattr(api_key, "auth_type", "api_key")
+        if api_key.provider_type == "openai_chatgpt" and auth_type != "oauth":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="ChatGPT provider requires an OAuth connection, not a manual API key.",
             )
 
     resend_key: ApiKey | None = None

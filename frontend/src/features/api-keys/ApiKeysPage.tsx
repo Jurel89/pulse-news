@@ -35,7 +35,9 @@ export function ApiKeysPage({
   const [showChatGPTModal, setShowChatGPTModal] = useState(false);
 
   const oauthApiKeys = apiKeys.filter((k) => k.auth_type === "oauth");
-  const regularApiKeys = apiKeys.filter((k) => k.auth_type !== "oauth");
+  const regularApiKeys = apiKeys.filter(
+    (k) => k.auth_type !== "oauth" && k.provider_type !== "openai_chatgpt"
+  );
   const hasOAuthConnection = oauthApiKeys.length > 0;
 
   async function handleDelete(apiKeyId: number) {

@@ -364,6 +364,108 @@ def test_newsletter_validation_requires_chatgpt_oauth_connection(client: TestCli
     assert "API key" not in detail
 
 
+def test_newsletter_rejects_manual_chatgpt_api_key(client: TestClient):
+    """A legacy manual API key for openai_chatgpt must not be pinned to a newsletter."""
+    from app.crypto import encrypt_secret
+    from app.database import get_session_maker
+    from app.models import ApiKey, Provider
+
+    bootstrap_operator(client)
+
+    session = get_session_maker()()
+    provider = Provider(
+        name="ChatGPT Subscription",
+        provider_type="openai_chatgpt",
+        is_enabled=True,
+        default_model="gpt-5.4",
+    )
+    session.add(provider)
+    session.commit()
+    session.refresh(provider)
+    provider_id = provider.id
+
+    # Create an active OAuth connection so provider validation passes
+    oauth_key = ApiKey(
+        name="ChatGPT Plus",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value=encrypt_secret("oauth:v1"),
+        oauth_access_token=encrypt_secret("atok"),
+        oauth_refresh_token=encrypt_secret("rtok"),
+        is_active=True,
+    )
+    session.add(oauth_key)
+
+    # Create a legacy manual key for openai_chatgpt
+    manual_key = ApiKey(
+        name="Legacy ChatGPT Key",
+        provider_type="openai_chatgpt",
+        key_value=encrypt_secret("sk-legacy"),
+        is_active=True,
+    )
+    session.add(manual_key)
+    session.commit()
+    session.refresh(manual_key)
+    manual_key_id = manual_key.id
+    session.close()
+
+    response = client.post(
+        "/api/newsletters",
+        json={
+            "name": "ChatGPT Newsletter",
+            "description": "Should fail with manual key",
+            "prompt": "Summarize.",
+            "provider_id": provider_id,
+            "provider_name": "openai_chatgpt",
+            "model_name": "gpt-5.4",
+            "template_key": "signal",
+            "audience_name": "operators",
+            "delivery_topic": "chatgpt-newsletter",
+            "timezone": "UTC",
+            "schedule_enabled": False,
+            "status": "active",
+            "api_key_id": manual_key_id,
+            "recipient_import_text": "reader@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "OAuth connection" in detail
+    assert "manual API key" in detail
+
+
+def test_form_options_shows_oauth_connection_for_chatgpt(client: TestClient):
+    """An OAuth connection for ChatGPT must appear as 'OAuth Connection', not a masked key."""
+    from app.crypto import encrypt_secret
+    from app.database import get_session_maker
+    from app.models import ApiKey
+
+    bootstrap_operator(client)
+
+    session = get_session_maker()()
+    oauth_key = ApiKey(
+        name="ChatGPT Plus",
+        provider_type="openai_chatgpt",
+        auth_type="oauth",
+        key_value=encrypt_secret("oauth:v1"),
+        oauth_access_token=encrypt_secret("atok"),
+        oauth_refresh_token=encrypt_secret("rtok"),
+        is_active=True,
+    )
+    session.add(oauth_key)
+    session.commit()
+    session.close()
+
+    response = client.get("/api/newsletters/form-options")
+    assert response.status_code == 200
+    data = response.json()
+    chatgpt_keys = [k for k in data["api_keys"] if k["provider_type"] == "openai_chatgpt"]
+    assert len(chatgpt_keys) == 1
+    assert chatgpt_keys[0]["masked_key"] == "OAuth Connection"
+    assert chatgpt_keys[0]["auth_type"] == "oauth"
+
+
 def test_schedule_pause_and_resume_flow(client: TestClient):
     bootstrap_operator(client)
     create_test_provider(client, "openai")
